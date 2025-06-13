@@ -1,0 +1,23 @@
+[project]
+name = "gitwrite-cli"
+version = "0.1.0"
+description = "CLI for GitWrite"
+authors = [
+    {name = "Agent_CLI_Dev",email = "agent@example.com"}
+]
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "click (>=8.2.1,<9.0.0)",
+    "rich (>=14.0.0,<15.0.0)",
+    "pygit2 (>=1.18.0,<2.0.0)"
+]
+
+[tool.poetry]
+packages = [
+    { include = "gitwrite_cli", from = "src" },
+]
+
+[build-system]
+requires = ["poetry-core>=2.0.0,<3.0.0"]
+build-backend = "poetry.core.masonry.api"
