@@ -1,120 +1,321 @@
-# Agentic Project Management (APM)
+# GitWrite
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT) [![Version](https://img.shields.io/badge/version-v0.3.0-blue)](https://github.com/sdi2200262/agentic-project-management/releases/tag/v0.3.0)
+**Git-based version control for writers and writing teams**
 
-*Manage complex projects with a team of AI assistants, smoothly and efficiently.*
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Python 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org/downloads/)
+[![TypeScript](https://img.shields.io/badge/TypeScript-4.9+-blue.svg)](https://www.typescriptlang.org/)
+[![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](http://makeapullrequest.com)
 
-## What is APM?
+GitWrite brings Git's powerful version control to writers through an intuitive, writer-friendly interface. Built on top of Git's proven technology, it maintains full compatibility with existing Git repositories and hosting services while making version control accessible to non-technical writers.
 
-**Agentic Project Management (APM)** is a framework that brings real-world project management principles into your AI-assisted workflows. If you're using AI coding assistants (like in Cursor, ChatGPT, or Claude) for development, research, or any complex task, APM provides a structured yet flexible way to coordinate a team of specialized AI agents.
+## 🎯 Why GitWrite?
 
-Think of it like having a project manager, developers, and specialists, all powered by AI, working in concert under your guidance.
+**For Writers:**
+- Track every revision of your manuscript with meaningful history
+- Experiment with different versions without fear of losing work
+- Collaborate seamlessly with editors, beta readers, and co-authors
+- Get feedback through an intuitive annotation system
+- Export to multiple formats (EPUB, PDF, DOCX) at any point in your writing journey
 
-```mermaid
-graph LR
-    User["👤 User (You!)"]
-    MA["🤖 Manager Agent"] 
-    SA_I["🛠️ Implementation Agent(s)"]
-    SA["🕵️‍♂️ Specialized Agents <br/> (e.g., Debugger, Tutor)"]
-    MB["📚 Memory Bank(s)"]
+**For Editors & Publishers:**
+- Review and suggest changes using familiar editorial workflows
+- Maintain version control throughout the publishing process
+- Enable beta readers to provide structured feedback
+- Integrate with existing Git-based development workflows
 
-    User <--> MA
-    MA --> SA_I
-    MA --> SA
+**For Developers:**
+- All GitWrite repositories are standard Git repositories
+- Use GitWrite alongside existing Git tools and workflows
+- Integrate with any Git hosting service (GitHub, GitLab, Bitbucket)
+- No vendor lock-in - repositories remain Git-compatible
 
-    MA <--> MB
-    SA_I <--> MB
-    SA <--> MB
+## ✨ Key Features
 
-    classDef user fill:#E3F2FD,stroke:#1E88E5,stroke-width:2px,color:#0D47A1;
-    classDef manager fill:#EDE7F6,stroke:#5E35B1,stroke-width:2px,color:#311B92;
-    classDef specializedAgent fill:#FCE4EC,stroke:#AD1457,stroke-width:2px,color:#880E4F; 
-    classDef memoryBank fill:#E8F5E9,stroke:#388E3C,stroke-width:2px,color:#1B5E20;
+### 📝 Writer-Friendly Interface
+- **Simple Commands**: `gitwrite save "Finished chapter 3"` instead of `git add . && git commit -m "..."`
+- **Intuitive Terminology**: "explorations" instead of "branches", "save" instead of "commit"
+- **Word-by-Word Comparison**: See exactly what changed between versions at the word level
+- **Visual Diff Viewer**: Compare versions side-by-side with highlighting
 
-    class User user;
-    class MA manager;
-    class SA_I,SA specializedAgent;
-    class MB memoryBank;
+### 🤝 Collaborative Writing
+- **Author Control**: Repository owners maintain ultimate control over the main manuscript
+- **Editorial Workflows**: Role-based permissions for editors, copy editors, and proofreaders
+- **Selective Integration**: Cherry-pick individual changes from editors using Git's proven mechanisms
+- **Beta Reader Feedback**: Export to EPUB, collect annotations, sync back as Git commits
+
+### 🔧 Multiple Interfaces
+- **Command Line**: Full-featured CLI for power users
+- **Web Application**: Modern browser-based interface
+- **Mobile App**: EPUB reader with annotation capabilities
+- **REST API**: Integration with writing tools and services
+- **TypeScript SDK**: Easy integration for developers
+
+### 🌐 Git Ecosystem Integration
+- **Full Git Compatibility**: Works with any Git hosting service
+- **Standard Git Operations**: Use `git` commands alongside `gitwrite` commands
+- **Hosting Service Features**: Leverage GitHub/GitLab pull requests, branch protection, and more
+- **Developer Friendly**: Integrate with existing development workflows
+
+## 🚀 Quick Start
+
+### Installation
+
+```bash
+# Install GitWrite CLI (when available)
+pip install git-write
+
+# Or install from source
+git clone https://github.com/eristoddle/git-write.git
+cd git-write
+pip install -e .
 ```
 
-## Why APM?
+*Note: GitWrite is currently in development. Installation instructions will be updated as the project progresses.*
 
-Working with AI on big projects can get messy. Context gets lost, agents forget instructions, and it can feel like you're repeating yourself endlessly, often leading to high token usage and costs. APM tackles this by:
+### Your First Writing Project
 
-*   **Mimicking Real Teams:** It uses clear roles (Manager, Implementer) and proven processes, making AI collaboration more intuitive.
-*   **Smart Agent Management:** APM incorporates techniques like a **Memory Bank** (a shared project logbook), detailed **Markdown Prompts** for consistent agent behavior, and the concept of **Specialized Agents** for focused tasks. This provides a sophisticated workflow with robust error handling.
-*   **Efficient & Budget-friendly :** APM aims for a balance. It's designed to be streamlined and cost-effective, helping you get great results without "burning" through your tokens or API requests.
-*   **User-Centric Control:** This system puts you in the driver's seat. It emphasizes user guidance and oversight at critical points. If an agent struggles or context limits are hit, APM provides clear solutions like **Handover Protocols** (to smoothly switch to "fresh" agents) and relies on the **Memory Bank System** to keep the entire workflow aligned.
+```bash
+# Start a new writing project
+gitwrite init "my-novel"
+cd my-novel
 
-## Getting Started: 
+# Create your first file
+echo "# Chapter 1\n\nIt was a dark and stormy night..." > chapter1.md
 
-Here's how to get the core APM framework up and running for your project:
+# Save your progress
+gitwrite save "Started Chapter 1"
 
-**Accessing APM Assets:** You have a few options to get the APM prompts, guides and protocol definitions:
+# See your history
+gitwrite history
 
-1.  **Use the APM Template (Recommended for Custom Projects):**
-    *   Click the "Use this template" button on the [APM GitHub Repository](https://github.com/sdi2200262/agentic-project-management).
-    *   This creates *your own repository* pre-filled with the entire APM structure.
-    *   **Ideal Setup:** Clone *your new repository* to the root of your project workspace. This ensures the Manager Agent can easily reference all APM guides if you confirm full asset availability.
-2.  **Clone the Official APM Repository (Recommended for Direct Use & Updates):**
-    *   Clone the main [APM GitHub Repository](https://github.com/sdi2200262/agentic-project-management) directly into your project workspace, ideally at the root.
-    *   This gives you direct access to the latest version and all assets.
-3.  **Manual Copy-Pasting (Basic Usage):**
-    *   You can copy-paste the content of prompts (like `01_Initiation_Prompt.md`) directly from the official APM GitHub repository into your AI assistant as needed.
-    *   While this works, it requires more manual effort from you to provide guide contents when the Manager Agent requests them.
+# Create an alternative version to experiment
+gitwrite explore "alternate-opening"
+echo "# Chapter 1\n\nThe sun was shining brightly..." > chapter1.md
+gitwrite save "Trying a different opening"
 
-**Regardless of your choice, the key is for the APM assets (especially the `prompts/` directory) to be consistently accessible, ideally from the root of your project workspace if you intend for the Manager Agent to operate with full file awareness.**
+# Switch back to main version
+gitwrite switch main
 
-**Initiating APM within your Project:**
+# Compare the versions
+gitwrite compare main alternate-opening
+```
 
-1.  **Initial Prompt for Your Manager:** Navigate to `prompts/00_Initial_Manager_Setup/01_Initiation_Prompt.md` (either in your cloned APM repo, your template-based repo, or from the GitHub website).
-2.  **Copy & Paste:** Copy its *entire content*.
-3.  **Launch Your Manager Agent:** Paste this content as the very first message to your primary AI assistant (e.g., in a new Cursor chat tab). This AI will now become your first APM Manager Agent!
-4.  **Follow the Lead:** Your new Manager Agent, guided by this prompt, will then ask you questions to understand your project and start setting up your Implementation Plan and a Memory Bank System.
+### Working with Editors
 
-**Optional: Boosting APM with Cursor Rules (Recommended for Cursor Users)**
+```bash
+# Editor creates their own branch for suggestions
+git checkout -b editor-suggestions
+# Editor makes changes and commits them
 
-*   If you are using the **Cursor IDE**, APM provides a set of pre-defined [Cursor Rules](https://docs.cursor.com/context/rules) in the `rules/` directory (or `.cursor/rules/` in your project's workspace) designed to enhance agent reliability and workflow efficiency with minimal impact on context window usage.
-*   These rules target specific points in the APM workflow, providing context reinforcement to the Manager and the Implementation Agents.
-*   See the `rules/README.md` and the [Cursor Integration Guide](docs/04_Cursor_Integration_Guide.md) for easy setup instructions.
-*   **Concept for Other IDEs:** The principle of using IDE-specific, persistent, scoped instructions could potentially be adapted for other AI-integrated IDEs that offer similar rule-like or custom instruction features like Windsurf, Roo etc. If you explore this for another platform and find a viable approach, please consider sharing your insights by opening an issue or a Pull Request on the APM GitHub repository!
+# Author reviews editor's changes individually
+gitwrite review editor-suggestions
 
-## Dive Deeper
+# Author selectively accepts changes
+gitwrite cherry-pick abc1234  # Accept this specific change
+gitwrite cherry-pick def5678 --modify  # Accept this change with modifications
 
-This README gives you the essentials. For a more in-depth understanding of the APM workflow, advanced features, customization, and the technical details behind each component:
+# Merge accepted changes
+gitwrite merge editor-suggestions
+```
 
-*   🚀 **[Full APM Documentation](docs/)** - Your comprehensive guide.
-*   ⚙️ **[Example Cursor Rules](rules/)** - Optional rules to enhance APM if you're using the Cursor IDE. Check out the `rules/README.md` for how they work.
-*   🖱️ **[Cursor Integration Guide](docs/04_Cursor_Integration_Guide.md)** - Tips for using APM optimally within Cursor, including setting up project-specific rules.
+### Beta Reader Workflow
 
-*(Alternatively, you can always browse prompts and docs directly from [here.](https://github.com/sdi2200262/agentic-project-management))*
+```bash
+# Export manuscript for beta readers
+gitwrite export epub --version v1.0
 
-## Contributing
+# Beta reader annotations automatically create commits in their branch
+# Author reviews and integrates feedback
+gitwrite review beta-reader-jane
+gitwrite cherry-pick selected-feedback-commits
+```
 
-APM is an open-source project, and your ideas are welcome! Whether it's improving prompts, enhancing documentation, suggesting new features, or reporting bugs, flaws in the flow or anything faulty please feel free to open an issue or submit a pull request.
+## 📚 Documentation
 
-Please read [CONTRIBUTING.md](CONTRIBUTING.md) for details on the code of conduct and how to contribute.
+- **[User Guide](docs/user-guide.md)** - Complete guide for writers
+- **[Editorial Workflows](docs/editorial-workflows.md)** - Guide for editors and publishers
+- **[API Documentation](docs/api.md)** - REST API reference
+- **[SDK Documentation](docs/sdk.md)** - TypeScript SDK guide
+- **[Git Integration](docs/git-integration.md)** - How GitWrite leverages Git
+- **[Contributing](CONTRIBUTING.md)** - How to contribute to GitWrite
 
-## License
+## 🏗️ Architecture
+
+GitWrite is built as a multi-component platform:
+
+```
+┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
+│   Web Client    │    │  Mobile Reader  │    │  Writing Tools  │
+│   (React/TS)    │    │ (React Native)  │    │   (3rd Party)   │
+└─────────┬───────┘    └─────────┬───────┘    └─────────┬───────┘
+          │                      │                      │
+          └──────────────────────┼──────────────────────┘
+                                 │
+                     ┌───────────▼───────────┐
+                     │    TypeScript SDK     │
+                     │   (npm package)       │
+                     └───────────┬───────────┘
+                                 │
+                     ┌───────────▼───────────┐
+                     │      REST API         │
+                     │   (FastAPI/Python)    │
+                     └───────────┬───────────┘
+                                 │
+                     ┌───────────▼───────────┐
+                     │    GitWrite CLI       │
+                     │   (Python Click)      │
+                     └───────────┬───────────┘
+                                 │
+                     ┌───────────▼───────────┐
+                     │       Git Core        │
+                     │   (libgit2/pygit2)    │
+                     └───────────────────────┘
+```
+
+## 🛠️ Development
+
+### Prerequisites
+
+- Python 3.9+
+- Node.js 16+
+- Git 2.20+
+- Docker (for development environment)
+
+### Setup Development Environment
+
+```bash
+# Clone the repository
+git clone https://github.com/eristoddle/git-write.git
+cd git-write
+
+# Set up Python environment
+python -m venv venv
+source venv/bin/activate  # On Windows: venv\Scripts\activate
+
+# Install dependencies (when available)
+pip install -r requirements.txt  # or requirements-dev.txt for development
+
+# Run tests (when available)
+pytest
+
+# Start development (project-specific commands will be documented as they're implemented)
+```
+
+*Note: Development setup instructions will be updated as the project structure is finalized.*
+
+### Project Structure
+
+```
+git-write/
+├── README.md              # This file
+├── LICENSE                # MIT License
+├── .gitignore            # Git ignore rules
+├── requirements.txt       # Python dependencies
+├── setup.py              # Package setup
+├── src/                  # Source code
+│   └── gitwrite/         # Main package
+├── tests/                # Test files
+├── docs/                 # Documentation
+└── examples/             # Example projects and usage
+```
+
+*Note: The actual project structure may differ. Please check the repository directly for the current organization.*
+
+## 🤝 Contributing
+
+We welcome contributions! Please see our [Contributing Guide](CONTRIBUTING.md) for details.
+
+### Ways to Contribute
+
+- **🐛 Bug Reports**: Found a bug? [Open an issue](https://github.com/eristoddle/git-write/issues)
+- **💡 Feature Requests**: Have an idea? [Start a discussion](https://github.com/eristoddle/git-write/discussions)
+- **📝 Documentation**: Help improve our docs
+- **🔧 Code**: Submit pull requests for bug fixes or features
+- **🧪 Testing**: Help test new features and report issues
+- **🎨 Design**: Improve user interface and experience
+
+## 🌟 Use Cases
+
+### Fiction Writers
+- **Novel Writing**: Track character development, plot changes, and multiple endings
+- **Short Stories**: Maintain collections with version history
+- **Collaborative Fiction**: Co-author stories with real-time collaboration
+
+### Academic Writers
+- **Research Papers**: Track citations, methodology changes, and revisions
+- **Dissertations**: Manage chapters, advisor feedback, and committee suggestions
+- **Grant Proposals**: Version control for funding applications
+
+### Professional Writers
+- **Content Marketing**: Track blog posts, whitepapers, and marketing copy
+- **Technical Documentation**: Maintain software documentation with code integration
+- **Journalism**: Version control for articles and investigative pieces
+
+### Publishers & Editors
+- **Manuscript Management**: Track submissions through editorial process
+- **Multi-Author Projects**: Coordinate anthology and collection projects
+- **Quality Control**: Systematic review and approval workflows
+
+## 🔗 Integrations
+
+GitWrite integrates with popular writing and development tools:
+
+- **Writing Tools**: Scrivener, Ulysses, Bear, Notion
+- **Git Hosting**: GitHub, GitLab, Bitbucket, SourceForge
+- **Export Formats**: Pandoc integration for EPUB, PDF, DOCX, HTML
+- **Editorial Tools**: Track Changes, Google Docs, Microsoft Word
+- **Publishing Platforms**: Integration APIs for self-publishing platforms
+
+## 📊 Roadmap
+
+### Core Features (In Development)
+- [ ] Core Git integration and CLI
+- [ ] Word-by-word diff engine
+- [ ] Basic project management commands
+- [ ] Git repository compatibility
+- [ ] Writer-friendly command interface
+
+### Planned Features
+- [ ] Web interface
+- [ ] Mobile EPUB reader
+- [ ] Beta reader workflow
+- [ ] TypeScript SDK
+- [ ] Git hosting service integration
+- [ ] Advanced selective merge interface
+- [ ] Plugin system for writing tools
+- [ ] Real-time collaboration features
+- [ ] Advanced export options
+- [ ] Workflow automation
+
+### Future Enhancements
+- [ ] AI-powered writing assistance integration
+- [ ] Advanced analytics and insights
+- [ ] Team management features
+- [ ] Enterprise deployment options
+
+*Note: This project is in early development. Features and timelines may change based on community feedback and development progress.*
+
+## 📄 License
 
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
 
-<p align="center">
-  <img src="assets/cobuter-man.png" alt="CobuterMan" width="150"/>
-</p>
+## 🙏 Acknowledgments
 
-## Key Improvements in Version 0.3.0
+- **Git Community**: For creating the foundational technology that makes GitWrite possible
+- **Writing Community**: For feedback and guidance on writing workflows
+- **Open Source Contributors**: For libraries and tools that power GitWrite
+- **Beta Testers**: For helping refine the user experience
 
-Version 0.3.0 focuses on enhancing robustness, agent output consistency, the clarity of planning, and the reliability of context transfer during handovers. Key changes include:
+## 📞 Support
 
-*   **Enhanced Memory System:** 
-    *   Stricter validation of Memory Bank structures (directories, log files) against the `Implementation_Plan.md` to ensure consistency and prevent mismanagement (see `prompts/01_Manager_Agent_Core_Guides/02_Memory_Bank_Guide.md`).
-    *   Improved log quality guidelines in `prompts/02_Utility_Prompts_And_Format_Definitions/Memory_Bank_Log_Format.md` emphasizing concise, informative entries with clear examples.
-*   **More Detailed and Consistent Implementation Planning & Task Assignment:**
-    *   The `prompts/01_Manager_Agent_Core_Guides/01_Implementation_Plan_Guide.md` now mandates:
-        *   Stronger emphasis on explicit agent assignment for every task to ensure balanced workload distribution and clarity.
-        *   Inclusion of brief "Guiding Notes" (e.g., key methods, libraries, parameters) within each task's action steps. This provides crucial direction directly in the plan to ensure methodological consistency across tasks and agents.
-    *   The `prompts/01_Manager_Agent_Core_Guides/03_Task_Assignment_Prompts_Guide.md` has been updated to ensure Manager Agents explicitly use and expand upon these "Guiding Notes" from the `Implementation_Plan.md` when creating detailed, actionable prompts for Implementation Agents.
-*   **More Robust Handover Protocol:**
-    *   The handover process now includes a step for the outgoing agent to explicitly capture and transfer the most recent conversational context and unlogged user directives, ensuring the incoming agent has the freshest layer of user intent (see `prompts/01_Manager_Agent_Core_Guides/05_Handover_Protocol_Guide.md`).
-    *   The `prompts/02_Utility_Prompts_And_Format_Definitions/Handover_Artifact_Format.md` has been restructured for enhanced clarity and usability in documenting handover context.
+- **Documentation**: [docs.gitwrite.io](https://docs.gitwrite.io)
+- **Community**: [GitHub Discussions](https://github.com/eristoddle/git-write/discussions)
+- **Issues**: [GitHub Issues](https://github.com/eristoddle/git-write/issues)
+- **Email**: support@gitwrite.io
+
+---
+
+**Made with ❤️ for writers everywhere**
+
+*GitWrite: Where every word matters, and every change is remembered.*
