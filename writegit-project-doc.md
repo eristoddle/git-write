@@ -95,7 +95,18 @@ A modern web interface providing full GitWrite functionality through a browser, 
   - Side-by-side comparison view leveraging Git's diff output
   - Export comparison reports using Git's diff formatting options
 
-#### FR-008: Publishing Workflow Support
+#### FR-008: Selective Change Integration
+- **Priority:** High
+- **Description:** Support selective acceptance of editorial changes using Git's cherry-pick capabilities
+- **Acceptance Criteria:**
+  - Authors can review individual commits from editor branches
+  - Selective application of specific changes using Git cherry-pick
+  - Word-level and line-level change selection interface
+  - Partial commit application with conflict resolution
+  - Ability to modify commits during cherry-pick process
+  - Integration with Git's interactive rebase for change refinement
+
+#### FR-009: Publishing Workflow Support
 - **Priority:** Medium
 - **Description:** Support complete manuscript lifecycle using Git's workflow capabilities
 - **Acceptance Criteria:**
@@ -202,7 +213,19 @@ A modern web interface providing full GitWrite functionality through a browser, 
 - And I can easily identify what was added, removed, or changed
 - And I can use `git diff` for technical details if needed
 
-#### US-011: Git Compatibility
+#### US-013: Reviewing Changes
+**As an** editor  
+**I want to** review and approve changes from writers and other contributors  
+**So that** I can maintain quality control over the project  
+
+**Acceptance Criteria:**
+- Given a writer has submitted changes
+- When I review the submission
+- Then I can see exactly what changed with word-level precision
+- And I can approve, reject, or request modifications
+- And the author has final approval for merges to main branch
+
+#### US-014: Git Compatibility
 **As a** technical writer  
 **I want to** use GitWrite alongside standard Git commands  
 **So that** I can leverage my existing Git knowledge and tools  
@@ -276,17 +299,41 @@ A modern web interface providing full GitWrite functionality through a browser, 
 - And changes flow through a defined approval process
 - And we can track progress through the editorial pipeline
 
-#### US-010: Reviewing Changes
-**As an** editor  
-**I want to** review and approve changes from writers and other contributors  
-**So that** I can maintain quality control over the project  
+#### US-010: Selective Editorial Change Integration
+**As an** author  
+**I want to** selectively accept individual changes from my editor  
+**So that** I can maintain creative control while incorporating useful feedback  
 
 **Acceptance Criteria:**
-- Given a writer has submitted changes
-- When I review the submission
-- Then I can see exactly what changed with word-level precision
-- And I can approve, reject, or request modifications
-- And the author has final approval for merges to main branch
+- Given my editor has submitted multiple changes in their branch
+- When I review their commits using GitWrite
+- Then I can see each change individually with word-level highlighting
+- And I can cherry-pick specific commits or parts of commits to my main branch
+- And I can modify changes during the integration process
+
+#### US-011: Granular Change Review
+**As an** author  
+**I want to** review editorial changes at different levels of granularity  
+**So that** I can accept some suggestions while rejecting others from the same editing session  
+
+**Acceptance Criteria:**
+- Given an editor has made multiple types of changes in a single commit
+- When I review the changes using GitWrite's selective merge interface
+- Then I can accept line-level, paragraph-level, or word-level changes independently
+- And I can split commits to separate different types of edits
+- And I can provide feedback on why certain changes were rejected
+
+#### US-012: Interactive Change Integration
+**As an** author  
+**I want to** interactively modify editorial suggestions during integration  
+**So that** I can adapt suggestions to fit my voice and style  
+
+**Acceptance Criteria:**
+- Given I'm reviewing an editor's suggestions
+- When I use GitWrite's interactive merge tool
+- Then I can modify the suggested text before accepting it
+- And I can combine multiple suggestions into a single change
+- And the final integrated change is properly attributed to both author and editor
 
 ### Epic 3: Tool Integration
 
@@ -416,6 +463,13 @@ GET    /api/v1/projects/{id}/beta-feedback # Git branch listing
 POST   /api/v1/beta-feedback/{id}/annotations # Git commits for annotations
 PUT    /api/v1/annotations/{id}/status  # Git merge operations
 
+# Selective change integration (cherry-pick workflows)
+GET    /api/v1/projects/{id}/commits/{branch} # List commits for review
+POST   /api/v1/projects/{id}/cherry-pick      # Cherry-pick specific commits
+PUT    /api/v1/projects/{id}/cherry-pick/{id}/modify # Modify commit during cherry-pick
+POST   /api/v1/projects/{id}/interactive-merge # Start interactive merge session
+GET    /api/v1/projects/{id}/merge-preview     # Preview merge without applying
+
 # Git hosting integration
 POST   /api/v1/projects/{id}/collaborators # Git repository permissions
 PUT    /api/v1/projects/{id}/governance # Git branch protection rules
@@ -471,6 +525,9 @@ class ExportsApi {
 - Project dashboard (Git repository browser)
 - File editor with syntax highlighting
 - Visual diff viewer (enhanced Git diff display)
+- **Interactive selective merge interface** for cherry-picking changes
+- **Commit-by-commit review system** for editorial feedback
+- **Word-level change acceptance/rejection tools**
 - Git collaboration tools (pull requests, branch management)
 - Beta reader management (Git branch workflows)
 - Export functionality (Git archive integration)
@@ -668,9 +725,12 @@ class Comparison:
 - [ ] Offline Git repository management
 - [ ] Git branch creation for beta reader feedback
 
-#### Sprint 11-12: Advanced Git Features & Collaboration
+#### Sprint 11-12: Advanced Git Features & Selective Integration
 - [ ] Git hosting service integration (GitHub, GitLab, Bitbucket)
 - [ ] Pull request workflow implementation
+- [ ] **Cherry-pick interface for selective change integration**
+- [ ] **Interactive merge tools with word-level selection**
+- [ ] **Commit splitting and modification capabilities**
 - [ ] Git branch protection and governance features
 - [ ] Git webhook system for real-time updates
 - [ ] Advanced Git operations (rebase, cherry-pick for editorial workflows)
@@ -688,8 +748,11 @@ class Comparison:
 - [ ] Basic version control operations
 - [ ] Export functionality integration
 
-#### Sprint 15-16: Advanced UI & Mobile Completion
-- [ ] Visual diff viewer
+#### Sprint 15-16: Advanced UI & Selective Integration Features
+- [ ] Visual diff viewer with interactive change selection
+- [ ] **Cherry-pick interface for granular change acceptance**
+- [ ] **Interactive merge conflict resolution**
+- [ ] **Word-level and line-level change modification tools**
 - [ ] Collaboration interface
 - [ ] Beta reader management dashboard
 - [ ] Mobile app annotation sync
@@ -903,6 +966,13 @@ gitwrite explore "alt-end"   → git checkout -b alternate-ending
 gitwrite switch main         → git checkout main
 gitwrite merge alt-end       → git merge alternate-ending
 gitwrite sync                → git pull && git push
+
+# Selective Change Integration
+gitwrite review editor-branch    → git log editor-branch --oneline (with change preview)
+gitwrite cherry-pick abc123      → git cherry-pick abc123 (with interactive modification)
+gitwrite selective-merge branch  → Interactive tool using git cherry-pick + git apply --index
+gitwrite split-commit abc123     → git rebase -i (to split commits)
+gitwrite modify-change abc123    → git cherry-pick -n abc123 + manual editing + git commit
 
 # Beta Reader Workflow
 gitwrite export epub         → git archive HEAD --format=tar | (convert to EPUB)
