@@ -307,13 +307,6 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 - **Open Source Contributors**: For libraries and tools that power GitWrite
 - **Beta Testers**: For helping refine the user experience
 
-## 📞 Support
-
-- **Documentation**: [docs.gitwrite.io](https://docs.gitwrite.io)
-- **Community**: [GitHub Discussions](https://github.com/eristoddle/git-write/discussions)
-- **Issues**: [GitHub Issues](https://github.com/eristoddle/git-write/issues)
-- **Email**: support@gitwrite.io
-
 ---
 
 **Made with ❤️ for writers everywhere**
