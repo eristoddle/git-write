@@ -15,7 +15,7 @@ dependencies = [
 
 [tool.poetry]
 packages = [
-    { include = "gitwrite_cli", from = "src" },
+    { include = "gitwrite_cli" },
 ]
 
 [build-system]

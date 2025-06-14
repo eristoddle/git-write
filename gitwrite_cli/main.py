@@ -1,3 +1,4 @@
+# Test comment to check write access.
 import click
 import pygit2
 import os
@@ -723,6 +724,290 @@ def compare(ref1_str, ref2_str):
         click.echo("Error: Rich library is not installed. Please ensure it is in pyproject.toml and installed.", err=True)
     except Exception as e:
         click.echo(f"An unexpected error occurred during compare: {e}", err=True)
+
+
+@cli.command()
+@click.option("--remote", "remote_name", default="origin", help="The remote to sync with.")
+@click.option("--branch", "branch_name_opt", default=None, help="The branch to sync. Defaults to the current branch.")
+def sync(remote_name, branch_name_opt):
+    """Fetches changes from a remote, integrates them, and pushes local changes."""
+    try:
+        repo_path_str = pygit2.discover_repository(str(Path.cwd()))
+        if repo_path_str is None:
+            click.echo("Error: Not a Git repository (or any of the parent directories).", err=True)
+            return
+
+        repo = pygit2.Repository(repo_path_str)
+
+        if repo.is_bare:
+            click.echo("Error: Cannot sync in a bare repository.", err=True)
+            return
+
+        if repo.is_empty or repo.head_is_unborn:
+            click.echo("Error: Repository is empty or HEAD is unborn. Please make some commits first.", err=True)
+            # Potentially allow fetch if remote exists and has branches, but pull/push would fail.
+            # For MVP, require existing commit.
+            return
+
+        # Determine current branch if not specified
+        if branch_name_opt:
+            current_branch_ref_name = f"refs/heads/{branch_name_opt}"
+            current_branch = repo.lookup_reference(current_branch_ref_name) # pygit2.KeyError if not found
+            if not current_branch or not current_branch.is_branch():
+                click.echo(f"Error: Branch '{branch_name_opt}' not found or is not a local branch.", err=True)
+                return
+        else:
+            if repo.head_is_detached:
+                click.echo("Error: HEAD is detached. Please switch to a branch to sync.", err=True)
+                return
+            current_branch = repo.head # This is a reference object e.g. refs/heads/main
+            branch_name_opt = current_branch.shorthand # e.g. main
+
+        click.echo(f"Syncing branch '{branch_name_opt}' with remote '{remote_name}'...")
+
+        # --- Remote Handling & Fetch Logic (Step 3 & 4) ---
+        try:
+            remote = repo.remotes[remote_name]
+        except KeyError:
+            click.echo(f"Error: Remote '{remote_name}' not found.", err=True)
+            return
+        except Exception as e:
+            click.echo(f"Error accessing remote '{remote_name}': {e}", err=True)
+            return
+
+        click.echo(f"Fetching from remote '{remote_name}'...")
+        try:
+            # You can add pygit2.RemoteCallbacks for progress, credentials, etc.
+            # For now, keeping it simple.
+            stats = remote.fetch() # stats object has info like total_objects, received_bytes etc.
+            if hasattr(stats, 'received_objects') and hasattr(stats, 'total_objects'):
+                 click.echo(f"Fetch complete. Received {stats.received_objects}/{stats.total_objects} objects.")
+            else:
+                 click.echo("Fetch complete. (No detailed stats available from fetch operation)")
+        except pygit2.GitError as e:
+            click.echo(f"Error during fetch: {e}", err=True)
+            # Check for specific error messages if needed, e.g. authentication
+            if "authentication required" in str(e).lower():
+                click.echo("Hint: Ensure your SSH keys or credential manager are configured correctly.", err=True)
+            return
+        except Exception as e: # Catch other potential errors during fetch
+            click.echo(f"An unexpected error occurred during fetch: {e}", err=True)
+            return
+
+        # --- Pull Logic (Step 5) ---
+        click.echo("Attempting to integrate remote changes...")
+
+        # Ensure current_branch is the reference to the local branch, not just HEAD's target OID
+        # current_branch was already defined as repo.lookup_reference(current_branch_ref_name) or repo.head
+
+        local_commit_oid = current_branch.target
+        local_commit = repo.get(local_commit_oid) # Get the commit object
+
+        remote_tracking_branch_name = f"{remote_name}/{branch_name_opt}"
+        try:
+            # Ensure we are looking for the branch in the correct namespace
+            # pygit2 uses 'refs/remotes/origin/main' as the full name
+            remote_branch_ref = repo.lookup_reference(f"refs/remotes/{remote_tracking_branch_name}")
+            if not remote_branch_ref: # Should raise KeyError if not found, but double check
+                 raise KeyError(f"Remote tracking branch '{remote_tracking_branch_name}' not found.")
+            their_commit_oid = remote_branch_ref.target
+            their_commit = repo.get(their_commit_oid)
+        except KeyError:
+            click.echo(f"Error: Remote tracking branch '{remote_tracking_branch_name}' not found. Has it been fetched?", err=True)
+            return
+        except Exception as e:
+            click.echo(f"Error looking up remote tracking branch '{remote_tracking_branch_name}': {e}", err=True)
+            return
+
+        if local_commit_oid == their_commit_oid:
+            click.echo("Local branch is already up-to-date with remote.")
+        else:
+            # Perform merge analysis
+            # We want to merge 'their_commit' (remote) INTO 'local_commit' (our current HEAD of the branch)
+
+            # Ensure HEAD is pointing to our local branch before merge_analysis if we rely on default for our_head
+            if repo.head.target != local_commit_oid:
+                 repo.set_head(current_branch.name) # current_branch.name is like 'refs/heads/main'
+
+            merge_result, _ = repo.merge_analysis(their_commit_oid) # our_head defaults to repo.head.target
+            # Old call: repo.merge_analysis(their_commit_oid, local_commit_oid)
+
+
+            if merge_result & pygit2.GIT_MERGE_ANALYSIS_UP_TO_DATE:
+                click.echo(f"Branch '{branch_name_opt}' is already up-to-date with '{remote_tracking_branch_name}'.")
+
+            elif merge_result & pygit2.GIT_MERGE_ANALYSIS_FASTFORWARD:
+                click.echo(f"Attempting Fast-forward for branch '{branch_name_opt}'...")
+                try:
+                    # Update the local branch reference to point to the remote commit
+                    current_branch.set_target(their_commit_oid)
+
+                    # Checkout the updated local branch to update HEAD, index, and working directory
+                    # Using GIT_CHECKOUT_FORCE is generally safe for fast-forwards.
+                    # It ensures the working directory matches the new commit.
+                    repo.checkout(current_branch.name, strategy=pygit2.GIT_CHECKOUT_FORCE)
+
+                    # No need to call repo.set_head() separately if checking out a branch reference directly,
+                    # as checkout should handle updating HEAD to point to this branch.
+                    click.echo(f"Fast-forwarded '{branch_name_opt}' to match '{remote_tracking_branch_name}'.")
+                except pygit2.GitError as e:
+                    click.echo(f"Error during fast-forward: {e}. Your branch may be in an inconsistent state.", err=True)
+                    return
+
+            elif merge_result & pygit2.GIT_MERGE_ANALYSIS_NORMAL:
+                click.echo(f"Attempting Normal merge of '{remote_tracking_branch_name}' into '{branch_name_opt}'...")
+                try:
+                    repo.merge(their_commit_oid) # This attempts to merge 'their' commit into the current HEAD (index)
+                    repo.index.write() # Persist the index, especially if it now contains conflicts.
+
+                    has_actual_conflicts = False
+                    if repo.index.conflicts is not None:
+                        for _conflict_entry in repo.index.conflicts: # Try to iterate
+                            has_actual_conflicts = True
+                            break
+
+                    if has_actual_conflicts:
+                        click.echo("Conflicts detected. Please resolve them manually and then run 'gitwrite save'.", err=True)
+                        # List conflicting files
+                        conflicting_files_display = []
+                        # Re-iterate to get paths, since we broke out of the first loop
+                        for conflict_item_tuple in repo.index.conflicts:
+                            # Each conflict_item_tuple can be (ancestor, ours, theirs)
+                            # We want the path, which should be consistent across them if they exist
+                            path_to_display = "unknown_path"
+                            if conflict_item_tuple[1] and conflict_item_tuple[1].path: # Our entry
+                                path_to_display = conflict_item_tuple[1].path
+                            elif conflict_item_tuple[2] and conflict_item_tuple[2].path: # Their entry
+                                path_to_display = conflict_item_tuple[2].path
+                            elif conflict_item_tuple[0] and conflict_item_tuple[0].path: # Ancestor entry
+                                path_to_display = conflict_item_tuple[0].path
+                            if path_to_display not in conflicting_files_display:
+                                 conflicting_files_display.append(path_to_display)
+
+                        if conflicting_files_display:
+                             click.echo("Conflicting files: " + ", ".join(sorted(conflicting_files_display)), err=True)
+                        # Do not proceed with push, user must resolve.
+                        # repo.state_cleanup() # DO NOT cleanup state here, user needs to see it.
+                        return
+                    else:
+                        # No conflicts, create merge commit
+                        click.echo("No conflicts. Creating merge commit...")
+                        try:
+                            author = repo.default_signature
+                            committer = repo.default_signature
+                        except pygit2.GitError: # Fallback if not configured
+                            author_name = os.environ.get("GIT_AUTHOR_NAME", "GitWrite User")
+                            author_email = os.environ.get("GIT_AUTHOR_EMAIL", "user@gitwrite.io")
+                            author = pygit2.Signature(author_name, author_email)
+                            committer = author
+
+                        tree = repo.index.write_tree()
+                        # Parents for merge commit: current local commit and the commit from remote branch
+                        parents = [local_commit_oid, their_commit_oid]
+                        merge_commit_message = f"Merge remote-tracking branch '{remote_tracking_branch_name}' into {branch_name_opt}"
+
+                        repo.create_commit(
+                            current_branch.name, # Update the local branch reference
+                            author,
+                            committer,
+                            merge_commit_message,
+                            tree,
+                            parents
+                        )
+                        repo.state_cleanup() # Clean up merge state (e.g., MERGE_HEAD)
+                        click.echo("Successfully merged remote changes.")
+
+                except pygit2.GitError as e:
+                    click.echo(f"Error during merge process: {e}", err=True)
+                    repo.state_cleanup() # Attempt to clean up state on error
+                    return
+
+            elif merge_result & pygit2.GIT_MERGE_ANALYSIS_UNBORN:
+                 click.echo(f"Merge not possible: '{branch_name_opt}' or '{remote_tracking_branch_name}' is an unborn branch.", err=True)
+                 return
+            else: # Other merge analysis results
+                click.echo(f"Merge not possible. Analysis result: {merge_result}. Local and remote histories may have diverged significantly.", err=True)
+                return
+
+        # --- Push Logic (Step 6) ---
+        # We should only push if the local branch was successfully updated (either FF or merge commit)
+        # or if it was already up-to-date and potentially had local commits to push.
+
+        # Check if the remote tracking branch is ahead of our current local branch AFTER potential merge/ff.
+        # This check is more about whether there's anything TO push.
+        # Re-fetch local_commit_oid as it might have changed after a merge commit.
+        local_commit_oid_after_pull = repo.lookup_reference(current_branch.name).target
+
+        # Get the new remote tracking branch's OID post-fetch (their_commit_oid should still be valid from fetch stage)
+        # If local_commit_oid_after_pull is now equal to their_commit_oid, and there were no local changes prior to pull that
+        # were not part_of_their_commit_oid, then push might not be needed or might be up-to-date.
+        # However, a simpler model is: if we fetched and merged, the working assumption is to try to push the result.
+        # A more robust check would be to see if current_branch.target is an ancestor of remote_branch_ref.target
+        # If so, push is rejected (non-fast-forward) unless forced.
+        # Or, if remote_branch_ref.target is an ancestor of current_branch.target, then push is fine.
+
+        # For simplicity: Attempt push. Git server will reject non-fast-forwards if necessary.
+        # More advanced: Check if local branch is ahead of its remote counterpart.
+        # upstream_ref = repo.branches.get(f"{remote_name}/{branch_name_opt}", pygit2.GIT_BRANCH_REMOTE)
+        upstream_ref = repo.lookup_reference(f"refs/remotes/{remote_name}/{branch_name_opt}") # Use the one from fetch
+
+        if not upstream_ref:
+            click.echo(f"Warning: Could not find remote tracking branch {remote_name}/{branch_name_opt} to compare for push eligibility. Proceeding with push attempt.", err=True)
+        elif local_commit_oid_after_pull == upstream_ref.target:
+            click.echo(f"Local branch '{branch_name_opt}' is aligned with '{remote_name}/{branch_name_opt}'. Nothing to push.")
+            # This means fetch + pull resulted in local being same as remote, and there were no further local commits.
+            # Or, local was already ahead, and pull did nothing or was FF, and now we want to push these local changes.
+            # This specific check might be too simplistic.
+            # A better check: Are there any local commits that are not on the remote tracking branch?
+            # common_ancestor = repo.merge_base(local_commit_oid_after_pull, upstream_ref.target)
+            # if common_ancestor == local_commit_oid_after_pull and local_commit_oid_after_pull != upstream_ref.target:
+            #    click.echo(f"Remote '{remote_name}/{branch_name_opt}' is ahead. This should have been handled by pull. Won't push.")
+            #    return
+            # elif common_ancestor == upstream_ref.target and local_commit_oid_after_pull != upstream_ref.target:
+            #    click.echo(f"Local branch '{branch_name_opt}' is ahead. Proceeding with push.")
+            # else: # Diverged or up-to-date
+            #    if local_commit_oid_after_pull == upstream_ref.target:
+            #        click.echo(f"Local branch '{branch_name_opt}' is aligned with '{remote_name}/{branch_name_opt}'. Nothing to push.")
+            #        return
+            #    else: # Diverged
+            #        click.echo(f"Local and remote branches have diverged. Merge should have handled this. Push might fail.", err=True)
+
+
+        # The critical check is really if local HEAD is ahead of remote HEAD.
+        # If after fetch & merge, local_commit_oid_after_pull is an ancestor of their_commit_oid, something is wrong.
+        # It means we merged "backwards" or FF'd to an older state. This shouldn't happen with the previous logic.
+
+        # If local_commit_oid (original local before pull) was different from local_commit_oid_after_pull (after merge/FF)
+        # OR if there were local changes that were not part of the main fetch/merge cycle (e.g. user committed something else)
+        # then a push is relevant.
+
+        # The simplest strategy is to just try pushing the current local branch reference.
+        # The remote will enforce fast-forward rules.
+        click.echo(f"Attempting to push local changes from '{branch_name_opt}' to '{remote_name}/{branch_name_opt}'...")
+        try:
+            # Construct the refspec: refs/heads/local_branch:refs/heads/remote_branch
+            refspec = f"refs/heads/{branch_name_opt}:refs/heads/{branch_name_opt}"
+            remote.push([refspec]) # Add callbacks for status/errors if needed
+            click.echo("Push successful.")
+        except pygit2.GitError as e:
+            click.echo(f"Error during push: {e}", err=True)
+            if "non-fast-forward" in str(e).lower():
+                click.echo("Hint: The remote has changes that were not integrated locally. Try running sync again or manually resolving.", err=True)
+            elif "authentication required" in str(e).lower():
+                click.echo("Hint: Ensure your SSH keys or credential manager are configured for push access.", err=True)
+            # No return here, as sync might have partially succeeded (fetch/pull)
+        except Exception as e:
+            click.echo(f"An unexpected error occurred during push: {e}", err=True)
+            # No return here
+
+        click.echo(f"Sync process for branch '{branch_name_opt}' with remote '{remote_name}' completed.")
+
+    except pygit2.GitError as e:
+        click.echo(f"GitError during sync: {e}", err=True)
+    except KeyError as e: # For cases like invalid branch name leading to lookup_reference failure
+        click.echo(f"Error: {e}", err=True)
+    except Exception as e:
+        click.echo(f"An unexpected error occurred during sync: {e}", err=True)
 
 
 if __name__ == "__main__":
