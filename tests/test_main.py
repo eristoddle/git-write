@@ -400,4 +400,340 @@ def test_sync_with_conflicts(runner, local_repo, bare_remote_repo, tmp_path):
     assert remote_branch_ref_after_sync.target == remote_commit_pushed_to_remote, "Remote should not have been updated due to conflict."
 
 
-# More tests to come
+# #####################
+# # Revert Command Tests
+# #####################
+
+def test_revert_successful_non_merge(local_repo, runner):
+    """Test successful revert of a non-merge commit."""
+    os.chdir(local_repo.workdir)
+
+    # Commit 1: Initial file (already done by fixture, let's use it or make a new one for clarity)
+    # The local_repo fixture makes an "initial.txt" with "Initial commit"
+    initial_file_path = Path("initial.txt")
+    assert initial_file_path.exists()
+    original_content = initial_file_path.read_text()
+    commit1_hash = local_repo.head.target
+
+    # Commit 2: Modify file
+    modified_content = original_content + "More content.\n"
+    make_commit(local_repo, "initial.txt", modified_content, "Modify initial.txt")
+    commit2_hash = local_repo.head.target
+    commit2_obj = local_repo[commit2_hash]
+    assert commit1_hash != commit2_hash
+
+    # Action: Revert Commit 2
+    result = runner.invoke(cli, ["revert", str(commit2_hash)])
+    assert result.exit_code == 0, f"Revert command failed: {result.output}"
+
+    # Verification
+    assert f"Successfully reverted commit {commit2_obj.short_id}" in result.output
+
+    # Extract short hash from output "New commit: <short_hash>"
+    # Output format is "Successfully reverted commit {reverted_short_id}. New commit: {new_commit_short_id}"
+    revert_commit_hash_short = result.output.strip().split("New commit: ")[-1][:7]
+    revert_commit = local_repo.revparse_single(revert_commit_hash_short)
+    assert revert_commit is not None, f"Could not find revert commit with short hash {revert_commit_hash_short}"
+    assert local_repo.head.target == revert_commit.id
+
+    expected_revert_msg_start = f"Revert \"{commit2_obj.message.splitlines()[0]}\""
+    assert revert_commit.message.startswith(expected_revert_msg_start)
+
+    # Check working directory state: file.txt should be back to Commit 1's state (original_content)
+    assert initial_file_path.exists()
+    assert initial_file_path.read_text() == original_content
+
+    # Check that the tree of the revert commit matches the tree of commit1
+    assert revert_commit.tree.id == local_repo[commit1_hash].tree.id
+
+
+def test_revert_invalid_commit_ref(local_repo, runner):
+    """Test revert with an invalid commit reference."""
+    os.chdir(local_repo.workdir)
+    # local_repo fixture already makes an initial commit.
+
+    result = runner.invoke(cli, ["revert", "non_existent_hash"])
+    assert result.exit_code != 0 # Should fail
+    assert "Error: Invalid or ambiguous commit reference 'non_existent_hash'" in result.output
+
+
+def test_revert_dirty_working_directory(local_repo, runner):
+    """Test reverting in a dirty working directory."""
+    os.chdir(local_repo.workdir)
+
+    file_path = Path("changeable_file.txt")
+    file_path.write_text("Stable content.\n")
+    make_commit(local_repo, str(file_path.name), file_path.read_text(), "Add changeable_file.txt")
+    commit_hash_to_revert = local_repo.head.target
+
+    # Modify the file without committing
+    dirty_content = "Dirty content that should prevent revert.\n"
+    file_path.write_text(dirty_content)
+
+    result = runner.invoke(cli, ["revert", str(commit_hash_to_revert)])
+    assert result.exit_code != 0 # Should fail
+    assert "Error: Your working directory or index has uncommitted changes." in result.output
+    assert "Please commit or stash them before attempting to revert." in result.output
+
+    # Ensure the file still has the dirty content
+    assert file_path.read_text() == dirty_content
+    # Ensure HEAD hasn't moved
+    assert local_repo.head.target == commit_hash_to_revert
+
+
+def test_revert_initial_commit(local_repo, runner):
+    """Test reverting the initial commit made by the fixture."""
+    os.chdir(local_repo.workdir)
+
+    initial_commit_hash = local_repo.head.target # This is the "Initial commit" from the fixture
+    initial_commit_obj = local_repo[initial_commit_hash]
+    initial_file_path = Path("initial.txt")
+    assert initial_file_path.exists() # Verify setup by fixture
+
+    # Action: Revert the initial commit
+    result = runner.invoke(cli, ["revert", str(initial_commit_hash)])
+    assert result.exit_code == 0, f"Revert command failed: {result.output}"
+
+    # Verification
+    assert f"Successfully reverted commit {initial_commit_obj.short_id}" in result.output
+
+    revert_commit_hash_short = result.output.strip().split("New commit: ")[-1][:7]
+    revert_commit = local_repo.revparse_single(revert_commit_hash_short)
+    assert revert_commit is not None
+    assert local_repo.head.target == revert_commit.id
+
+    expected_revert_msg_start = f"Revert \"{initial_commit_obj.message.splitlines()[0]}\""
+    assert revert_commit.message.startswith(expected_revert_msg_start)
+
+    # Check working directory state: initial_file.txt should be gone
+    assert not initial_file_path.exists()
+
+    # The repository should be "empty" in terms of tracked files in the revert commit's tree
+    revert_commit_tree = revert_commit.tree
+    assert len(revert_commit_tree) == 0, "Tree of revert commit should be empty"
+
+
+def test_revert_a_revert_commit(local_repo, runner):
+    """Test reverting a revert commit restores original state."""
+    os.chdir(local_repo.workdir)
+
+    # Commit A: A new file for this test
+    file_path = Path("story_for_revert_test.txt")
+    original_content = "Chapter 1: The adventure begins.\n"
+    make_commit(local_repo, str(file_path.name), original_content, "Commit A: Add story_for_revert_test.txt")
+    commit_A_hash = local_repo.head.target
+    commit_A_obj = local_repo[commit_A_hash]
+
+    # Revert Commit A (this creates Commit B)
+    result_revert_A = runner.invoke(cli, ["revert", str(commit_A_hash)])
+    assert result_revert_A.exit_code == 0, f"Reverting Commit A failed: {result_revert_A.output}"
+    commit_B_short_hash = result_revert_A.output.strip().split("New commit: ")[-1][:7]
+    commit_B_obj = local_repo.revparse_single(commit_B_short_hash)
+    assert commit_B_obj is not None
+
+    # Verify file is gone after first revert
+    assert not file_path.exists(), "File should be deleted by first revert"
+    expected_msg_B_start = f"Revert \"{commit_A_obj.message.splitlines()[0]}\""
+    assert commit_B_obj.message.startswith(expected_msg_B_start)
+
+    # Action: Revert Commit B (the revert commit)
+    result_revert_B = runner.invoke(cli, ["revert", commit_B_obj.short_id])
+    assert result_revert_B.exit_code == 0, f"Failed to revert Commit B: {result_revert_B.output}"
+
+    commit_C_short_hash = result_revert_B.output.strip().split("New commit: ")[-1][:7]
+    commit_C_obj = local_repo.revparse_single(commit_C_short_hash)
+    assert commit_C_obj is not None
+
+    # Verification for Commit C
+    expected_msg_C_start = f"Revert \"{commit_B_obj.message.splitlines()[0]}\""
+    assert commit_C_obj.message.startswith(expected_msg_C_start)
+
+    # Check working directory: story_for_revert_test.txt should be back with original content
+    assert file_path.exists(), "File should reappear after reverting the revert"
+    assert file_path.read_text() == original_content
+
+    # The tree of Commit C should be identical to the tree of Commit A
+    assert commit_C_obj.tree.id == commit_A_obj.tree.id
+
+
+def test_revert_successful_merge_commit(local_repo, runner):
+    """Test successful revert of a merge commit using --mainline."""
+    os.chdir(local_repo.workdir)
+
+    # Base commit (C1) - already exists from fixture ("initial.txt")
+    c1_hash = local_repo.head.target
+    main_branch_name = local_repo.head.shorthand # usually "master" or "main"
+
+    # Create branch-A from C1, add commit C2a changing fileA.txt
+    branch_A_name = "branch-A"
+    file_A_path = Path("fileA.txt")
+    content_A = "Content for file A\n"
+
+    local_repo.branches.local.create(branch_A_name, local_repo[c1_hash])
+    local_repo.checkout(local_repo.branches.local[branch_A_name])
+    make_commit(local_repo, str(file_A_path.name), content_A, "Commit C2a on branch-A (add fileA.txt)")
+    c2a_hash = local_repo.head.target
+
+    # Switch back to main, create branch-B from C1, add commit C2b changing fileB.txt
+    local_repo.checkout(local_repo.branches.local[main_branch_name]) # back to main branch @ C1
+    assert local_repo.head.target == c1_hash # ensure we are back at C1 before branching B
+
+    branch_B_name = "branch-B"
+    file_B_path = Path("fileB.txt")
+    content_B = "Content for file B\n"
+
+    local_repo.branches.local.create(branch_B_name, local_repo[c1_hash])
+    local_repo.checkout(local_repo.branches.local[branch_B_name])
+    make_commit(local_repo, str(file_B_path.name), content_B, "Commit C2b on branch-B (add fileB.txt)")
+    c2b_hash = local_repo.head.target
+
+    # Switch back to main
+    local_repo.checkout(local_repo.branches.local[main_branch_name])
+    assert local_repo.head.target == c1_hash
+
+    # Merge branch-A into main (C3) - this will be a fast-forward merge
+    local_repo.merge(c2a_hash) # Merge the commit from branch-A
+    local_repo.checkout_head(strategy=pygit2.GIT_CHECKOUT_FORCE) # Update working dir
+    c3_hash = local_repo.head.target
+    assert c3_hash == c2a_hash # Should be a fast-forward
+    assert file_A_path.exists() and file_A_path.read_text() == content_A
+    assert not file_B_path.exists()
+
+    # Merge branch-B into main (C4) - this creates a true merge commit
+    # Parents of C4 should be C3 (from main) and C2b (from branch-B)
+    local_repo.merge(c2b_hash)
+    # After repo.merge(), index is updated. Need to create commit.
+    # Using default_signature for author/committer in merge commit
+    author = local_repo.default_signature
+    committer = local_repo.default_signature
+    tree = local_repo.index.write_tree()
+    c4_hash = local_repo.create_commit(
+        "HEAD", author, committer,
+        f"Commit C4: Merge {branch_B_name} into {main_branch_name}",
+        tree, [c3_hash, c2b_hash]
+    )
+    local_repo.state_cleanup() # Clean up MERGE_HEAD etc.
+    c4_obj = local_repo[c4_hash]
+
+    assert len(c4_obj.parents) == 2
+    # Ensure files from both branches are present
+    assert file_A_path.read_text() == content_A
+    assert file_B_path.read_text() == content_B
+
+    # Action: Revert merge commit C4 using --mainline 1 (reverting changes from branch-A side)
+    # Parent 1 of C4 is C3 (which brought changes from branch-A). Reverting this should remove fileA.txt.
+    result_revert_mainline1 = runner.invoke(cli, ["revert", str(c4_hash), "--mainline", "1"])
+    assert result_revert_mainline1.exit_code == 0, f"Revert mainline 1 failed: {result_revert_mainline1.output}"
+
+    revert_m1_commit_short_hash = result_revert_mainline1.output.strip().split("New commit: ")[-1][:7]
+    revert_m1_commit = local_repo.revparse_single(revert_m1_commit_short_hash)
+    assert revert_m1_commit is not None
+    expected_revert_m1_msg = f"Revert \"{c4_obj.message.splitlines()[0]}\""
+    assert revert_m1_commit.message.startswith(expected_revert_m1_msg)
+
+    # Verification for reverting mainline 1 (changes from C3/branch-A undone)
+    assert not file_A_path.exists(), "File A should be gone after reverting C4 --mainline 1"
+    assert file_B_path.exists() and file_B_path.read_text() == content_B, "File B should remain"
+
+    # Restore state to C4 before testing mainline 2
+    # Easiest way: checkout C4 (detaches HEAD), then reset main branch to it.
+    local_repo.checkout_tree(c4_obj.tree) # Reset working dir to C4 state
+    local_repo.set_head(c4_obj.id) # Detach HEAD at C4
+    # Now, reset the main branch to point to C4_obj and check it out
+    main_branch_ref = local_repo.branches.local[main_branch_name]
+    main_branch_ref.set_target(c4_obj.id)
+    local_repo.checkout(main_branch_ref, strategy=pygit2.GIT_CHECKOUT_FORCE)
+    assert local_repo.head.target == c4_obj.id
+    assert file_A_path.exists() and file_A_path.read_text() == content_A
+    assert file_B_path.exists() and file_B_path.read_text() == content_B
+
+
+    # Action: Revert merge commit C4 using --mainline 2 (reverting changes from branch-B side)
+    # Parent 2 of C4 is C2b (which brought changes from branch-B). Reverting this should remove fileB.txt.
+    result_revert_mainline2 = runner.invoke(cli, ["revert", str(c4_hash), "--mainline", "2"])
+    assert result_revert_mainline2.exit_code == 0, f"Revert mainline 2 failed: {result_revert_mainline2.output}"
+
+    revert_m2_commit_short_hash = result_revert_mainline2.output.strip().split("New commit: ")[-1][:7]
+    revert_m2_commit = local_repo.revparse_single(revert_m2_commit_short_hash)
+    assert revert_m2_commit is not None
+    expected_revert_m2_msg = f"Revert \"{c4_obj.message.splitlines()[0]}\""
+    assert revert_m2_commit.message.startswith(expected_revert_m2_msg)
+
+    # Verification for reverting mainline 2 (changes from C2b/branch-B undone)
+    assert file_A_path.exists() and file_A_path.read_text() == content_A, "File A should remain"
+    assert not file_B_path.exists(), "File B should be gone after reverting C4 --mainline 2"
+
+
+def test_revert_with_conflicts_and_resolve(local_repo, runner):
+    """Test reverting a commit that causes conflicts, then resolve and save."""
+    os.chdir(local_repo.workdir)
+    file_path = Path("conflict_file.txt")
+
+    # Commit A
+    content_A = "line1\ncommon_line_original\nline3\n"
+    make_commit(local_repo, str(file_path.name), content_A, "Commit A: Base for conflict")
+
+    # Commit B (modifies common_line_original)
+    content_B = "line1\ncommon_line_modified_by_B\nline3\n"
+    make_commit(local_repo, str(file_path.name), content_B, "Commit B: Modifies common_line")
+    commit_B_hash = local_repo.head.target
+    commit_B_obj = local_repo[commit_B_hash]
+
+    # Commit C (modifies the same line that B changed from A)
+    content_C = "line1\ncommon_line_modified_by_C_after_B\nline3\n"
+    make_commit(local_repo, str(file_path.name), content_C, "Commit C: Modifies common_line again")
+
+    # Action: Attempt gitwrite revert <hash_of_B>
+    # This should conflict because C modified the same line that B's revert wants to change back.
+    result_revert = runner.invoke(cli, ["revert", str(commit_B_hash)])
+    assert result_revert.exit_code == 0, f"Revert command unexpectedly failed during conflict: {result_revert.output}" # Command itself succeeds by reporting conflict
+
+    # Verification of conflict state
+    assert "Conflicts detected after revert. Automatic commit aborted." in result_revert.output
+    assert f"Conflicting files:\n  {str(file_path.name)}" in result_revert.output
+
+    # Check file content for conflict markers
+    assert file_path.exists()
+    conflict_content = file_path.read_text()
+    assert "<<<<<<< HEAD" in conflict_content # Changes from Commit C are 'ours' (HEAD)
+    assert "=======" in conflict_content
+    # The 'theirs' side of the conflict when reverting B should be the content from Commit A
+    assert "common_line_original" in conflict_content # This is what B's revert tries to restore
+    assert ">>>>>>> parent of " + commit_B_obj.short_id in conflict_content # Or similar marker for reverted changes
+
+    # Check repository state
+    assert local_repo.lookup_reference("REVERT_HEAD").target == commit_B_hash
+    assert local_repo.state == pygit2.GIT_REPOSITORY_STATE_REVERT
+
+    # Resolve conflict: Let's say we choose to keep the changes from Commit C (the current HEAD)
+    # and add a line indicating resolution.
+    resolved_content = "line1\ncommon_line_modified_by_C_after_B\nresolved_conflict_line\nline3\n"
+    file_path.write_text(resolved_content)
+
+    # Action: gitwrite save "Resolved conflict after reverting B"
+    user_save_message = "Resolved conflict after reverting B"
+    result_save = runner.invoke(cli, ["save", user_save_message])
+    assert result_save.exit_code == 0, f"Save command failed: {result_save.output}"
+
+    # Verification of successful save after conflict resolution
+    assert f"Finalizing revert of commit {commit_B_obj.short_id}" in result_save.output
+    assert "Successfully completed revert operation." in result_save.output
+
+    new_commit_hash_short = result_save.output.strip().split("] ")[1].split(" ")[0] # e.g. "[main abc1234] ..."
+    if new_commit_hash_short.startswith('['): # handle cases like [branch abc1234]
+        new_commit_hash_short = new_commit_hash_short.split(" ")[1]
+
+
+    final_commit = local_repo.revparse_single(new_commit_hash_short)
+    assert final_commit is not None
+
+    expected_final_msg_start = f"Revert \"{commit_B_obj.message.splitlines()[0]}\""
+    assert final_commit.message.startswith(expected_final_msg_start)
+    assert user_save_message in final_commit.message # User's message should be part of it
+
+    assert file_path.read_text() == resolved_content
+
+    # Verify REVERT_HEAD is cleared and repo state is normal
+    with pytest.raises(KeyError): # REVERT_HEAD should be gone
+        local_repo.lookup_reference("REVERT_HEAD")
+    assert local_repo.state == pygit2.GIT_REPOSITORY_STATE_NONE
