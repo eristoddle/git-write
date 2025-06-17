@@ -186,6 +186,7 @@ Status: **Partially Completed / Ongoing**
 
 1.  Set up testing framework (e.g., `pytest`).
     - Comprehensive tests for `gitwrite revert` and `gitwrite init` have been successfully implemented and are passing. Testing for other commands is ongoing.
+    - Tests for `gitwrite save` covering normal operations, merge conflicts, and revert conflicts have been implemented and are passing.
 2.  Write unit tests for core logic of all implemented commands.
 3.  Write integration tests for CLI commands, covering success cases, edge cases, and error conditions.
 4.  Aim for high test coverage.

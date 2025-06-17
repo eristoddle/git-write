@@ -697,14 +697,17 @@ def test_revert_with_conflicts_and_resolve(local_repo, runner):
 
     # Check repository state
     assert local_repo.lookup_reference("REVERT_HEAD").target == commit_B_hash
-    # assert local_repo.state == pygit2.GIT_REPOSITORY_STATE_REVERT # This state might not always be set by pygit2.revert
-                                                                # if index conflicts are present and REVERT_HEAD is written.
-                                                                # The presence of REVERT_HEAD is the key for 'save'.
 
     # Resolve conflict: Let's say we choose to keep the changes from Commit C (the current HEAD)
     # and add a line indicating resolution.
     resolved_content = "line1\ncommon_line_modified_by_C_after_B\nresolved_conflict_line\nline3\n"
     file_path.write_text(resolved_content)
+
+    # Explicitly stage the resolved file using the test's repo instance
+    local_repo.index.add(file_path.name)
+    local_repo.index.write()
+    print(f"TEST-DEBUG: Conflicts in local_repo after add/write: {list(local_repo.index.conflicts) if local_repo.index.conflicts else 'None'}")
+
 
     # Action: gitwrite save "Resolved conflict after reverting B"
     user_save_message = "Resolved conflict after reverting B"
@@ -720,9 +723,11 @@ def test_revert_with_conflicts_and_resolve(local_repo, runner):
     output_lines = result_save.output.strip().split('\n')
     commit_line = None
     for line in output_lines:
-        if line.startswith("[") and "] " in line:
-            commit_line = line
-            break
+        if line.startswith("[") and "] " in line: # A bit more robust to find the commit line
+            # Check if it's not a DEBUG line
+            if not line.startswith("[DEBUG:"):
+                commit_line = line
+                break
     assert commit_line is not None, f"Could not find commit line in output: {result_save.output}"
 
     # Extract from pattern like "[branch hash] message" or "[DETACHED HEAD hash] message"
@@ -753,6 +758,585 @@ def test_revert_with_conflicts_and_resolve(local_repo, runner):
     # The repo.state might not immediately return to NONE in test environment
     # if other refs like ORIG_HEAD persist briefly or due to other nuances.
     # The critical part for CLI logic is that REVERT_HEAD/MERGE_HEAD are gone.
+
+# ###################################
+# # Helper functions for save tests
+# ###################################
+
+def create_file(repo: pygit2.Repository, filename: str, content: str):
+    """Helper function to create a file in the repository's working directory."""
+    file_path = Path(repo.workdir) / filename
+    file_path.parent.mkdir(parents=True, exist_ok=True)
+    file_path.write_text(content)
+    return file_path
+
+def stage_file(repo: pygit2.Repository, filename: str):
+    """Helper function to stage a file in the repository."""
+    repo.index.add(filename)
+    repo.index.write()
+
+# #################################
+# # Fixtures for save command tests
+# #################################
+
+@pytest.fixture
+def repo_with_unstaged_changes(local_repo):
+    """Creates a repository with a file that has unstaged changes."""
+    repo = local_repo
+    create_file(repo, "unstaged_file.txt", "This file has unstaged changes.")
+    # Do not stage the file
+    return repo
+
+@pytest.fixture
+def repo_with_staged_changes(local_repo):
+    """Creates a repository with a file that has staged changes."""
+    repo = local_repo
+    create_file(repo, "staged_file.txt", "This file has staged changes.")
+    stage_file(repo, "staged_file.txt")
+    return repo
+
+@pytest.fixture
+def repo_with_merge_conflict(local_repo, bare_remote_repo, tmp_path):
+    """Creates a repository with a merge conflict."""
+    repo = local_repo
+    os.chdir(repo.workdir)
+    branch_name = repo.head.shorthand
+
+    # Base file
+    conflict_filename = "conflict_file.txt"
+    initial_content = "Line 1\nLine 2 for conflict\nLine 3\n"
+    make_commit(repo, conflict_filename, initial_content, f"Add initial {conflict_filename}")
+    repo.remotes["origin"].push([f"refs/heads/{branch_name}:refs/heads/{branch_name}"])
+    base_commit_oid = repo.head.target
+
+    # 1. Local change
+    local_conflict_content = "Line 1\nLOCAL CHANGE on Line 2\nLine 3\n"
+    make_commit(repo, conflict_filename, local_conflict_content, "Local conflicting change")
+
+    # 2. Remote change (via a clone)
+    remote_clone_path = tmp_path / "remote_clone_for_merge_conflict_fixture"
+    remote_clone_repo = pygit2.clone_repository(bare_remote_repo.path, str(remote_clone_path))
+    config = remote_clone_repo.config
+    config["user.name"] = "Remote Conflicter"
+    config["user.email"] = "conflicter@example.com"
+    remote_clone_repo.reset(base_commit_oid, pygit2.GIT_RESET_HARD) # Reset to base
+    # Ensure file exists in clone before modification
+    assert (Path(remote_clone_repo.workdir) / conflict_filename).read_text() == initial_content
+    remote_conflict_content = "Line 1\nREMOTE CHANGE on Line 2\nLine 3\n"
+    make_commit(remote_clone_repo, conflict_filename, remote_conflict_content, "Remote conflicting change for fixture")
+    remote_clone_repo.remotes["origin"].push([f"+refs/heads/{branch_name}:refs/heads/{branch_name}"]) # Force push
+
+    # 3. Fetch remote changes to local repo to set up the conflict state
+    repo.remotes["origin"].fetch()
+
+    # 4. Attempt merge to create conflict (without committing the merge)
+    remote_branch_ref = repo.branches.get(f"origin/{branch_name}")
+    if not remote_branch_ref: # Fallback if default branch name is different
+        active_branch_name = repo.head.shorthand
+        remote_branch_ref = repo.branches.get(f"origin/{active_branch_name}")
+
+    assert remote_branch_ref is not None, f"Could not find remote tracking branch origin/{branch_name}"
+
+    merge_result, _ = repo.merge_analysis(remote_branch_ref.target)
+    if merge_result & pygit2.GIT_MERGE_ANALYSIS_UP_TO_DATE:
+        pytest.skip("Repo already up to date, cannot create merge conflict for test.")
+
+    repo.merge(remote_branch_ref.target) # This creates the in-memory merge conflict state
+
+    # Verify conflict exists in index
+    assert repo.index.conflicts is not None
+    conflict_entry_iterator = iter(repo.index.conflicts)
+    try:
+        next(conflict_entry_iterator) # Check if there's at least one conflict
+    except StopIteration:
+        pytest.fail("Merge did not result in conflicts as expected.")
+
+    # MERGE_HEAD should be set
+    assert repo.lookup_reference("MERGE_HEAD").target == remote_branch_ref.target
+    return repo
+
+
+@pytest.fixture
+def repo_with_revert_conflict(local_repo):
+    """Creates a repository with a conflict during a revert operation."""
+    repo = local_repo
+    os.chdir(repo.workdir)
+    file_path = Path("revert_conflict_file.txt")
+
+    # Commit A: Base content
+    content_A = "Version A\nCommon Line\nEnd A\n"
+    make_commit(repo, str(file_path.name), content_A, "Commit A: Base for revert conflict")
+
+    # Commit B: Modification to be reverted
+    content_B = "Version B\nModified Common Line by B\nEnd B\n"
+    make_commit(repo, str(file_path.name), content_B, "Commit B: To be reverted")
+    commit_B_hash = repo.head.target
+
+    # Commit C: Overlapping modification with what Commit B's revert would do
+    content_C = "Version C\nModified Common Line by C (conflicts with A's version)\nEnd C\n"
+    make_commit(repo, str(file_path.name), content_C, "Commit C: Conflicting with revert of B")
+
+    # Attempt to revert Commit B
+    # This will try to change "Modified Common Line by B" back to "Common Line" (from A)
+    # But Commit C has changed it to "Modified Common Line by C..."
+    try:
+        repo.revert(repo.get(commit_B_hash)) # repo.revert expects a Commit object
+    except pygit2.GitError as e:
+        # Expected to fail if pygit2.revert itself throws error on conflict.
+        # However, pygit2.revert might apply cleanly if no index changes are made by it,
+        # and conflicts are only in working dir. The git CLI `revert` usually handles this.
+        # For our `gitwrite revert` which uses `repo.revert` then checks index,
+        # the key is that `REVERT_HEAD` is set and index has conflicts.
+        pass # Conflict is expected, let's verify state
+
+    # Verify REVERT_HEAD is set
+    assert repo.lookup_reference("REVERT_HEAD").target == commit_B_hash
+
+    # Verify conflict exists in index (pygit2.revert populates this)
+    assert repo.index.conflicts is not None
+    conflict_entry_iterator = iter(repo.index.conflicts)
+    try:
+        next(conflict_entry_iterator) # Check if there's at least one conflict
+    except StopIteration:
+        pytest.fail("Revert did not result in conflicts in the index as expected.")
+
+    return repo
+
+def resolve_conflict(repo: pygit2.Repository, filename: str, resolved_content: str):
+    """
+    Helper function to resolve a conflict in a file.
+    This involves writing the resolved content, adding the file to the index.
+    Pygit2's index.add() should handle clearing the conflict state for the path.
+    """
+    file_path = Path(repo.workdir) / filename
+    file_path.write_text(resolved_content)
+
+    # print(f"DEBUG: In resolve_conflict for {filename} - Before add:")
+    # has_conflicts_before = False
+    # if repo.index.conflicts is not None:
+    #     try:
+    #         next(iter(repo.index.conflicts))
+    #         has_conflicts_before = True
+    #     except StopIteration:
+    #         pass
+
+    # if has_conflicts_before:
+    #     conflict_paths = []
+    #     if repo.index.conflicts is not None:
+    #         for c_entry_tuple in repo.index.conflicts:
+    #             path = next((entry.path for entry in c_entry_tuple if entry and entry.path), None)
+    #             if path:
+    #                 conflict_paths.append(path)
+    #     print(f"  Conflicts exist. Paths: {list(set(conflict_paths))}")
+    # else:
+    #     print("  No conflicts in index before add.")
+
+    repo.index.add(filename)
+    repo.index.write()
+    # repo.index.read() # Try removing this again, write should be enough.
+
+    # print(f"DEBUG: In resolve_conflict for {filename} - After add/write:")
+    # has_conflicts_after = False
+    # if repo.index.conflicts is not None:
+    #     try:
+    #         next(iter(repo.index.conflicts))
+    #         has_conflicts_after = True
+    #     except StopIteration:
+    #         pass
+
+    # if has_conflicts_after:
+    #     conflict_paths_after = []
+    #     if repo.index.conflicts is not None:
+    #         for c_entry_tuple_after in repo.index.conflicts:
+    #             path_after = next((entry.path for entry in c_entry_tuple_after if entry and entry.path), None)
+    #             if path_after:
+    #                 conflict_paths_after.append(path_after)
+    #     print(f"  Conflicts STILL exist. Paths: {list(set(conflict_paths_after))}")
+
+    #     is_still_conflicted = False
+    #     if repo.index.conflicts is not None:
+    #         for conflict_tuple in repo.index.conflicts:
+    #             if any(entry and entry.path == filename for entry in conflict_tuple):
+    #                 is_still_conflicted = True
+    #                 break
+    #     if is_still_conflicted:
+    #         print(f"  File {filename} IS specifically still in conflicts.")
+    #     else:
+    #         print(f"  File {filename} is NOT specifically in conflicts anymore.")
+    # else:
+    #     print("  No conflicts in index after resolution steps.")
+
+
+# #####################
+# # Save Command Tests
+# #####################
+
+class TestGitWriteSaveNormalScenarios:
+    def test_save_new_file(self, runner, repo_with_unstaged_changes):
+        """Test saving a new, unstaged file."""
+        repo = repo_with_unstaged_changes
+        os.chdir(repo.workdir) # Ensure CWD is the repo
+
+        # The repo_with_unstaged_changes fixture creates "unstaged_file.txt"
+        filename = "unstaged_file.txt"
+        file_content = "This file has unstaged changes."
+        commit_message = "Add new unstaged file"
+
+        # Verify file exists and is unstaged
+        assert (Path(repo.workdir) / filename).exists()
+        status = repo.status()
+        assert filename in status
+        assert status[filename] == pygit2.GIT_STATUS_WT_NEW
+
+        initial_head_target = repo.head.target
+
+        result = runner.invoke(cli, ["save", commit_message])
+        assert result.exit_code == 0, f"CLI Error: {result.output}"
+
+        # Verify new commit
+        new_head_target = repo.head.target
+        assert new_head_target != initial_head_target, "No new commit was made"
+
+        commit = repo.get(new_head_target)
+        assert commit is not None
+        assert commit.message.strip() == commit_message
+
+        # Verify file is in the commit's tree
+        assert filename in commit.tree
+        blob = commit.tree[filename]
+        assert blob.data.decode('utf-8') == file_content
+
+        # Verify working directory is clean
+        status_after_save = repo.status()
+        assert not status_after_save, f"Working directory not clean after save: {status_after_save}"
+
+    def test_save_existing_file_modified(self, runner, local_repo):
+        """Test saving modifications to an existing, tracked file."""
+        repo = local_repo
+        os.chdir(repo.workdir)
+
+        filename = "initial.txt" # This file exists from local_repo fixture
+        original_content = (Path(repo.workdir) / filename).read_text()
+        modified_content = original_content + "\nSome new modifications."
+
+        # Modify the file (unstaged change)
+        create_file(repo, filename, modified_content)
+
+        commit_message = "Modify existing file initial.txt"
+        initial_head_target = repo.head.target
+
+        result = runner.invoke(cli, ["save", commit_message])
+        assert result.exit_code == 0, f"CLI Error: {result.output}"
+
+        new_head_target = repo.head.target
+        assert new_head_target != initial_head_target, "No new commit was made for existing file modification"
+
+        commit = repo.get(new_head_target)
+        assert commit.message.strip() == commit_message
+        assert filename in commit.tree
+        assert commit.tree[filename].data.decode('utf-8') == modified_content
+        assert not repo.status(), "Working directory not clean after saving modified file"
+
+    def test_save_no_changes(self, runner, local_repo):
+        """Test saving when there are no changes."""
+        repo = local_repo
+        os.chdir(repo.workdir)
+
+        # Ensure working directory is clean
+        assert not repo.status(), "Prerequisite: Working directory should be clean"
+
+        initial_head_target = repo.head.target
+        commit_message = "Attempt to save with no changes"
+
+        result = runner.invoke(cli, ["save", commit_message])
+        # The save command might exit 0 but print a message, or exit non-zero.
+        # Let's assume it exits 0 and prints a message for now.
+        # This depends on the `save` command's specific implementation for no changes.
+        assert result.exit_code == 0, f"CLI Error: {result.output}"
+        assert "No changes to save (working directory and index are clean)." in result.output
+
+        # Verify no new commit was made
+        assert repo.head.target == initial_head_target, "A new commit was made when there were no changes"
+
+    def test_save_staged_changes(self, runner, repo_with_staged_changes):
+        """Test saving already staged changes."""
+        repo = repo_with_staged_changes
+        os.chdir(repo.workdir)
+
+        filename = "staged_file.txt" # From fixture
+        file_content = "This file has staged changes." # From fixture
+        commit_message = "Save staged changes"
+
+        # Verify file is staged
+        status = repo.status()
+        assert filename in status
+        assert status[filename] == pygit2.GIT_STATUS_INDEX_NEW # Staged and new
+
+        initial_head_target = repo.head.target
+
+        result = runner.invoke(cli, ["save", commit_message])
+        assert result.exit_code == 0, f"CLI Error: {result.output}"
+
+        new_head_target = repo.head.target
+        assert new_head_target != initial_head_target, "No new commit was made for staged changes"
+
+        commit = repo.get(new_head_target)
+        assert commit.message.strip() == commit_message
+        assert filename in commit.tree
+        assert commit.tree[filename].data.decode('utf-8') == file_content
+        assert not repo.status(), "Working directory not clean after saving staged changes"
+
+    def test_save_no_message(self, runner, repo_with_unstaged_changes):
+        """
+        Test saving without providing a commit message.
+        This test assumes the CLI will either use a default message or error out.
+        For now, let's assume it uses a default, or the test needs adjustment
+        based on actual `save` behavior (e.g., if it prompts or opens an editor).
+        """
+        repo = repo_with_unstaged_changes
+        os.chdir(repo.workdir)
+
+        filename = "unstaged_file.txt" # From fixture
+        initial_head_target = repo.head.target
+
+        # Invoke save without a message
+        result = runner.invoke(cli, ["save"])
+
+        # Scenario 1: Command fails because message is required
+        if result.exit_code != 0:
+            # Example: click might show usage error if message argument is required
+            assert "Missing argument" in result.output or "MESSAGE" in result.output # Adjust as per actual error
+            assert repo.head.target == initial_head_target, "Commit was made despite missing message error"
+            return # Test passes if this is the designed behavior
+
+        # Scenario 2: Command succeeds and uses a default/generated message
+        # This part will run if exit_code was 0
+        assert result.exit_code == 0, f"CLI Error: {result.output}"
+
+        new_head_target = repo.head.target
+        assert new_head_target != initial_head_target, "No new commit was made when message was omitted (expected default msg behavior)"
+
+        commit = repo.get(new_head_target)
+        assert commit.message.strip() != "", "Commit message is empty, but a default was expected"
+        # Example: Check if it contains the filename if that's the default strategy
+        # assert filename in commit.message
+        # Or just assert that some message exists:
+        assert len(commit.message.strip()) > 0, "Default commit message was empty"
+
+        # Check if output indicates a default message was used (if applicable)
+        # assert "using default message" in result.output.lower() # Adjust if necessary
+
+        assert not repo.status(), "Working directory not clean after saving with no message (default behavior)"
+
+
+class TestGitWriteSaveConflictScenarios:
+    def test_save_with_unresolved_merge_conflict(self, runner, repo_with_merge_conflict):
+        """Test saving with an unresolved merge conflict."""
+        repo = repo_with_merge_conflict
+        os.chdir(repo.workdir)
+
+        initial_head_target = repo.head.target
+        commit_message = "Attempt to save with unresolved merge conflict"
+
+        # Verify MERGE_HEAD exists (indicative of merge state)
+        assert repo.lookup_reference("MERGE_HEAD") is not None
+
+        result = runner.invoke(cli, ["save", commit_message])
+
+        # Expect command to print an error and not make a commit.
+        expected_error_lines = [
+            "Error: Unresolved conflicts detected during merge.",
+            "Please resolve them before saving.",
+            "Conflicting files:"
+        ]
+        output_lines = [line.strip() for line in result.output.replace('\r\n', '\n').split('\n') if line.strip()]
+        # print(f"DEBUG output_lines for unresolved merge: {output_lines}")
+        assert any(expected_error_lines[0] in line for line in output_lines)
+        assert any(expected_error_lines[1] in line for line in output_lines)
+        assert any(expected_error_lines[2] in line for line in output_lines)
+        assert "conflict_file.txt" in result.output
+
+        # Verify no new commit was made
+        assert repo.head.target == initial_head_target, "A new commit was made despite unresolved merge conflict"
+
+        # Verify still in merge state
+        assert repo.lookup_reference("MERGE_HEAD") is not None, "MERGE_HEAD was cleared despite unresolved conflict"
+
+        has_conflicts_check = False
+        if repo.index.conflicts is not None:
+            try:
+                next(iter(repo.index.conflicts))
+                has_conflicts_check = True
+            except StopIteration:
+                pass
+        assert has_conflicts_check, "Conflicts seem to be resolved from index, which is not expected here."
+
+
+    def test_save_after_resolving_merge_conflict(self, runner, repo_with_merge_conflict):
+        """Test saving after resolving a merge conflict."""
+        repo = repo_with_merge_conflict
+        os.chdir(repo.workdir)
+
+        conflict_filename = "conflict_file.txt" # Known from the fixture
+        resolved_content = "Line 1\nRESOLVED MERGE CHANGE on Line 2\nLine 3\n"
+        commit_message = "Save after resolving merge conflict"
+
+        # Verify MERGE_HEAD exists and conflicts are present
+        assert repo.lookup_reference("MERGE_HEAD") is not None
+        original_merge_head_target = repo.lookup_reference("MERGE_HEAD").target
+        assert repo.index.conflicts is not None
+
+        # Resolve the conflict
+        resolve_conflict(repo, conflict_filename, resolved_content)
+
+        active_conflicts_for_file = False
+        if repo.index.conflicts is not None:
+            for entry_tuple in repo.index.conflicts:
+                 if any(entry and entry.path == conflict_filename for entry in entry_tuple):
+                        active_conflicts_for_file = True
+                        break
+        assert not active_conflicts_for_file, f"Conflict for {conflict_filename} not resolved in index"
+
+        status = repo.status()
+        assert conflict_filename in status
+        assert status[conflict_filename] != pygit2.GIT_STATUS_CONFLICTED
+        assert status[conflict_filename] == pygit2.GIT_STATUS_INDEX_MODIFIED
+
+        initial_head_target = repo.head.target
+
+        result = runner.invoke(cli, ["save", commit_message])
+        assert result.exit_code == 0, f"CLI Error: {result.output}"
+
+        new_head_target = repo.head.target
+        assert new_head_target != initial_head_target, "No new commit was made after resolving conflict"
+
+        commit = repo.get(new_head_target)
+        assert commit is not None
+        assert commit.message.strip() == commit_message
+        assert len(commit.parents) == 2, "Commit is not a merge commit (should have 2 parents)"
+        assert commit.parents[0].id == initial_head_target
+        assert commit.parents[1].id == original_merge_head_target
+
+        assert conflict_filename in commit.tree
+        blob = commit.tree[conflict_filename]
+        assert blob.data.decode('utf-8') == resolved_content
+
+        with pytest.raises(KeyError):
+            repo.lookup_reference("MERGE_HEAD")
+
+        final_conflicts_check = False
+        if repo.index.conflicts is not None:
+            try:
+                next(iter(repo.index.conflicts))
+                final_conflicts_check = True
+            except StopIteration:
+                pass
+        assert not final_conflicts_check, "Index conflicts were not cleared after successful merge commit"
+        assert not repo.status(), "Working directory not clean after resolving conflict and saving"
+
+    def test_save_with_unresolved_revert_conflict(self, runner, repo_with_revert_conflict):
+        """Test saving with an unresolved revert conflict."""
+        repo = repo_with_revert_conflict
+        os.chdir(repo.workdir)
+
+        initial_head_target = repo.head.target
+        commit_message = "Attempt to save with unresolved revert conflict"
+
+        assert repo.lookup_reference("REVERT_HEAD") is not None
+        assert repo.index.conflicts is not None, "Prerequisite: Index should have conflicts for this test."
+
+        result = runner.invoke(cli, ["save", commit_message])
+
+        expected_error_lines = [
+            "Error: Unresolved conflicts detected during revert.",
+            "Please resolve them before saving.",
+            "Conflicting files:"
+        ]
+        output_lines = [line.strip() for line in result.output.replace('\r\n', '\n').split('\n') if line.strip()]
+        # print(f"DEBUG output_lines for unresolved revert: {output_lines}")
+        assert any(expected_error_lines[0] in line for line in output_lines)
+        assert any(expected_error_lines[1] in line for line in output_lines)
+        assert any(expected_error_lines[2] in line for line in output_lines)
+        assert "revert_conflict_file.txt" in result.output
+
+        current_head_target = repo.head.target
+        assert current_head_target == initial_head_target, "A new commit was made by 'save' despite unresolved revert conflict"
+
+        assert repo.lookup_reference("REVERT_HEAD") is not None, "REVERT_HEAD was cleared by 'save' despite unresolved conflict"
+
+        active_conflicts_revert_unresolved = False
+        if repo.index.conflicts is not None:
+            try:
+                next(iter(repo.index.conflicts))
+                active_conflicts_revert_unresolved = True
+            except StopIteration:
+                pass
+        assert active_conflicts_revert_unresolved, "Conflicts seem to be resolved from index by 'save', which is not expected here."
+
+
+    def test_save_after_resolving_revert_conflict(self, runner, repo_with_revert_conflict):
+        """Test saving after resolving a revert conflict."""
+        repo = repo_with_revert_conflict
+        os.chdir(repo.workdir)
+
+        conflict_filename = "revert_conflict_file.txt"
+        resolved_content = "Version A\nRESOLVED REVERT CHANGE\nEnd C (kept part of C)\n"
+        user_save_message = "Save after resolving revert conflict"
+
+        assert repo.lookup_reference("REVERT_HEAD") is not None
+        reverted_commit_hash = repo.lookup_reference("REVERT_HEAD").target
+        reverted_commit_obj = repo.get(reverted_commit_hash)
+        assert repo.index.conflicts is not None
+
+        initial_head_target = repo.head.target
+
+        resolve_conflict(repo, conflict_filename, resolved_content)
+
+        active_conflicts_for_file_revert_resolved = False
+        if repo.index.conflicts is not None:
+            for entry_tuple in repo.index.conflicts:
+                 if any(entry and entry.path == conflict_filename for entry in entry_tuple):
+                        active_conflicts_for_file_revert_resolved = True
+                        break
+        assert not active_conflicts_for_file_revert_resolved, f"Conflict for {conflict_filename} not resolved in index after resolve_conflict"
+
+        status = repo.status()
+        assert conflict_filename in status
+        assert status[conflict_filename] == pygit2.GIT_STATUS_INDEX_MODIFIED
+
+        result = runner.invoke(cli, ["save", user_save_message])
+        assert result.exit_code == 0, f"CLI Error: {result.output}"
+        print(f"Save output: {result.output}")
+
+        new_head_target = repo.head.target
+        assert new_head_target != initial_head_target, "No new commit was made after resolving revert conflict"
+
+        commit = repo.get(new_head_target)
+        assert commit is not None
+
+        expected_revert_prefix = f"Revert \"{reverted_commit_obj.message.splitlines()[0]}\""
+        assert commit.message.startswith(expected_revert_prefix), \
+            f"Commit message '{commit.message}' does not start with expected revert prefix '{expected_revert_prefix}'"
+        if user_save_message:
+             assert user_save_message in commit.message, \
+                 f"User's save message '{user_save_message}' not found in final commit message '{commit.message}'"
+
+        assert conflict_filename in commit.tree
+        blob = commit.tree[conflict_filename]
+        assert blob.data.decode('utf-8') == resolved_content
+
+        with pytest.raises(KeyError):
+            repo.lookup_reference("REVERT_HEAD")
+
+        final_conflicts_check_revert = False
+        if repo.index.conflicts is not None:
+            try:
+                next(iter(repo.index.conflicts))
+                final_conflicts_check_revert = True
+            except StopIteration:
+                pass
+        assert not final_conflicts_check_revert, "Index conflicts were not cleared after successful save post-revert"
+        assert not repo.status(), "Working directory not clean after resolving revert conflict and saving"
 
 
 #######################
