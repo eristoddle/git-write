@@ -1,2 +1,3 @@
 - Now run the unit tests and fix any issues you find
 - Can you update Memory_Bank.md and Implementation_Plan.md with the details of that and make a new commit. Then give me the prompt I should give for the next Jules session. I will be merging the current changes into main, so the next session should branch from main.
+- Read Memory_Bank.md and Implementation_Plan.md and do the next pending task. When you are done, update both of those files with the state of the project. Also give me a prompt for the next Jules session. I will be merging the current changes into main, so the next session should branch from main.
