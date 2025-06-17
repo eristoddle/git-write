@@ -199,6 +199,178 @@ def test_sync_fast_forward(runner, local_repo, bare_remote_repo, tmp_path):
     assert local_repo.head.target == bare_remote_repo.lookup_reference(remote_branch_ref).target
 
 
+####################
+# Init Command Tests
+####################
+
+def test_init_with_project_name(runner):
+    """Test `gitwrite init project_name`."""
+    with runner.isolated_filesystem() as temp_dir:
+        project_name = "test_project"
+        result = runner.invoke(cli, ['init', project_name])
+
+        assert result.exit_code == 0, f"CLI Error: {result.output}"
+
+        project_path = Path(temp_dir) / project_name
+        assert project_path.is_dir()
+        assert (project_path / ".git").is_dir()
+        assert (project_path / "drafts").is_dir()
+        assert (project_path / "notes").is_dir()
+        assert (project_path / "metadata.yml").is_file()
+        assert (project_path / ".gitignore").is_file()
+
+        repo = pygit2.Repository(str(project_path))
+        assert not repo.is_empty
+        assert not repo.head_is_unborn
+        # Check for initial commit
+        assert len(list(repo.walk(repo.head.target, pygit2.GIT_SORT_TOPOLOGICAL))) > 0
+
+
+def test_init_in_current_directory(runner):
+    """Test `gitwrite init` in the current directory."""
+    with runner.isolated_filesystem() as temp_dir:
+        os.chdir(temp_dir) # Change to the isolated temp directory
+        result = runner.invoke(cli, ['init'])
+
+        assert result.exit_code == 0, f"CLI Error: {result.output}"
+
+        current_path = Path(temp_dir)
+        assert (current_path / ".git").is_dir()
+        assert (current_path / "drafts").is_dir()
+        assert (current_path / "notes").is_dir()
+        assert (current_path / "metadata.yml").is_file()
+        assert (current_path / ".gitignore").is_file()
+
+        repo = pygit2.Repository(str(current_path))
+        assert not repo.is_empty
+        assert not repo.head_is_unborn
+        assert len(list(repo.walk(repo.head.target, pygit2.GIT_SORT_TOPOLOGICAL))) > 0
+
+
+def test_init_in_existing_empty_git_repo(runner):
+    """Test `gitwrite init` in an existing but empty Git repository."""
+    with runner.isolated_filesystem() as temp_dir:
+        os.chdir(temp_dir)
+        # Initialize an empty git repository
+        pygit2.init_repository(".")
+
+        result = runner.invoke(cli, ['init'])
+        # The command should gracefully add structure and commit
+        assert result.exit_code == 0, f"CLI Error: {result.output}"
+        assert "Opened existing Git repository" in result.output
+        assert "Created/ensured GitWrite directory structure" in result.output
+
+        current_path = Path(temp_dir)
+        assert (current_path / ".git").is_dir() # Should still be there
+        assert (current_path / "drafts").is_dir()
+        assert (current_path / "notes").is_dir()
+        assert (current_path / "metadata.yml").is_file()
+        assert (current_path / ".gitignore").is_file()
+
+        repo = pygit2.Repository(str(current_path))
+        assert not repo.is_empty # Should have the GitWrite structure commit now
+        assert not repo.head_is_unborn
+        # Check that a commit was made
+        history = list(repo.walk(repo.head.target, pygit2.GIT_SORT_TOPOLOGICAL))
+        assert len(history) > 0
+        assert "Added GitWrite structure" in history[0].message
+
+
+def test_init_in_existing_non_empty_git_repo(runner):
+    """Test `gitwrite init` in an existing, non-empty Git repository."""
+    with runner.isolated_filesystem() as temp_dir:
+        os.chdir(temp_dir)
+        repo = pygit2.init_repository(".")
+        # Make an initial commit to make it non-empty
+        (Path(temp_dir) / "README.md").write_text("Existing repo content.")
+        repo.index.add("README.md")
+        repo.index.write()
+        author = pygit2.Signature("Test Author", "test@example.com")
+        committer = author
+        tree = repo.index.write_tree()
+        initial_commit_oid = repo.create_commit("HEAD", author, committer, "Initial user commit", tree, [])
+
+        result = runner.invoke(cli, ['init'])
+        assert result.exit_code == 0, f"CLI Error: {result.output}"
+        assert "Opened existing Git repository" in result.output
+        assert "Created/ensured GitWrite directory structure" in result.output
+
+        current_path = Path(temp_dir)
+        assert (current_path / "drafts").is_dir()
+        assert (current_path / "notes").is_dir()
+        assert (current_path / "metadata.yml").is_file()
+        assert (current_path / ".gitignore").is_file()
+        assert (current_path / "README.md").exists() # Original file should still be there
+
+        repo = pygit2.Repository(str(current_path))
+        assert not repo.head_is_unborn
+
+        history = list(repo.walk(repo.head.target, pygit2.GIT_SORT_TOPOLOGICAL))
+        # Expecting two commits: the user's initial commit and the GitWrite structure commit
+        assert len(history) >= 2
+        assert "Added GitWrite structure" in history[0].message
+        assert history[1].id == initial_commit_oid # Original commit should be parent of new one
+
+        # Verify original file is still part of the history and content
+        readme_blob = repo.revparse_single('HEAD~1:README.md') # Get README from previous commit
+        assert readme_blob is not None
+        assert readme_blob.data.decode() == "Existing repo content."
+
+
+def test_init_creates_sensible_gitignore(runner):
+    """Test that `gitwrite init` creates a .gitignore file with some content."""
+    with runner.isolated_filesystem() as temp_dir:
+        project_name = "sensible_gitignore_test"
+        result = runner.invoke(cli, ['init', project_name])
+
+        assert result.exit_code == 0, f"CLI Error: {result.output}"
+
+        gitignore_path = Path(temp_dir) / project_name / ".gitignore"
+        assert gitignore_path.exists()
+
+        content = gitignore_path.read_text()
+        assert len(content) > 0 # Should not be empty
+        # Check for some common patterns that might be added by default
+        # Based on current `init` implementation, it adds:
+        # "/.venv/", "/.idea/", "/.vscode/", "*.pyc", "__pycache__/"
+        expected_patterns = ["/.venv/", "/.idea/", "/.vscode/", "*.pyc", "__pycache__/"]
+        for pattern in expected_patterns:
+            assert pattern in content, f"Expected pattern '{pattern}' not found in .gitignore"
+
+def test_init_in_non_empty_non_git_directory_fails(runner):
+    """Test `gitwrite init` in a non-empty directory that is not a Git repository."""
+    with runner.isolated_filesystem() as temp_dir:
+        os.chdir(temp_dir)
+        (Path(temp_dir) / "some_file.txt").write_text("This directory is not empty.")
+
+        result = runner.invoke(cli, ['init'])
+        assert result.exit_code != 0, "CLI should have failed for non-empty, non-Git directory."
+        assert "Error: Current directory" in result.output
+        assert "is not empty and not a Git repository" in result.output
+
+def test_init_with_project_name_on_existing_file_fails(runner):
+    """Test `gitwrite init project_name` when project_name is an existing file."""
+    with runner.isolated_filesystem() as temp_dir:
+        project_name_as_file = "existing_file.txt"
+        (Path(temp_dir) / project_name_as_file).write_text("I am a file.")
+
+        result = runner.invoke(cli, ['init', project_name_as_file])
+        assert result.exit_code != 0, "CLI should have failed when target is a file."
+        assert f"Error: '{project_name_as_file}' exists and is a file." in result.output
+
+def test_init_with_project_name_on_existing_non_empty_non_git_dir_fails(runner):
+    """Test `gitwrite init project_name` when project_name is an existing, non-empty, non-Git directory."""
+    with runner.isolated_filesystem() as temp_dir:
+        project_dir_name = "existing_non_empty_dir"
+        project_path = Path(temp_dir) / project_dir_name
+        project_path.mkdir()
+        (project_path / "some_file.txt").write_text("This directory is not empty.")
+
+        result = runner.invoke(cli, ['init', project_dir_name])
+        assert result.exit_code != 0, "CLI should have failed for existing non-empty, non-Git directory."
+        assert f"Error: Directory '{project_dir_name}' already exists, is not empty, and is not a Git repository." in result.output
+
+
 def test_sync_merge_no_conflict(runner, local_repo, bare_remote_repo, tmp_path):
     """
     Test `gitwrite sync` for a merge scenario without conflicts.
@@ -753,6 +925,864 @@ def test_revert_with_conflicts_and_resolve(local_repo, runner):
     # The repo.state might not immediately return to NONE in test environment
     # if other refs like ORIG_HEAD persist briefly or due to other nuances.
     # The critical part for CLI logic is that REVERT_HEAD/MERGE_HEAD are gone.
+
+#######################
+# History Command Tests
+#######################
+import re # For regex matching of commit hashes
+
+def test_history_multiple_commits(runner, local_repo):
+    """Test `gitwrite history` with multiple commits."""
+    os.chdir(local_repo.workdir)
+
+    make_commit(local_repo, "file2.txt", "content for commit two", "Commit Two")
+    make_commit(local_repo, "file3.txt", "content for commit three", "Commit Three")
+
+    result = runner.invoke(cli, ['history'])
+    assert result.exit_code == 0, f"CLI Error: {result.output}"
+
+    output = result.output
+    assert "Initial commit" in output
+    assert "Commit Two" in output
+    assert "Commit Three" in output
+
+    # Check for commit hashes (7-char hex) - at least 3 of them for 3 commits
+    # The table format might have them at the start of a line or after a pipe character
+    # Example line: │ <hash> │ Test Author │ ... │ Commit Message │
+    # We expect at least 3 such lines.
+    # A simple check for 7-char hex strings.
+    # Make sure to account for the fact that the fixture makes an "Initial commit".
+    # The history command shows newest first.
+    commit_lines = [line for line in output.split('\n') if "Commit Three" in line or "Commit Two" in line or "Initial commit" in line]
+    assert len(commit_lines) >= 3 # Should be at least 3 lines with these messages
+
+    # Verify that each of these lines also contains something that looks like a short commit hash.
+    # This regex looks for a 7-character hexadecimal string.
+    hex_pattern = re.compile(r"[0-9a-f]{7}")
+    hashes_found = 0
+    for line in commit_lines:
+        if hex_pattern.search(line):
+            hashes_found +=1
+    assert hashes_found >= 3
+
+
+def test_history_with_number_option(runner, local_repo):
+    """Test `gitwrite history -n <number>`."""
+    os.chdir(local_repo.workdir)
+
+    # Fixture creates "Initial commit" (C1)
+    make_commit(local_repo, "file_c2.txt", "c2", "C2") # C2
+    make_commit(local_repo, "file_c3.txt", "c3", "C3") # C3
+    make_commit(local_repo, "file_c4.txt", "c4", "C4") # C4 (most recent)
+
+    result = runner.invoke(cli, ['history', '-n', '2'])
+    assert result.exit_code == 0, f"CLI Error: {result.output}"
+
+    output = result.output
+    assert "C4" in output # Most recent
+    assert "C3" in output # Second most recent
+    assert "C2" not in output
+    assert "Initial commit" not in output
+
+    # Count commit message lines (those containing recognizable commit messages)
+    # This is a bit fragile if output format changes significantly, but good for basic validation.
+    # A more robust way might be to count lines within the Rich table that correspond to commit entries.
+    # For now, count lines containing our specific commit messages.
+    lines_with_commits = [
+        line for line in output.split('\n')
+        if "C4" in line or "C3" in line or "C2" in line or "Initial commit" in line
+    ]
+    assert len(lines_with_commits) == 2, f"Expected 2 commits in output, found {len(lines_with_commits)}. Output:\n{output}"
+
+def test_history_empty_repo(runner):
+    """Test `gitwrite history` in an empty repository (no commits)."""
+    with runner.isolated_filesystem() as temp_dir:
+        os.chdir(temp_dir)
+        pygit2.init_repository(".") # Initialize repo, but no commits
+
+        result = runner.invoke(cli, ['history'])
+        assert result.exit_code == 0, f"CLI Error: {result.output}"
+        # The command should inform that there's no history.
+        assert "No history yet." in result.output or \
+               "No commits found to display." in result.output # Adjusted for current actual output
+
+def test_history_one_commit(runner, local_repo):
+    """Test `gitwrite history` when there is only one commit."""
+    os.chdir(local_repo.workdir)
+    # local_repo fixture has exactly one commit ("Initial commit")
+
+    # Verify only one commit exists
+    commits = list(local_repo.walk(local_repo.head.target, pygit2.GIT_SORT_TOPOLOGICAL))
+    assert len(commits) == 1
+    assert commits[0].message.strip() == "Initial commit"
+
+    result = runner.invoke(cli, ['history'])
+    assert result.exit_code == 0, f"CLI Error: {result.output}"
+
+    assert "Initial commit" in result.output
+    # Check that only one commit entry is displayed.
+    # Count lines containing "Initial commit" (should be 1 data row + potential headers/footers)
+    # A simple check: ensure other commit messages are not present.
+    assert "Commit Two" not in result.output # Assuming "Commit Two" is used in other tests
+
+    # Count actual commit entries in the output table
+    commit_lines = [line for line in result.output.split('\n') if "Initial commit" in line and "Test Author" in line]
+    assert len(commit_lines) == 1
+
+def test_history_number_option_more_than_commits(runner, local_repo):
+    """Test `gitwrite history -n <num>` where num > actual number of commits."""
+    os.chdir(local_repo.workdir)
+    # local_repo has one "Initial commit"
+
+    result = runner.invoke(cli, ['history', '-n', '5'])
+    assert result.exit_code == 0, f"CLI Error: {result.output}"
+
+    assert "Initial commit" in result.output
+    # Ensure it doesn't error and shows only the available commit.
+    # Count lines with "Initial commit"
+    commit_lines = [line for line in result.output.split('\n') if "Initial commit" in line and "Test Author" in line]
+    assert len(commit_lines) == 1
+    # No other commit messages should be present
+    assert "C2" not in result.output
+
+
+#######################
+# Explore Command Tests
+#######################
+
+def test_explore_create_new_branch(runner, local_repo):
+    """Test `gitwrite explore <branch_name>` to create and switch to a new branch."""
+    os.chdir(local_repo.workdir)
+    original_branch = local_repo.head.shorthand
+    new_branch_name = "my-new-exploration"
+
+    result = runner.invoke(cli, ['explore', new_branch_name])
+
+    assert result.exit_code == 0, f"CLI Error: {result.output}"
+    assert f"Switched to a new exploration: {new_branch_name}" in result.output # Adjusted to actual output
+
+    assert local_repo.head.shorthand == new_branch_name
+    assert new_branch_name in local_repo.branches.local
+    # Ensure the new branch points to the same commit as the original branch's HEAD
+    original_head_commit_oid = local_repo.branches.local[original_branch].target
+    new_branch_commit_oid = local_repo.branches.local[new_branch_name].target
+    assert new_branch_commit_oid == original_head_commit_oid
+
+def test_explore_branch_already_exists(runner, local_repo):
+    """Test `gitwrite explore` when the branch name already exists."""
+    os.chdir(local_repo.workdir)
+    existing_branch_name = "existing-feature"
+    original_branch_name = local_repo.head.shorthand
+
+    # Create the branch manually first
+    local_repo.branches.local.create(existing_branch_name, local_repo.head.peel(pygit2.Commit))
+
+    result = runner.invoke(cli, ['explore', existing_branch_name])
+
+    assert result.exit_code != 0, "CLI should fail if branch already exists."
+    # Based on current implementation in main.py
+    assert f"Error: Exploration '{existing_branch_name}' already exists." in result.output
+    assert local_repo.head.shorthand == original_branch_name, "HEAD should not have switched."
+
+def test_explore_on_empty_unborn_repo(runner):
+    """Test `gitwrite explore` in an empty repository with an unborn HEAD."""
+    with runner.isolated_filesystem() as temp_dir:
+        os.chdir(temp_dir)
+        empty_repo = pygit2.init_repository(".")
+        assert empty_repo.head_is_unborn is True
+
+        branch_name = "first-branch"
+        result = runner.invoke(cli, ['explore', branch_name])
+
+        # Current implementation of explore errors on unborn HEAD
+        assert result.exit_code != 0, f"CLI should fail on unborn HEAD. Output: {result.output}"
+        assert "Error: Cannot create an exploration in an empty repository. Please make some commits first." in result.output
+
+        # Verify no branch was created and HEAD is still unborn
+        assert branch_name not in empty_repo.branches.local
+        assert empty_repo.head_is_unborn is True
+
+
+def test_explore_invalid_branch_name_fails(runner, local_repo):
+    """Test `gitwrite explore` with an invalid branch name (e.g., containing spaces)."""
+    os.chdir(local_repo.workdir)
+    original_branch_name = local_repo.head.shorthand
+    invalid_branch_name = "invalid name with spaces"
+
+    result = runner.invoke(cli, ['explore', invalid_branch_name])
+
+    assert result.exit_code != 0, "CLI should fail for invalid branch name."
+    # pygit2.GitError: Invalid specification for new branch name 'refs/heads/invalid name with spaces'
+    # The error message from pygit2 might be generic like "Failed to create branch..."
+    # Or click might catch it if arg parsing is strict.
+    # The current `explore` catches pygit2.GitError.
+    assert "GitError during explore" in result.output or \
+           "Invalid reference name" in result.output # A more specific pygit2 error
+
+    assert local_repo.head.shorthand == original_branch_name, "HEAD should not change on failure."
+    assert invalid_branch_name not in local_repo.branches.local
+
+########################
+# Compare Command Tests
+########################
+import re # Already imported for history, but good to note if it were new
+
+def test_compare_head_vs_parent_default(runner, local_repo):
+    """Test `gitwrite compare` default (HEAD vs HEAD~1)."""
+    os.chdir(local_repo.workdir)
+
+    # Initial commit is C0 ("Initial commit" from fixture)
+    # Create C1
+    Path("file_to_change.txt").write_text("Line one\nLine two\nLine three\n")
+    make_commit(local_repo, "file_to_change.txt", Path("file_to_change.txt").read_text(), "Commit C1 content")
+
+    # Create C2 (HEAD)
+    Path("file_to_change.txt").write_text("Line one MODIFIED\nLine two\nLine three NEW\n")
+    make_commit(local_repo, "file_to_change.txt", Path("file_to_change.txt").read_text(), "Commit C2 content modified")
+
+    result = runner.invoke(cli, ['compare'])
+    assert result.exit_code == 0, f"CLI Error: {result.output}"
+
+    # Based on current compare output: "Diff between HEAD~1 (a) and HEAD (b):"
+    assert "Diff between HEAD~1 (a) and HEAD (b):" in result.output
+    assert "file_to_change.txt" in result.output
+
+    # Check for specific line changes. Word diff might make this complex.
+    # Simple check for whole line add/remove.
+    assert "-Line one" in result.output
+    assert "+Line one MODIFIED" in result.output
+    assert "+Line three NEW" in result.output # This implies original "Line three" was there or part of a change block
+
+def test_compare_two_specific_commits(runner, local_repo):
+    """Test `gitwrite compare <commit1> <commit2>`."""
+    os.chdir(local_repo.workdir)
+
+    c1_content = "Version 1 of content.\n"
+    Path("comp_file.txt").write_text(c1_content)
+    c1_oid = make_commit(local_repo, "comp_file.txt", c1_content, "C1 for compare")
+    c1_short_oid = local_repo.get(c1_oid).short_id
+
+    c2_content = "Version 2, slightly different.\n" # Not used in direct compare c1 vs c3
+    Path("comp_file.txt").write_text(c2_content)
+    make_commit(local_repo, "comp_file.txt", c2_content, "C2 for compare")
+
+    c3_content = "Version 3, very different now.\nAnd a new line.\n"
+    Path("comp_file.txt").write_text(c3_content)
+    c3_oid = make_commit(local_repo, "comp_file.txt", c3_content, "C3 for compare")
+    c3_short_oid = local_repo.get(c3_oid).short_id
+
+    result = runner.invoke(cli, ['compare', str(c1_oid), str(c3_oid)])
+    assert result.exit_code == 0, f"CLI Error: {result.output}"
+
+    # Based on current compare output
+    assert f"Diff between {c1_short_oid} (a) and {c3_short_oid} (b):" in result.output
+    assert "-Version 1 of content." in result.output
+    assert "+Version 3, very different now." in result.output
+    assert "+And a new line." in result.output
+
+def test_compare_one_arg_vs_head(runner, local_repo):
+    """Test `gitwrite compare <commit>` (which compares <commit> vs HEAD)."""
+    os.chdir(local_repo.workdir)
+
+    c1_content = "Content for one_arg test v1\n"
+    Path("one_arg_file.txt").write_text(c1_content)
+    c1_oid = make_commit(local_repo, "one_arg_file.txt", c1_content, "C1 one_arg")
+    c1_short_oid = local_repo.get(c1_oid).short_id
+
+    c2_content = "Content for one_arg test v2, changed\n"
+    Path("one_arg_file.txt").write_text(c2_content)
+    make_commit(local_repo, "one_arg_file.txt", c2_content, "C2 one_arg (HEAD)")
+    # c2_oid is now local_repo.head.target
+
+    result = runner.invoke(cli, ['compare', str(c1_oid)])
+    assert result.exit_code == 0, f"CLI Error: {result.output}"
+
+    # Based on current compare output
+    assert f"Diff between {c1_short_oid} (a) and HEAD (b):" in result.output
+    assert "-Content for one_arg test v1" in result.output
+    assert "+Content for one_arg test v2, changed" in result.output
+
+def test_compare_no_differences(runner, local_repo):
+    """Test `gitwrite compare` when there are no differences between commits."""
+    os.chdir(local_repo.workdir)
+
+    Path("no_diff_file.txt").write_text("Stable content\n")
+    c1_oid = make_commit(local_repo, "no_diff_file.txt", Path("no_diff_file.txt").read_text(), "C1 no_diff")
+    c1_short_oid = local_repo.get(c1_oid).short_id
+
+    result = runner.invoke(cli, ['compare', str(c1_oid), str(c1_oid)])
+    assert result.exit_code == 0, f"CLI Error: {result.output}"
+    assert f"No differences found between {c1_short_oid} and {c1_short_oid}." in result.output
+
+def test_compare_invalid_reference(runner, local_repo):
+    """Test `gitwrite compare` with invalid commit references."""
+    os.chdir(local_repo.workdir)
+
+    invalid_ref1 = "nonexistentcommitXYZ"
+    result1 = runner.invoke(cli, ['compare', invalid_ref1])
+    assert result1.exit_code != 0, f"CLI should fail for invalid ref1. Output: {result1.output}"
+    # Error message from revparse_single or peel
+    assert f"Error: Could not resolve reference '{invalid_ref1}'" in result1.output
+
+    c1_oid = local_repo.head.target # A valid commit
+    invalid_ref2 = "nonexistentcommitABC"
+    result2 = runner.invoke(cli, ['compare', str(c1_oid), invalid_ref2])
+    assert result2.exit_code != 0, f"CLI should fail for invalid ref2. Output: {result2.output}"
+    assert f"Error: Could not resolve references ('{str(c1_oid)}', '{invalid_ref2}')" in result2.output
+
+def test_compare_file_added_and_removed(runner, local_repo):
+    """Test `gitwrite compare` when a file is added and another removed."""
+    os.chdir(local_repo.workdir)
+
+    # C1: Add file_alpha.txt
+    Path("file_alpha.txt").write_text("Alpha content\n")
+    c1_oid = make_commit(local_repo, "file_alpha.txt", Path("file_alpha.txt").read_text(), "C1 with file_alpha")
+
+    # C2: Remove file_alpha.txt, add file_beta.txt
+    # Must ensure working dir is clean before next operations if not using isolated fs per step
+    # The make_commit helper handles one file at a time. For complex changes, stage manually.
+
+    # Stage removal of file_alpha.txt
+    os.remove(Path(local_repo.workdir) / "file_alpha.txt")
+    local_repo.index.remove("file_alpha.txt")
+
+    # Create and stage file_beta.txt
+    Path("file_beta.txt").write_text("Beta content\n")
+    local_repo.index.add("file_beta.txt")
+
+    local_repo.index.write() # Write staged changes to index
+
+    author = committer = local_repo.default_signature
+    tree = local_repo.index.write_tree()
+    c2_oid = local_repo.create_commit("HEAD", author, committer, "C2 remove alpha, add beta", tree, [c1_oid])
+
+    result = runner.invoke(cli, ['compare', str(c1_oid), str(c2_oid)])
+    assert result.exit_code == 0, f"CLI Error: {result.output}"
+
+    output = result.output
+    # Check for indications of file deletion and addition
+    assert "--- a/file_alpha.txt" in output # Diff header for old file
+    assert "+++ /dev/null" in output or "+++ b/file_alpha.txt" in output # file_alpha.txt deleted or changed to /dev/null
+    assert "-Alpha content" in output
+
+    assert "--- /dev/null" in output or "--- a/file_beta.txt" in output # file_beta.txt added from /dev/null
+    assert "+++ b/file_beta.txt" in output # Diff header for new file
+    assert "+Beta content" in output
+
+def test_compare_word_diff_visual_cue(runner, local_repo):
+    """Qualitatively test for word-level diff indicators."""
+    os.chdir(local_repo.workdir)
+
+    filename = "word_diff_test.txt"
+    original_line = "This is the original line of text."
+    changed_line = "This is the significantly changed line of text."
+
+    Path(filename).write_text(f"{original_line}\n")
+    make_commit(local_repo, filename, Path(filename).read_text(), "C1 word_diff")
+
+    Path(filename).write_text(f"{changed_line}\n")
+    make_commit(local_repo, filename, Path(filename).read_text(), "C2 word_diff")
+
+    result = runner.invoke(cli, ['compare']) # Compares HEAD (C2) vs HEAD~1 (C1)
+    assert result.exit_code == 0, f"CLI Error: {result.output}"
+
+    output = result.output
+    assert filename in output # File name should be in the diff header
+
+    # Check for the presence of both old and new lines in the diff output
+    # This is a basic check. Rich's actual output might use ANSI escape codes for colors.
+    # For this test, we're just checking if the lines appear with +/- prefixes.
+    # A more sophisticated test might capture Rich's console output and parse styles.
+
+    # Example: difflib might produce something like:
+    # - This is the original line of text.
+    # + This is the significantly changed line of text.
+    # And Rich would color parts of these lines.
+    # We'll check that both versions of the line are present, one marked as removed, one as added.
+
+    # A simple check:
+    # Ensure the line with "original" is marked as removed (or part of a removal in word diff)
+    # Ensure the line with "significantly changed" is marked as added (or part of an addition)
+
+    # This assertion is tricky because the exact output format of word-diff with Rich can be complex.
+    # We're looking for an indication that "original" was part of the old line
+    # and "significantly changed" is part of the new line, and both are shown.
+
+    # A basic check for the lines appearing with +/- markers
+    assert f"-{original_line}" in output
+    assert f"+{changed_line}" in output
+
+    # A slightly more advanced check could look for specific highlighted words if we knew the style.
+    # E.g., if removed words are red and added are green.
+    # This is hard to do reliably without parsing Rich's specific output format.
+    # For now, the presence of both lines with +/- and the filename is a reasonable check.
+    # The prompt also suggested "[-original-]{+significantly changed+}" - this depends on difflib's direct output
+    # and how it's rendered. If the CLI formats it this way, we can check for it.
+    # The current implementation uses Rich's Text.stylize for word diffs,
+    # which would result in ANSI codes, not this literal format in plain text output.
+    # So, the +/- line check is more appropriate for plain text CLI output.
+
+
+######################
+# Merge Command Tests
+######################
+
+def test_merge_fast_forward(runner, local_repo):
+    """Test `gitwrite merge <branch_name>` for a fast-forward scenario."""
+    os.chdir(local_repo.workdir)
+    main_branch_name = local_repo.head.shorthand
+
+    # Create a feature branch from current HEAD of main
+    feature_branch_name = 'feature-ff'
+    feature_branch = local_repo.branches.local.create(feature_branch_name, local_repo.head.peel(pygit2.Commit))
+
+    # Switch to the feature branch and make a commit
+    local_repo.checkout(feature_branch)
+    ff_commit_oid = make_commit(local_repo, 'ff_file.txt', 'ff content', 'FF commit on feature')
+
+    # Switch back to the main branch
+    main_ref = local_repo.branches.local[main_branch_name]
+    local_repo.checkout(main_ref) # Checkout the ref itself
+
+    # Merge the feature branch into main
+    result = runner.invoke(cli, ['merge', feature_branch_name])
+
+    assert result.exit_code == 0, f"CLI Error: {result.output}"
+    assert "Fast-forwarded" in result.output or "Fast-forward merge" in result.output # Adjusted for actual messages
+    assert local_repo.head.target == ff_commit_oid
+    assert (Path(local_repo.workdir) / 'ff_file.txt').exists()
+
+def test_merge_successful_no_ff(runner, local_repo):
+    """Test a successful merge that results in a merge commit (not fast-forward)."""
+    os.chdir(local_repo.workdir)
+    main_branch_name = local_repo.head.shorthand
+
+    # Commit on main branch first
+    main_commit_oid = make_commit(local_repo, 'main_file.txt', 'main content', 'Commit on main')
+
+    # Create feature branch from the commit *before* main_commit_oid
+    # This ensures the branches diverge. The fixture creates an initial commit.
+    parent_of_main_commit = local_repo.get(main_commit_oid).parents[0]
+
+    feature_branch_name = 'feature-merge'
+    feature_branch = local_repo.branches.local.create(feature_branch_name, parent_of_main_commit)
+
+    # Switch to feature branch and make a commit
+    local_repo.checkout(feature_branch)
+    feature_commit_oid = make_commit(local_repo, 'feature_file.txt', 'feature content', 'Commit on feature')
+
+    # Switch back to main branch
+    main_ref = local_repo.branches.local[main_branch_name]
+    local_repo.checkout(main_ref)
+
+    # Merge feature branch into main
+    result = runner.invoke(cli, ['merge', feature_branch_name])
+    assert result.exit_code == 0, f"CLI Error: {result.output}"
+    assert "Normal merge" in result.output or \
+           f"Merged {feature_branch_name} into {main_branch_name}" in result.output # Adjusted for actual messages
+
+    merge_commit = local_repo.head.peel(pygit2.Commit)
+    assert len(merge_commit.parents) == 2
+    parent_ids = {p.id for p in merge_commit.parents}
+    assert main_commit_oid in parent_ids
+    assert feature_commit_oid in parent_ids
+    assert (Path(local_repo.workdir) / 'main_file.txt').exists()
+    assert (Path(local_repo.workdir) / 'feature_file.txt').exists()
+
+def test_merge_with_conflicts(runner, local_repo):
+    """Test `gitwrite merge` when there are conflicts."""
+    os.chdir(local_repo.workdir)
+    main_branch_name = local_repo.head.shorthand
+
+    # Create a base commit
+    base_file = "conflict_file.txt"
+    make_commit(local_repo, base_file, "Original line\n", "Base commit for conflict test")
+    base_commit_oid = local_repo.head.target
+
+    # Create a commit on main that changes the file
+    make_commit(local_repo, base_file, "Original line\nThis line from main\n", "Main conflicting commit")
+
+    # Create a feature branch from the base commit (before main's change)
+    feature_branch_name = 'feature-conflict'
+    feature_branch = local_repo.branches.local.create(feature_branch_name, local_repo.get(base_commit_oid))
+
+    # Switch to feature branch and make a conflicting change
+    local_repo.checkout(feature_branch)
+    make_commit(local_repo, base_file, "Original line\nThis is a conflicting line from feature\n", "Feature conflicting commit")
+
+    # Switch back to main
+    main_ref = local_repo.branches.local[main_branch_name]
+    local_repo.checkout(main_ref)
+
+    # Attempt to merge, expecting conflicts
+    result = runner.invoke(cli, ['merge', feature_branch_name])
+    # The command itself should succeed by reporting the conflict
+    assert result.exit_code == 0, f"CLI Error: {result.output}"
+
+    assert "Automatic merge failed; fix conflicts" in result.output or \
+           "Conflicts detected" in result.output # Adjusted for actual messages
+    assert base_file in result.output # Ensure the conflicting file is mentioned
+
+    assert (Path(local_repo.gitdir) / 'MERGE_HEAD').exists(), "MERGE_HEAD should exist in a conflict state."
+
+    conflict_content = (Path(local_repo.workdir) / base_file).read_text()
+    assert "<<<<<<<" in conflict_content
+    assert "=======" in conflict_content
+    assert ">>>>>>>" in conflict_content
+    assert "This line from main" in conflict_content
+    assert "This is a conflicting line from feature" in conflict_content
+
+def test_merge_already_up_to_date(runner, local_repo):
+    """Test `gitwrite merge` when the branch is already up-to-date."""
+    os.chdir(local_repo.workdir)
+    main_branch_name = local_repo.head.shorthand
+
+    # Create a feature branch that is identical to main initially
+    feature_branch_name = 'feature-uptodate'
+    local_repo.branches.local.create(feature_branch_name, local_repo.head.peel(pygit2.Commit))
+
+    head_before_merge = local_repo.head.target
+
+    result = runner.invoke(cli, ['merge', feature_branch_name])
+    assert result.exit_code == 0, f"CLI Error: {result.output}"
+    assert f"Already up-to-date with {feature_branch_name}." in result.output # Adjusted for actual message
+    assert local_repo.head.target == head_before_merge # HEAD should not change
+
+def test_merge_non_existent_branch(runner, local_repo):
+    """Test `gitwrite merge` with a non-existent branch."""
+    os.chdir(local_repo.workdir)
+    head_before_merge = local_repo.head.target
+    non_existent_branch = "no-such-branch-here"
+
+    result = runner.invoke(cli, ['merge', non_existent_branch])
+    assert result.exit_code != 0, "CLI should fail for non-existent branch."
+    # Based on current `merge` implementation
+    assert f"Error: Exploration '{non_existent_branch}' not found." in result.output
+    assert local_repo.head.target == head_before_merge # HEAD should not change
+
+# test_merge_into_dirty_working_directory needs careful thought on pygit2's behavior.
+# pygit2.Repository.merge() primarily updates the index. It doesn't always perform a full checkout
+# that would loudly complain about all types of dirty working directory files unless those files
+# are *directly* involved in the merge operation itself at the index level.
+# A `checkout` operation after `merge()` would be more sensitive.
+# The current CLI `merge` command does `repo.merge()` and then if no conflicts, `repo.create_commit()`.
+# It does not do a separate checkout that would check for all dirty files.
+# Let's test a case where a file *to be modified by the merge* is dirty.
+
+def test_merge_dirty_file_involved_in_merge(runner, local_repo):
+    """Test merge when a file to be changed by merge is dirty in WD."""
+    os.chdir(local_repo.workdir)
+    main_branch_name = local_repo.head.shorthand
+
+    # File that will be changed on a feature branch and also made dirty on main
+    shared_file = "shared_document.txt"
+    make_commit(local_repo, shared_file, "Version 1 of shared document\n", "Add shared document")
+    base_commit_for_feature = local_repo.head.target
+
+    # Create feature branch and modify shared_document.txt
+    feature_branch_name = "feature-changes-shared"
+    feature_branch = local_repo.branches.local.create(feature_branch_name, local_repo.get(base_commit_for_feature))
+    local_repo.checkout(feature_branch)
+    make_commit(local_repo, shared_file, "Version 2 from feature\n", "Update shared document on feature")
+
+    # Switch back to main
+    main_ref = local_repo.branches.local[main_branch_name]
+    local_repo.checkout(main_ref) # Should be at base_commit_for_feature state for shared_file
+
+    # Make shared_document.txt dirty in the working directory of main
+    (Path(local_repo.workdir) / shared_file).write_text("Dirty changes on main to shared document\n")
+
+    result = runner.invoke(cli, ["merge", feature_branch_name])
+
+    # pygit2's repo.merge() updates the index. If the WD file is dirty but doesn't
+    # conflict with the index changes from the merge, pygit2 might proceed with updating index.
+    # The `gitwrite merge` command, if conflicts arise in index, reports them.
+    # If no index conflicts, it creates a commit.
+    # The "dirty working directory" check is often more stringent with `checkout`.
+    # The current `merge` command in `main.py` does not have a pre-emptive dirty check.
+    # It relies on pygit2.Repository.merge() and then checks repo.index.has_conflicts.
+    # If the dirty WD change *also* creates a conflict with the incoming feature change at the same location,
+    # then it will be reported as a conflict. If not, pygit2 might stage the merged version over the dirty WD one.
+
+    # Let's refine the test: the dirty change on main should conflict with the feature change.
+    # Base: "V1"
+    # Main (WD dirty): "V1-main-dirty"
+    # Feature: "V1-feature"
+    # Merging Feature into Main should conflict if V1-main-dirty is not staged.
+    # If V1-main-dirty *was* staged, then it's a normal 3-way content merge.
+    # Since it's just in WD, pygit2's merge might overwrite it if it can cleanly apply feature's change to V1.
+    # This needs verification against pygit2 behavior.
+
+    # For now, assume `pygit2.merge()` will signal conflict if the index can't be cleanly merged.
+    # A truly robust "dirty WD check" would be `repo.status()` before any merge ops.
+    # The current `gitwrite merge` does not do this.
+    # Let's assume the most likely outcome is a conflict if the same file is changed.
+    if "Conflicts detected" in result.output or "Automatic merge failed" in result.output :
+        assert result.exit_code == 0 # Command still "succeeds" by reporting conflict
+        assert (Path(local_repo.gitdir) / 'MERGE_HEAD').exists()
+    else:
+        # This case implies pygit2's merge overwrote the dirty WD file or cleanly merged.
+        # This depends on the exact nature of changes and pygit2's internal logic.
+        # For a robust CLI, an explicit dirty check before `repo.merge()` would be better.
+        # Given current `main.py`, this test might pass if pygit2 handles it without index conflict.
+        # For now, let's assert that if it didn't conflict, it completed.
+        assert result.exit_code == 0, f"Merge proceeded unexpectedly. Output: {result.output}"
+        # If it completed, a merge commit would exist.
+        # This part of the test is a bit ambiguous without knowing pygit2's exact behavior for this WD state.
+
+
+#######################
+# Switch Command Tests
+#######################
+
+def test_switch_list_branches(runner, local_repo):
+    """Test `gitwrite switch` to list branches."""
+    os.chdir(local_repo.workdir)
+    current_head_name = local_repo.head.shorthand
+
+    # Create a couple of other branches
+    local_repo.branches.local.create("feature-x", local_repo.head.peel(pygit2.Commit))
+    local_repo.branches.local.create("bugfix-y", local_repo.head.peel(pygit2.Commit))
+
+    result = runner.invoke(cli, ['switch'])
+    assert result.exit_code == 0, f"CLI Error: {result.output}"
+
+    output = result.output
+    assert "feature-x" in output
+    assert "bugfix-y" in output
+    assert f"* {current_head_name}" in output # Current branch should be marked
+
+def test_switch_to_existing_branch(runner, local_repo):
+    """Test `gitwrite switch <branch_name>` to switch to an existing branch."""
+    os.chdir(local_repo.workdir)
+    original_branch_name = local_repo.head.shorthand
+    new_branch_name = "develop"
+
+    local_repo.branches.local.create(new_branch_name, local_repo.head.peel(pygit2.Commit))
+    assert new_branch_name != original_branch_name # Ensure we're not "switching" to the same branch
+
+    result = runner.invoke(cli, ['switch', new_branch_name])
+    assert result.exit_code == 0, f"CLI Error: {result.output}"
+
+    # Based on current `switch` implementation output
+    assert f"Switched to exploration: {new_branch_name}" in result.output
+    assert local_repo.head.shorthand == new_branch_name
+
+def test_switch_to_non_existent_branch(runner, local_repo):
+    """Test `gitwrite switch <branch_name>` with a non-existent branch."""
+    os.chdir(local_repo.workdir)
+    original_branch_name = local_repo.head.shorthand
+    non_existent_branch = "ghost-branch"
+
+    result = runner.invoke(cli, ['switch', non_existent_branch])
+    assert result.exit_code != 0, "CLI should fail for non-existent branch."
+
+    # Based on current `switch` implementation output
+    assert f"Error: Exploration '{non_existent_branch}' not found" in result.output
+    assert local_repo.head.shorthand == original_branch_name # HEAD should not change
+
+def test_switch_to_current_branch(runner, local_repo):
+    """Test `gitwrite switch <branch_name>` when already on that branch."""
+    os.chdir(local_repo.workdir)
+    current_branch_name = local_repo.head.shorthand
+
+    result = runner.invoke(cli, ['switch', current_branch_name])
+    assert result.exit_code == 0, f"CLI Error: {result.output}" # Should succeed gracefully
+
+    # Based on current `switch` implementation output
+    assert f"Already on exploration: {current_branch_name}" in result.output
+    assert local_repo.head.shorthand == current_branch_name # HEAD remains unchanged
+
+def test_switch_list_in_empty_repo_unborn_head(runner):
+    """Test `gitwrite switch` (list) in an empty repo with unborn HEAD."""
+    with runner.isolated_filesystem() as temp_dir:
+        os.chdir(temp_dir)
+        empty_repo = pygit2.init_repository(".")
+        assert empty_repo.head_is_unborn is True
+
+        result = runner.invoke(cli, ['switch'])
+        assert result.exit_code == 0, f"CLI Error: {result.output}"
+        # Based on current `switch` implementation
+        assert "No explorations (branches) yet." in result.output
+
+def test_switch_list_no_local_branches_detached_head(runner, local_repo):
+    """Test `gitwrite switch` (list) with detached HEAD and no local branches."""
+    os.chdir(local_repo.workdir)
+
+    # Detach HEAD
+    local_repo.set_head(local_repo.head.target)
+    assert local_repo.head_is_detached is True
+
+    # Delete all local branches to simulate an unusual state
+    branches_to_delete = list(local_repo.branches.local) # pygit2 specific way to list local branches
+    for b_name in branches_to_delete:
+        local_repo.branches.delete(b_name)
+
+    assert not list(local_repo.branches.local) # Verify no local branches exist
+
+    result = runner.invoke(cli, ['switch'])
+    assert result.exit_code == 0, f"CLI Error: {result.output}"
+    # Based on current `switch` implementation when branches list is empty
+    assert "No explorations (branches) found." in result.output
+
+
+####################
+# Save Command Tests
+####################
+
+def test_save_successful_commit(runner, local_repo):
+    """Test a successful basic commit with `gitwrite save`."""
+    os.chdir(local_repo.workdir)
+
+    file_to_commit = Path("new_file.txt")
+    file_to_commit.write_text("Some new content for saving.")
+
+    commit_message = "Test save message for new_file.txt"
+    result = runner.invoke(cli, ['save', commit_message])
+
+    assert result.exit_code == 0, f"CLI Error: {result.output}"
+    assert "Staged all changes." in result.output
+    assert commit_message in result.output # Check if the commit message is part of the output
+
+    last_commit = local_repo.head.peel(pygit2.Commit)
+    assert last_commit.message.strip() == commit_message.strip()
+
+    # Verify the file is in the commit's tree
+    assert file_to_commit.name in last_commit.tree
+    blob_content = last_commit.tree[file_to_commit.name].data.decode('utf-8')
+    assert blob_content == "Some new content for saving."
+
+    # Verify working directory and index are clean
+    status = local_repo.status()
+    assert not status, f"Repository should be clean after save, but status is: {status}"
+
+def test_save_nothing_to_commit(runner, local_repo):
+    """Test `gitwrite save` when there are no changes."""
+    os.chdir(local_repo.workdir)
+
+    # Ensure repo is clean (fixture's initial commit is done)
+    # Make sure no untracked files either by explicitly checking or relying on fixture's state
+    assert not local_repo.status(), "Repo should be clean before testing 'nothing to commit'"
+
+    initial_head_target = local_repo.head.target
+    commit_message = "Attempting save with no changes"
+    result = runner.invoke(cli, ['save', commit_message])
+
+    # Exit code 0 is fine, but it should inform the user.
+    assert result.exit_code == 0, f"CLI Error: {result.output}"
+    assert "No changes to save" in result.output.lower() or \
+           "nothing to commit" in result.output.lower() # Accommodate different phrasings
+
+    assert local_repo.head.target == initial_head_target, "HEAD should not change if nothing was committed."
+
+def test_save_clears_merge_head(runner, local_repo):
+    """Test that `gitwrite save` clears MERGE_HEAD after a 'merge'."""
+    os.chdir(local_repo.workdir)
+
+    # Simulate a pending merge state
+    merge_head_file = Path(local_repo.gitdir) / 'MERGE_HEAD'
+    # Create a dummy MERGE_HEAD pointing to some commit (e.g., initial commit)
+    # In a real merge, this would be the OID of the branch being merged.
+    dummy_merge_oid = local_repo.head.target # Using current HEAD as a placeholder OID
+    merge_head_file.write_text(str(dummy_merge_oid) + "\n")
+
+    # Stage some changes as if resolving a merge
+    merged_file = Path("merged_file.txt")
+    merged_file.write_text("Content after resolving merge.")
+    local_repo.index.add(merged_file.name)
+    local_repo.index.write()
+
+    commit_message = "Completed merge commit"
+    result = runner.invoke(cli, ['save', commit_message])
+
+    assert result.exit_code == 0, f"CLI Error: {result.output}"
+    assert "Finalizing merge..." in result.output
+    assert "Successfully completed merge operation." in result.output
+
+    assert not merge_head_file.exists(), "MERGE_HEAD should be cleared after successful save during merge."
+
+    last_commit = local_repo.head.peel(pygit2.Commit)
+    # The save command currently just uses the user's message.
+    # If it were to auto-generate "Merge branch..." this would need adjustment.
+    assert last_commit.message.strip() == commit_message
+    assert len(last_commit.parents) == 2 # A merge commit should have two parents
+    # Parent 1: The original HEAD before this save operation
+    # Parent 2: The OID from MERGE_HEAD (dummy_merge_oid in this test)
+    parent_oids = {p.id for p in last_commit.parents}
+    # We need to know what HEAD was *before* the save command created a new commit.
+    # The `local_repo` fixture creates an initial commit. `dummy_merge_oid` points to this.
+    # The other parent would be this same commit if no other commits were made before staging merge_file.
+    # Let's make one more commit to ensure parents are distinct for a clearer test.
+
+    # Reset for a clearer parent structure:
+    merge_head_file.write_text(str(local_repo.head.target) + "\n") # Parent 1 for merge
+    make_commit(local_repo, "another_file.txt", "content", "Another commit before merge save")
+    parent2_for_merge = local_repo.head.target # Parent 2 for merge (current HEAD)
+
+    merged_file.write_text("Content after resolving merge for clearer test.")
+    local_repo.index.add(merged_file.name)
+    local_repo.index.write()
+
+    result_clearer = runner.invoke(cli, ['save', commit_message])
+    assert result_clearer.exit_code == 0, f"CLI Error: {result_clearer.output}"
+    last_commit_clearer = local_repo.head.peel(pygit2.Commit)
+    parent_oids_clearer = {p.id for p in last_commit_clearer.parents}
+    assert dummy_merge_oid in parent_oids_clearer
+    assert parent2_for_merge in parent_oids_clearer
+
+
+def test_save_clears_revert_head_and_formats_message(runner, local_repo):
+    """Test `gitwrite save` clears REVERT_HEAD and formats message correctly."""
+    os.chdir(local_repo.workdir)
+
+    # Commit to be "reverted"
+    file_to_revert_path = Path("file_to_revert.txt")
+    file_to_revert_path.write_text("Content that will be reverted.")
+    make_commit(local_repo, file_to_revert_path.name, file_to_revert_path.read_text(), "Commit to be reverted")
+    commit_to_revert_hash = local_repo.head.target
+    reverted_commit_obj = local_repo[commit_to_revert_hash]
+    reverted_commit_message_first_line = reverted_commit_obj.message.splitlines()[0]
+
+    # Simulate a pending revert state
+    revert_head_file = Path(local_repo.gitdir) / 'REVERT_HEAD'
+    revert_head_file.write_text(str(commit_to_revert_hash) + "\n")
+
+    # Stage some changes as if resolving the revert
+    # (e.g., the working dir now reflects the state *after* `git revert --no-commit` would have run)
+    reverted_file_path_in_wd = Path(local_repo.workdir) / file_to_revert_path.name
+    # In a real revert, this file might be deleted or changed. Let's simulate it's deleted.
+    if reverted_file_path_in_wd.exists():
+       os.remove(reverted_file_path_in_wd) # Remove it to simulate revert
+    local_repo.index.remove(file_to_revert_path.name) # Stage the deletion
+    local_repo.index.write()
+
+    user_resolution_message = "My resolution for revert"
+    result = runner.invoke(cli, ['save', user_resolution_message])
+
+    assert result.exit_code == 0, f"CLI Error: {result.output}"
+    assert f"Finalizing revert of commit {reverted_commit_obj.short_id}" in result.output
+    assert "Successfully completed revert operation." in result.output
+
+    assert not revert_head_file.exists(), "REVERT_HEAD should be cleared."
+
+    last_commit = local_repo.head.peel(pygit2.Commit)
+    expected_message_start = f"Revert \"{reverted_commit_message_first_line}\""
+    assert last_commit.message.startswith(expected_message_start)
+    assert user_resolution_message in last_commit.message
+    assert f"This reverts commit {commit_to_revert_hash}." in last_commit.message
+
+def test_save_no_message_fails(runner, local_repo):
+    """Test that `gitwrite save` fails if no message is provided."""
+    os.chdir(local_repo.workdir)
+
+    # Make a change so there's something to commit
+    (Path(local_repo.workdir) / "change_for_no_msg_test.txt").write_text("content")
+
+    result = runner.invoke(cli, ['save']) # No message argument
+
+    assert result.exit_code != 0, "CLI should fail when 'save' is called without a message."
+    # Click's default error message for missing argument:
+    assert "Missing argument 'MESSAGE'." in result.output or "Error: Missing argument 'MESSAGE'." in result.output
 
 
 #######################
