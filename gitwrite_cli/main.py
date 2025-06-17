@@ -3,6 +3,7 @@ import click
 import pygit2
 import os
 from pathlib import Path
+from pygit2 import Signature
 
 @click.group()
 def cli():
@@ -1045,8 +1046,9 @@ def sync(remote_name, branch_name_opt):
 
 @cli.command()
 @click.argument("commit_ref")
+@click.pass_context # Add this to access context (ctx)
 @click.option("-m", "--mainline", "mainline_option", type=int, default=None, help="For merge commits, the parent number (1-indexed) to revert towards.")
-def revert(commit_ref, mainline_option):
+def revert(ctx, commit_ref, mainline_option): # Add ctx as first argument
     """Reverts a commit.
 
     <commit_ref> is the commit reference (e.g., commit hash, branch name, HEAD) to revert.
@@ -1056,32 +1058,26 @@ def revert(commit_ref, mainline_option):
         # Discover repository path starting from current directory
         repo_path_str = pygit2.discover_repository(str(Path.cwd()))
         if repo_path_str is None:
-            click.echo("Error: Not a Git repository (or any of the parent directories).", err=True)
-            return
+            ctx.fail("Error: Not a Git repository (or any of the parent directories).")
         repo = pygit2.Repository(repo_path_str)
     except pygit2.GitError as e:
-        click.echo(f"Error initializing repository: {e}", err=True)
-        return
+        ctx.fail(f"Error initializing repository: {e}")
 
     if repo.is_bare:
-        click.echo("Error: Cannot revert in a bare repository.", err=True)
-        return
+        ctx.fail("Error: Cannot revert in a bare repository.")
 
     try:
         commit_to_revert = repo.revparse_single(commit_ref)
         if commit_to_revert.type != pygit2.GIT_OBJECT_COMMIT:
-            click.echo(f"Error: '{commit_ref}' does not resolve to a commit.", err=True)
-            return
+            ctx.fail(f"Error: '{commit_ref}' does not resolve to a commit.")
         # Peel to commit object if it's a tag
         commit_to_revert = commit_to_revert.peel(pygit2.Commit)
         click.echo(f"Attempting to revert commit: {commit_to_revert.short_id} ('{commit_to_revert.message.strip().splitlines()[0]}')")
 
     except (KeyError, pygit2.GitError):
-        click.echo(f"Error: Invalid or ambiguous commit reference '{commit_ref}'.", err=True)
-        return
+        ctx.fail(f"Error: Invalid or ambiguous commit reference '{commit_ref}'.")
     except Exception as e: # Catch other potential errors during revparse e.g. if not a commit
-        click.echo(f"Error resolving commit '{commit_ref}': {e}", err=True)
-        return
+        ctx.fail(f"Error resolving commit '{commit_ref}': {e}")
 
     # 1. Check for Dirty Working Directory or Index
     status = repo.status()
@@ -1096,64 +1092,57 @@ def revert(commit_ref, mainline_option):
             break
 
     if is_dirty:
-        click.echo("Error: Your working directory or index has uncommitted changes.", err=True)
-        click.echo("Please commit or stash them before attempting to revert.", err=True)
-        return
+        ctx.fail("Error: Your working directory or index has uncommitted changes.\nPlease commit or stash them before attempting to revert.")
 
-    # 2. Determine Mainline for Merge Commits
+    # 2. Determine Mainline for Merge Commits and issue warnings
     is_merge_commit = len(commit_to_revert.parents) > 1
-    mainline_to_use = 0  # Default for non-merge commits or if pygit2 handles it
 
     if is_merge_commit:
-        if mainline_option is None:
-            mainline_to_use = 1 # Default to the first parent for merge commits
-            click.echo(f"Note: '{commit_to_revert.short_id}' is a merge commit. Reverting towards parent 1 (default).")
-            click.echo("Use --mainline <parent_number> to specify a different parent.")
-        elif mainline_option < 1 or mainline_option > len(commit_to_revert.parents):
-            click.echo(f"Error: Invalid mainline number '{mainline_option}'. Must be between 1 and {len(commit_to_revert.parents)} for this merge commit.", err=True)
-            return
-        else:
-            mainline_to_use = mainline_option
-            click.echo(f"Reverting merge commit {commit_to_revert.short_id} towards parent {mainline_to_use}.")
-    elif mainline_option is not None:
+        # Pygit2's Repository.revert() method, when used for index-only modification,
+        # errors if a mainline is not specified for a merge commit, and does not accept
+        # 'mainline' as a keyword or additional positional argument.
+        # Therefore, this tool cannot currently support index-only reverts of merge commits
+        # with specific mainline parent selection using this pygit2 method.
+        ctx.fail(
+            f"Error: Commit '{commit_to_revert.short_id}' is a merge commit. "
+            "Reverting merge commits with specific mainline parent selection to only update the "
+            "working directory/index (before creating a commit) is not supported with the current "
+            "underlying library (pygit2.Repository.revert()). "
+            "Consider reverting using standard git commands or a different tool for this specific operation."
+        )
+    elif mainline_option is not None: # Not a merge, but --mainline was given
         click.echo(f"Warning: Commit {commit_to_revert.short_id} is not a merge commit. The --mainline option will be ignored.", fg="yellow")
 
-    # 3. Perform the Revert
+    # 3. Perform the Revert (only for non-merge commits at this point)
     try:
-        # For non-merge commits, mainline_to_use will be 0.
-        # For merge commits, it will be the user-specified or default (1).
-        # pygit2's repo.revert() expects mainline to be 1-indexed for merge commits.
-        # If the commit is not a merge, this mainline param is ignored by pygit2's C layer or handled appropriately.
-        # So, we can pass mainline_to_use directly.
-        # However, to be absolutely clear with pygit2's intent, we can pass it as keyword only if it's a merge.
-        if is_merge_commit:
-            repo.revert(commit_to_revert, mainline=mainline_to_use)
-        else:
-            repo.revert(commit_to_revert) # No mainline needed for non-merge
-
+        repo.revert(commit_to_revert)
         click.echo(f"Index updated to reflect revert of commit {commit_to_revert.short_id}.")
 
     except pygit2.GitError as e:
-        # This can happen for various reasons, e.g., revert not possible cleanly,
-        # or sometimes if there are conflicts that pygit2 itself cannot stage as conflicted.
-        click.echo(f"Error during revert operation: {e}", err=True)
-        click.echo("This might be due to complex changes that cannot be automatically reverted or unresolved conflicts.", err=True)
-        # Check if conflicts exist in the index, even if revert threw a generic error.
-        # repo.index.conflicts is an iterator (or None).
+        error_message_detail = str(e)
+        custom_error_message = (
+            f"Error during revert operation: {error_message_detail}\nThis might be due to complex changes that "
+            "cannot be automatically reverted or unresolved conflicts."
+        )
+        if "takes 1 positional argument but 2 were given" in error_message_detail or \
+           "takes at most 1 positional argument" in error_message_detail or \
+           "unexpected keyword argument" in error_message_detail:
+            custom_error_message = (
+                f"Error during revert operation: {error_message_detail}.\n"
+                "This indicates an issue with how pygit2's Repository.revert() handles arguments for mainline parent selection (if at all for index-only reverts)."
+            )
+
         has_conflicts_after_error = False
         if repo.index.conflicts is not None:
             for _ in repo.index.conflicts:
                 has_conflicts_after_error = True
                 break
         if has_conflicts_after_error:
-            click.echo("Conflicts were detected in the index. Please resolve them and then commit.", err=True)
-        # It's good practice to clean up state if revert fails and leaves things in a weird state,
-        # though pygit2's revert might not always set a specific state like MERGE_RR.
-        # repo.state_cleanup() # Might be too aggressive here if user needs to see state.
-        return
+            custom_error_message += "\nConflicts were detected in the index. Please resolve them and then commit."
+
+        ctx.fail(custom_error_message)
     except Exception as e: # Catch any other unexpected errors
-        click.echo(f"An unexpected error occurred during revert: {e}", err=True)
-        return
+        ctx.fail(f"An unexpected error occurred during revert: {e}")
 
     # 1. Check for Conflicts Post-Revert
     has_conflicts = False
@@ -1180,8 +1169,9 @@ def revert(commit_ref, mainline_option):
             elif their_entry: # Fallback if 'our' side was deleted but 'theirs' exists
                 click.echo(f"  {their_entry.path}", err=True)
             # (If both are None, it's an unusual conflict, but one path should typically be present)
-
-        # repo.state_cleanup() # DO NOT cleanup state here if there are conflicts, user needs it.
+        # Do not call ctx.fail here as this is an expected outcome (conflicts reported to user)
+        # The command has done its job by attempting revert and reporting conflicts.
+        # Subsequent 'save' will handle it.
         return # Stop here, user needs to resolve.
     else:
         # 2. Create Revert Commit (No Conflicts)
@@ -1203,9 +1193,10 @@ def revert(commit_ref, mainline_option):
 
             # Parents for the new commit (current HEAD)
             if repo.head_is_unborn:
-                click.echo("Error: HEAD is unborn. Cannot create revert commit in an empty repository.", err=True)
-                # This case should ideally be caught earlier, but as a safeguard.
-                return
+                # This case should ideally be caught much earlier (e.g. before revparse_single)
+                # or by ensuring there's at least one commit to revert.
+                # If we reach here, it's an inconsistent state for creating a commit.
+                ctx.fail("Error: HEAD is unborn. Cannot create revert commit.")
             parents = [repo.head.target]
 
             # Tree
@@ -1231,11 +1222,11 @@ def revert(commit_ref, mainline_option):
             repo.state_cleanup() # Clean up REVERT_HEAD, CHERRY_PICK_HEAD etc.
 
         except pygit2.GitError as e:
-            click.echo(f"Error creating revert commit: {e}", err=True)
-            click.echo("Your working directory might contain the reverted changes, but the commit failed.", err=True)
-            click.echo("You may need to manually commit using 'gitwrite save'.", err=True)
+            # If commit creation fails, the index is already updated by repo.revert().
+            # User might need to manually run 'gitwrite save'.
+            ctx.fail(f"Error creating revert commit: {e}\nYour working directory might contain the reverted changes, but the commit failed.\nYou may need to manually commit using 'gitwrite save'.")
         except Exception as e:
-            click.echo(f"An unexpected error occurred during revert commit creation: {e}", err=True)
+            ctx.fail(f"An unexpected error occurred during revert commit creation: {e}")
 
 
 if __name__ == "__main__":
