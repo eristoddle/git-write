@@ -158,11 +158,23 @@ Status: **Completed**
 
 ### Task 3.3 - Implement `gitwrite tag`
 Objective: Implement commands for creating and listing tags.
-Status: **Pending**
+Status: **Completed**
 
-1.  Define `tag create <name> [-m <message>]` subcommand.
-2.  Define `tag list` subcommand.
-3.  Implement logic using `pygit2` for tag creation and listing.
+1.  Defined `tag add <name> [commit_ref] [-m <message>]` subcommand:
+    *   Creates a new tag.
+    *   If `-m/--message` is provided, an annotated tag is created using `repo.create_tag()`. The tagger is determined from the Git config or environment variables.
+    *   Otherwise, a lightweight tag is created using `repo.references.create()`.
+    *   The tag points to `commit_ref` (defaults to `HEAD`).
+    *   Handles cases like existing tags, empty/bare repositories, and invalid commit references.
+2.  Defined `tag list` subcommand:
+    *   Lists all tags in the repository using `repo.listall_tags()`.
+    *   Differentiates between "Annotated" and "Lightweight" tags.
+    *   For annotated tags, displays the first line of the tag message.
+    *   Displays the short ID of the target commit for each tag.
+    *   Uses `rich.Table` for formatted output.
+    *   Handles repositories with no tags.
+3.  Implemented logic using `pygit2` for tag creation (both lightweight and annotated) and listing.
+4.  Added comprehensive unit tests for both subcommands, covering various scenarios including different tag types, existing tags, repository states, and error conditions. All tests are passing.
 
 ---
 
