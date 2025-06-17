@@ -7,7 +7,22 @@ The GitWrite CLI MVP development has progressed through the implementation of co
 **Details:**
 - **Implemented Commands:**
     - `gitwrite init [project_name]`: Initializes project structure.
-    - `gitwrite save "message"`: Stages changes and commits; handles merge and revert commit finalization.
+    - `gitwrite save "message" [-i <path1> [-i <path2> ...]]`: Stages changes and commits.
+        - Default behavior (no `-i`/`--include`): Stages all changes (new, modified, deleted files) in the working directory and creates a commit.
+        - Handles finalization of merge commits (after conflict resolution by user).
+        - Handles finalization of revert commits (after conflict resolution by user).
+        - **Selective Staging with `--include` / `-i`:**
+            - **Usage:** `gitwrite save -i <path1> -i <path2> ... "message"`
+            - **Behavior:**
+                - If `--include` is used, only the specified paths (files or directories) will be staged for the commit.
+                - If a directory is specified, all changes within that directory are staged.
+                - If no `--include` is specified, all changes in the working directory are staged (default behavior).
+            - **Error Handling / Warnings (for `--include`):**
+                - If a specified path is not found in the repository, has no changes, or is ignored by `.gitignore`, a warning is printed. The command will proceed with any other valid files specified.
+                - If none of the specified paths have any changes or if all specified paths are invalid (e.g., non-existent, ignored, no changes), the command will output messages indicating this and state "No changes to save." No commit will be made.
+            - **Interaction with Merge/Revert (for `--include`):**
+                - Using `--include` is **disallowed** when the repository is in an active merge state (`MERGE_HEAD` exists) or an active revert state (`REVERT_HEAD` exists). An error message will be displayed, and no action will be taken.
+                - To complete a merge or revert operation, `gitwrite save "message"` (i.e., without `--include`) must be used. This will stage all resolved changes and finalize the operation.
     - `gitwrite history [-n count]`: Displays formatted commit history.
     - `gitwrite explore <branch_name>`: Creates and switches to a new branch.
     - `gitwrite switch [<branch_name>]`: Switches to an existing branch or lists branches.

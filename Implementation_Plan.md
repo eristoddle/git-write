@@ -141,6 +141,24 @@ Status: **Completed**
     - Provided feedback about conflicts.
     - Instructed user to resolve conflicts and run `gitwrite save`.
 
+### Task 3.X - Implement Selective Staging for `save` Command
+Objective: Enhance the `gitwrite save` command to allow users to specify which files to stage and commit.
+Status: **Completed**
+
+1.  Modify `gitwrite_cli/main.py`:
+    *   Added `--include` / `-i` option to the `save` command.
+    *   Implemented logic to stage only specified files/directories if `--include` is used.
+    *   Added error handling for invalid paths (not found, no changes, ignored) and for using `--include` during active merge/revert operations.
+    *   Status: **Completed**
+2.  Add Unit Tests to `tests/test_main.py`:
+    *   Created `TestGitWriteSaveSelectiveStaging` class.
+    *   Added tests for various scenarios: single/multiple file/directory inclusion, unmodified/non-existent/ignored files, interaction with merge/revert states, and default behavior.
+    *   Status: **Completed**
+3.  Update Documentation (`Memory_Bank.md`, `Implementation_Plan.md`):
+    *   Documented the new `--include` option in `Memory_Bank.md`, detailing its usage, behavior, warnings, and limitations (especially concerning merge/revert states).
+    *   Updated this implementation plan (`Implementation_Plan.md`) to include this task and mark it as completed.
+    *   Status: **Completed**
+
 ### Task 3.2 - Implement `gitwrite ignore`
 Objective: Implement commands to manage `.gitignore` entries.
 Status: **Completed**

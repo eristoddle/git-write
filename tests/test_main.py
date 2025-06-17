@@ -760,6 +760,399 @@ def test_revert_with_conflicts_and_resolve(local_repo, runner):
     # if other refs like ORIG_HEAD persist briefly or due to other nuances.
     # The critical part for CLI logic is that REVERT_HEAD/MERGE_HEAD are gone.
 
+
+#######################################
+# Tests for Save Selective Staging
+#######################################
+
+class TestGitWriteSaveSelectiveStaging:
+
+    def test_save_include_single_file(self, runner, local_repo):
+        """Test saving a single specified file using --include."""
+        repo = local_repo
+        os.chdir(repo.workdir)
+
+        create_file(repo, "file1.txt", "Content for file1")
+        create_file(repo, "file2.txt", "Content for file2")
+
+        commit_message = "Commit file1 selectively"
+        initial_head = repo.head.target
+
+        result = runner.invoke(cli, ["save", "-i", "file1.txt", commit_message])
+        assert result.exit_code == 0, f"CLI Error: {result.output}"
+        assert f"Staged specified files: file1.txt" in result.output
+        assert f"[{repo.head.shorthand}" in result.output # Check for commit summary line
+
+        new_head = repo.head.target
+        assert new_head != initial_head, "No new commit was made"
+        commit = repo.get(new_head)
+        assert commit.message.strip() == commit_message
+
+        # Check tree contents
+        assert "file1.txt" in commit.tree
+        assert "file2.txt" not in commit.tree
+
+        # Check status of file2.txt (should be unstaged)
+        status = repo.status()
+        assert "file2.txt" in status
+        assert status["file2.txt"] == pygit2.GIT_STATUS_WT_NEW
+
+    def test_save_include_multiple_files(self, runner, local_repo):
+        """Test saving multiple specified files using --include."""
+        repo = local_repo
+        os.chdir(repo.workdir)
+
+        create_file(repo, "file1.txt", "Content for file1")
+        create_file(repo, "file2.txt", "Content for file2")
+        create_file(repo, "file3.txt", "Content for file3")
+
+        commit_message = "Commit file1 and file2 selectively"
+        initial_head = repo.head.target
+
+        result = runner.invoke(cli, ["save", "-i", "file1.txt", "-i", "file2.txt", commit_message])
+        assert result.exit_code == 0, f"CLI Error: {result.output}"
+        # Order in output message might vary, so check for both
+        assert "Staged specified files:" in result.output
+        assert "file1.txt" in result.output
+        assert "file2.txt" in result.output
+
+
+        new_head = repo.head.target
+        assert new_head != initial_head, "No new commit was made"
+        commit = repo.get(new_head)
+        assert commit.message.strip() == commit_message
+
+        assert "file1.txt" in commit.tree
+        assert "file2.txt" in commit.tree
+        assert "file3.txt" not in commit.tree
+
+        status = repo.status()
+        assert "file3.txt" in status
+        assert status["file3.txt"] == pygit2.GIT_STATUS_WT_NEW
+
+    def test_save_default_behavior_with_changes(self, runner, local_repo):
+        """Test default save behavior (all changes) when --include is not used."""
+        repo = local_repo
+        os.chdir(repo.workdir)
+
+        create_file(repo, "file1.txt", "Content for file1")
+        create_file(repo, "file2.txt", "Content for file2")
+
+        commit_message = "Commit all changes (default behavior)"
+        initial_head = repo.head.target
+
+        result = runner.invoke(cli, ["save", commit_message])
+        assert result.exit_code == 0, f"CLI Error: {result.output}"
+        assert "Staged all changes." in result.output
+
+        new_head = repo.head.target
+        assert new_head != initial_head, "No new commit was made"
+        commit = repo.get(new_head)
+        assert commit.message.strip() == commit_message
+
+        assert "file1.txt" in commit.tree
+        assert "file2.txt" in commit.tree
+        assert not repo.status(), "Working directory should be clean after saving all changes"
+
+    def test_save_include_unmodified_file(self, runner, local_repo):
+        """Test --include with an unmodified (but tracked) file and a new file."""
+        repo = local_repo
+        os.chdir(repo.workdir)
+
+        # Create and commit file1.txt so it's tracked and unmodified
+        make_commit(repo, "file1.txt", "Initial content for file1", "Commit file1 initially")
+        initial_commit_tree_id_for_file1 = repo.head.peel(pygit2.Commit).tree['file1.txt'].id
+
+
+        create_file(repo, "file2.txt", "Content for file2 (new)") # New file
+
+        commit_message = "Commit file2, file1 is unmodified"
+        initial_head = repo.head.target
+
+        result = runner.invoke(cli, ["save", "-i", "file1.txt", "-i", "file2.txt", commit_message])
+        assert result.exit_code == 0, f"CLI Error: {result.output}"
+
+        assert "Warning: Path 'file1.txt' has no changes to stage." in result.output
+        assert "Staged specified files:" in result.output
+        assert "file2.txt" in result.output # Only file2 should be listed as staged
+        assert "file1.txt" not in result.output.split("Staged specified files:")[1]
+
+
+        new_head = repo.head.target
+        assert new_head != initial_head, "No new commit was made"
+        commit = repo.get(new_head)
+        assert commit.message.strip() == commit_message
+
+        assert "file2.txt" in commit.tree # New file staged and committed
+        assert "file1.txt" in commit.tree # Tracked file still in tree
+        # Assert file1.txt is NOT part of the changes in the new commit
+        # Its tree entry should be same as parent's tree entry for file1.txt
+        assert commit.tree['file1.txt'].id == initial_commit_tree_id_for_file1
+
+        # Check status: file1.txt should be clean, file2.txt committed
+        status = repo.status()
+        assert "file1.txt" not in status # Clean
+        assert "file2.txt" not in status # Clean (committed)
+
+    def test_save_include_non_existent_file(self, runner, local_repo):
+        """Test --include with a non-existent file and a new file."""
+        repo = local_repo
+        os.chdir(repo.workdir)
+
+        create_file(repo, "file1.txt", "Content for existing file1")
+
+        commit_message = "Commit file1 with warning for non_existent"
+        initial_head = repo.head.target
+
+        result = runner.invoke(cli, ["save", "-i", "non_existent.txt", "-i", "file1.txt", commit_message])
+        assert result.exit_code == 0, f"CLI Error: {result.output}"
+
+        assert "Warning: Path 'non_existent.txt' is not tracked by Git or does not exist." in result.output
+        assert "Staged specified files:" in result.output
+        assert "file1.txt" in result.output
+        assert "non_existent.txt" not in result.output.split("Staged specified files:")[1]
+
+        new_head = repo.head.target
+        assert new_head != initial_head, "No new commit was made"
+        commit = repo.get(new_head)
+        assert commit.message.strip() == commit_message
+        assert "file1.txt" in commit.tree
+        assert "non_existent.txt" not in commit.tree
+
+    def test_save_include_all_files_unmodified_or_invalid(self, runner, local_repo):
+        """Test --include with only unmodified or invalid files."""
+        repo = local_repo
+        os.chdir(repo.workdir)
+
+        make_commit(repo, "file1.txt", "Initial content for file1", "Commit file1 initially")
+        initial_head = repo.head.target
+
+        commit_message = "Attempt to commit no real changes"
+        result = runner.invoke(cli, ["save", "-i", "file1.txt", "-i", "non_existent.txt", commit_message])
+
+        # Exit code should still be 0 as the command itself ran, but it should print specific messages.
+        assert result.exit_code == 0, f"CLI Error: {result.output}"
+        assert "Warning: Path 'file1.txt' has no changes to stage." in result.output
+        assert "Warning: Path 'non_existent.txt' is not tracked by Git or does not exist." in result.output
+        assert "No specified files had changes to stage." in result.output
+        assert "No changes to save." in result.output
+
+        assert repo.head.target == initial_head, "A new commit was made when no valid changes were included"
+
+    def test_save_include_empty(self, runner, local_repo):
+        """Test `gitwrite save --include` with no paths provided to --include."""
+        repo = local_repo
+        os.chdir(repo.workdir)
+
+        create_file(repo, "file1.txt", "Content for file1") # A changed file exists
+        initial_head = repo.head.target
+        commit_message = "Commit with empty include"
+
+        # Invoking with -i but no path means include_paths will be an empty tuple.
+        # The command is `gitwrite save -i "Commit message"` which click might interpret as -i taking "Commit message"
+        # This depends on click's parsing when `multiple=True` and `type=Path`.
+        # A more robust way for this test's intent is `gitwrite save --include "Commit message"`
+        # where --include is explicitly given no argument.
+        # However, click options usually expect a value.
+        # If `include_paths` is empty tuple `()`:
+        result = runner.invoke(cli, ["save", commit_message]) # No -i at all, will use default staging
+
+        # Re-thinking: the test is about `include_paths` being an empty tuple.
+        # This happens if `gitwrite save "msg"` is called and `include_paths` defaults to `()`.
+        # No, `include_paths` defaults to `None` or an empty tuple if specified with no args.
+        # If `save(message, include_paths)` gets `include_paths=()` because no `-i` was on CLI:
+        # This scenario is actually covered by `test_save_default_behavior_with_changes` if we assume
+        # that when no `-i` is passed, `include_paths` is indeed empty tuple or None.
+        # Let's specifically test the case where the `include_paths` tuple in the `save` function is empty.
+        # This should behave as if no valid files were specified for inclusion.
+
+        # This tests the logic path where `if include_paths:` is false.
+        # To test the logic path where `if include_paths:` is true but the list is empty,
+        # the CLI call would look like `gitwrite save -i -i -i "message"`, which is not how it works.
+        # Click's `multiple=True` means `-i path1 -i path2`. If no `-i` is given, `include_paths` is `()`.
+
+        # If `include_paths` is `()` (empty tuple), it means the `if include_paths:` condition in main.py
+        # will be false, leading to the `else` block (default stage all).
+        # So, this test should verify that if NO `-i` options are given, it stages all.
+        # This is already done by `test_save_default_behavior_with_changes`.
+
+        # The scenario "include_paths is an empty list/tuple *after* processing CLI args"
+        # is what we want if the user does `gitwrite save -i` (and click allows this and passes an empty string for a path)
+        # or if the list of paths given to -i are all filtered out before the loop.
+
+        # Let's assume the intent is: what if `include_paths` is an empty tuple because no `-i` options were given.
+        # This should fall through to the "stage all" logic.
+        # The current `save` implementation: if `include_paths` is `()` (empty tuple from Click if no -i),
+        # it goes to the `else` block (stage all).
+
+        # The specific wording in the plan "click might handle this by requiring a value for --include"
+        # and "If it allows --include with no path string after it" implies testing click behavior.
+        # `click.Path(exists=False)` and `multiple=True` for an option `-i`.
+        # `gitwrite save -i "msg"` -> click might take "msg" as path for -i.
+        # `gitwrite save "msg" -i` -> click requires value for -i.
+        # If `include_paths` is an empty tuple because no `-i` was specified, it's the default "stage all".
+
+        # This test should actually check what happens if include_paths is truthy (not empty list)
+        # but all paths within it are invalid, leading to `staged_files_actually_changed` being empty.
+        # This is covered by `test_save_include_all_files_unmodified_or_invalid`.
+
+        # What if the user types `gitwrite save --include "" "message"` (empty string for path)?
+        # Let's test that specific case.
+        result_empty_path = runner.invoke(cli, ["save", "-i", "", "Commit with empty include path"])
+        assert result_empty_path.exit_code == 0, f"CLI Error: {result_empty_path.output}"
+        # An empty path "" might be treated as CWD by Path() or pygit2, or error.
+        # Based on current `main.py` logic:
+        # `repo.status_file("")` might be status of repo itself or error.
+        # If it's an error or no changes:
+        assert "Warning: Path '' is not tracked by Git or does not exist." in result_empty_path.output or \
+               "Warning: Path '' has no changes to stage." in result_empty_path.output or \
+               "Warning: Error processing path '':" in result_empty_path.output
+        assert "No specified files had changes to stage." in result_empty_path.output
+        assert "No changes to save." in result_empty_path.output
+        assert repo.head.target == initial_head, "A new commit was made with an empty include path"
+
+
+    def test_save_include_ignored_file(self, runner, local_repo):
+        """Test --include with an ignored file."""
+        repo = local_repo
+        os.chdir(repo.workdir)
+
+        # Create .gitignore and add a pattern
+        gitignore_content = "*.ignored\n"
+        create_file(repo, ".gitignore", gitignore_content)
+        make_commit(repo, ".gitignore", gitignore_content, "Add .gitignore")
+
+        # Create an ignored file and a normal file
+        create_file(repo, "ignored_file.ignored", "This file should be ignored.")
+        create_file(repo, "normal_file.txt", "This file is not ignored.")
+
+        initial_head = repo.head.target
+        commit_message = "Commit normal_file, warn for ignored_file"
+
+        result = runner.invoke(cli, ["save", "-i", "ignored_file.ignored", "-i", "normal_file.txt", commit_message])
+        assert result.exit_code == 0, f"CLI Error: {result.output}"
+
+        assert "Warning: Path 'ignored_file.ignored' is ignored." in result.output
+        assert "Staged specified files:" in result.output
+        assert "normal_file.txt" in result.output
+        assert "ignored_file.ignored" not in result.output.split("Staged specified files:")[1]
+
+        new_head = repo.head.target
+        assert new_head != initial_head, "No new commit was made"
+        commit = repo.get(new_head)
+        assert commit.message.strip() == commit_message
+
+        assert "normal_file.txt" in commit.tree
+        assert "ignored_file.ignored" not in commit.tree # Should not be committed
+
+        # Verify ignored_file.ignored is still WT_NEW (or equivalent for ignored files)
+        status = repo.status(untracked_files="all") # Need to include untracked to see ignored
+        assert "ignored_file.ignored" in status
+        # The status for an ignored file that exists in WT but not tracked is typically GIT_STATUS_IGNORED
+        assert status["ignored_file.ignored"] == pygit2.GIT_STATUS_IGNORED
+
+    def test_save_include_during_merge(self, runner, repo_with_merge_conflict):
+        """Test `gitwrite save --include` during an active merge operation."""
+        repo = repo_with_merge_conflict
+        os.chdir(repo.workdir)
+
+        # repo_with_merge_conflict fixture sets up a merge state with MERGE_HEAD
+        assert repo.lookup_reference("MERGE_HEAD") is not None
+        initial_head = repo.head.target
+
+        # Attempt to save with --include
+        result = runner.invoke(cli, ["save", "-i", "conflict_file.txt", "Attempt include during merge"])
+
+        # Expect error message and no commit
+        assert result.exit_code == 0, f"CLI Error: {result.output}" # Command runs, prints error
+        assert "Error: Selective staging with --include is not allowed during an active merge operation." in result.output
+
+        assert repo.head.target == initial_head, "A new commit was made during merge with --include"
+        assert repo.lookup_reference("MERGE_HEAD") is not None, "MERGE_HEAD was cleared"
+
+    def test_save_include_during_revert(self, runner, repo_with_revert_conflict):
+        """Test `gitwrite save --include` during an active revert operation."""
+        repo = repo_with_revert_conflict
+        os.chdir(repo.workdir)
+
+        # repo_with_revert_conflict fixture sets up a revert state with REVERT_HEAD
+        assert repo.lookup_reference("REVERT_HEAD") is not None
+        initial_head = repo.head.target
+
+        # Attempt to save with --include
+        result = runner.invoke(cli, ["save", "-i", "revert_conflict_file.txt", "Attempt include during revert"])
+
+        assert result.exit_code == 0, f"CLI Error: {result.output}"
+        assert "Error: Selective staging with --include is not allowed during an active revert operation." in result.output
+
+        assert repo.head.target == initial_head, "A new commit was made during revert with --include"
+        assert repo.lookup_reference("REVERT_HEAD") is not None, "REVERT_HEAD was cleared"
+
+    def test_save_no_include_during_merge_resolved(self, runner, repo_with_merge_conflict):
+        """Test `gitwrite save` (no include) after resolving a merge."""
+        repo = repo_with_merge_conflict
+        os.chdir(repo.workdir)
+
+        conflict_filename = "conflict_file.txt" # Known from fixture
+        resolve_conflict(repo, conflict_filename, "Resolved content for merge")
+
+        initial_head_before_save = repo.head.target
+        merge_head_oid_before_save = repo.lookup_reference("MERGE_HEAD").target
+
+        commit_message = "Resolved merge successfully"
+        result = runner.invoke(cli, ["save", commit_message])
+
+        assert result.exit_code == 0, f"CLI Error: {result.output}"
+        assert "Successfully completed merge operation." in result.output
+
+        new_head = repo.head.target
+        assert new_head != initial_head_before_save, "No new commit was made for resolved merge"
+
+        commit = repo.get(new_head)
+        assert commit.message.strip() == commit_message
+        assert len(commit.parents) == 2
+        # Ensure original HEAD and MERGE_HEAD target are parents
+        parent_oids = {p.id for p in commit.parents}
+        assert initial_head_before_save in parent_oids
+        assert merge_head_oid_before_save in parent_oids
+
+        with pytest.raises(KeyError): # MERGE_HEAD should be gone
+            repo.lookup_reference("MERGE_HEAD")
+        assert not repo.index.conflicts, "Index conflicts were not cleared"
+
+    def test_save_no_include_during_revert_resolved(self, runner, repo_with_revert_conflict):
+        """Test `gitwrite save` (no include) after resolving a revert."""
+        repo = repo_with_revert_conflict
+        os.chdir(repo.workdir)
+
+        conflict_filename = "revert_conflict_file.txt" # Known from fixture
+        reverted_commit_oid = repo.lookup_reference("REVERT_HEAD").target
+        reverted_commit_obj = repo.get(reverted_commit_oid)
+
+        resolve_conflict(repo, conflict_filename, "Resolved content for revert")
+
+        initial_head_before_save = repo.head.target
+        commit_message = "Resolved revert successfully"
+
+        result = runner.invoke(cli, ["save", commit_message])
+        assert result.exit_code == 0, f"CLI Error: {result.output}"
+
+        assert f"Finalizing revert of commit {reverted_commit_obj.short_id}" in result.output
+        assert "Successfully completed revert operation." in result.output
+
+        new_head = repo.head.target
+        assert new_head != initial_head_before_save, "No new commit was made for resolved revert"
+
+        commit = repo.get(new_head)
+        expected_revert_prefix = f"Revert \"{reverted_commit_obj.message.splitlines()[0]}\""
+        assert commit.message.startswith(expected_revert_prefix)
+        assert commit_message in commit.message # User's message should be appended
+
+        with pytest.raises(KeyError): # REVERT_HEAD should be gone
+            repo.lookup_reference("REVERT_HEAD")
+        assert not repo.index.conflicts, "Index conflicts were not cleared"
+
+
 # ###################################
 # # Helper functions for save tests
 # ###################################

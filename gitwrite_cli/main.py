@@ -152,8 +152,16 @@ def init(project_name):
 
 @cli.command()
 @click.argument("message")
-def save(message):
-    """Stages all changes and creates a commit with the given message."""
+@click.option(
+    "-i",
+    "--include",
+    "include_paths",
+    type=click.Path(exists=False),
+    multiple=True,
+    help="Specify a file or directory to include in the save. Can be used multiple times. If not provided, all changes are saved.",
+)
+def save(message, include_paths):
+    """Stages changes and creates a commit with the given message. Supports selective staging with --include."""
     try:
         repo_path_str = pygit2.discover_repository(str(Path.cwd()))
         if repo_path_str is None:
@@ -175,41 +183,125 @@ def save(message):
 
         click.echo("DEBUG: Save command started.")
 
+        # Check for MERGE_HEAD or REVERT_HEAD early, especially if --include is used.
+        merge_head_exists = False
+        revert_head_exists = False
         try:
-            merge_head_ref = repo.lookup_reference("MERGE_HEAD")
-            if merge_head_ref and merge_head_ref.target:
-                initial_is_completing_operation = 'merge'
-                initial_merge_head_target_oid = merge_head_ref.target
-                click.echo(f"DEBUG: MERGE_HEAD found. Target OID: {initial_merge_head_target_oid}")
-                click.echo("Repository is in a merge state (MERGE_HEAD found).")
+            if repo.lookup_reference("MERGE_HEAD").target:
+                merge_head_exists = True
+                click.echo("DEBUG: MERGE_HEAD found.")
         except KeyError:
             click.echo("DEBUG: MERGE_HEAD not found.")
             pass
 
-        if not initial_is_completing_operation:
-            try:
-                revert_head_ref = repo.lookup_reference("REVERT_HEAD")
-                if revert_head_ref and revert_head_ref.target:
-                    reverted_commit_oid = revert_head_ref.target
-                    reverted_commit = repo.get(reverted_commit_oid)
-                    if reverted_commit and reverted_commit.type == pygit2.GIT_OBJECT_COMMIT:
-                        initial_is_completing_operation = 'revert'
-                        initial_revert_head_details = {
-                            "short_id": reverted_commit.short_id,
-                            "id": str(reverted_commit.id),
-                            "message_first_line": reverted_commit.message.splitlines()[0]
-                        }
-                        click.echo(f"DEBUG: REVERT_HEAD found. Details: {initial_revert_head_details}")
-                        click.echo(f"Repository is in a revert state (REVERT_HEAD found for commit {initial_revert_head_details['short_id']}).")
+        try:
+            revert_head_target = repo.lookup_reference("REVERT_HEAD").target
+            if revert_head_target and repo.get(revert_head_target).type == pygit2.GIT_OBJECT_COMMIT:
+                revert_head_exists = True
+                click.echo("DEBUG: REVERT_HEAD found and points to a commit.")
+            else:
+                click.echo("DEBUG: REVERT_HEAD found but does not point to a valid commit.")
+        except KeyError:
+            click.echo("DEBUG: REVERT_HEAD not found.")
+            pass
+
+        if include_paths:
+            if merge_head_exists or revert_head_exists:
+                operation = "merge" if merge_head_exists else "revert"
+                click.echo(
+                    f"Error: Selective staging with --include is not allowed during an active {operation} operation. "
+                    "Please resolve the operation first or use 'gitwrite save' without --include.",
+                    err=True
+                )
+                return # Or ctx.fail() if in a context that supports it
+
+            click.echo(f"DEBUG: Selective staging requested for: {include_paths}")
+            staged_files_actually_changed = []
+            warnings = []
+
+            for path_str in include_paths:
+                path_obj = Path(path_str) # Convert to Path object for easier manipulation if needed
+                # repo.status_file() expects relative paths from repo root
+                # Assuming path_str is already relative to repo root or is absolute
+                # If absolute, pygit2 handles it. If relative to subdir, user must ensure it's correct
+                # For simplicity, we'll assume path_str is usable by status_file directly.
+
+                try:
+                    status_flags = repo.status_file(path_str)
+                    click.echo(f"DEBUG: Status for '{path_str}': {status_flags}")
+
+                    if status_flags == pygit2.GIT_STATUS_CURRENT:
+                        warnings.append(f"Warning: Path '{path_str}' has no changes to stage.")
+                        continue
+                    elif status_flags & pygit2.GIT_STATUS_IGNORED:
+                        warnings.append(f"Warning: Path '{path_str}' is ignored.")
+                        continue
+                    elif status_flags == 0: # Should be caught by GIT_STATUS_CURRENT, but as a safeguard
+                        warnings.append(f"Warning: Path '{path_str}' has no changes to stage (status is 0).")
+                        continue
+
+                    # Check for untracked files explicitly if not covered by other WT flags for addition
+                    is_worktree_new = status_flags & pygit2.GIT_STATUS_WT_NEW
+                    is_worktree_modified = status_flags & pygit2.GIT_STATUS_WT_MODIFIED
+                    is_worktree_deleted = status_flags & pygit2.GIT_STATUS_WT_DELETED
+                    is_worktree_renamed = status_flags & pygit2.GIT_STATUS_WT_RENAMED
+                    is_worktree_typechange = status_flags & pygit2.GIT_STATUS_WT_TYPECHANGE
+
+                    # Any relevant change in the working tree that can be staged
+                    if is_worktree_new or is_worktree_modified or is_worktree_deleted or is_worktree_renamed or is_worktree_typechange:
+                        click.echo(f"DEBUG: Staging '{path_str}'...")
+                        repo.index.add(path_str)
+                        staged_files_actually_changed.append(path_str)
                     else:
-                        click.echo(f"DEBUG: REVERT_HEAD target {reverted_commit_oid} is not a commit or not found.", err=True)
-            except KeyError:
-                click.echo("DEBUG: REVERT_HEAD not found.")
-                pass
+                        # This case might indicate a file that is in a state not typically "staged" directly by add,
+                        # e.g. GIT_STATUS_INDEX_NEW, GIT_STATUS_INDEX_MODIFIED etc. if user includes something already staged.
+                        # Or a more complex status. For now, we focus on WT changes.
+                        warnings.append(f"Warning: Path '{path_str}' has status {status_flags} which was not explicitly handled for staging new changes.")
+                        continue
 
-        click.echo(f"DEBUG: Initial is_completing_operation (captured): {initial_is_completing_operation}")
+                except KeyError:
+                    warnings.append(f"Warning: Path '{path_str}' is not tracked by Git or does not exist.")
+                    continue
+                except Exception as e:
+                    warnings.append(f"Warning: Error processing path '{path_str}': {e}")
+                    continue
 
-        if initial_is_completing_operation == 'revert':
+            for warning in warnings:
+                click.echo(warning, err=True)
+
+            if not staged_files_actually_changed:
+                click.echo("No specified files had changes to stage.")
+                click.echo("No changes to save.")
+                return
+            else:
+                repo.index.write()
+                click.echo(f"Staged specified files: {', '.join(staged_files_actually_changed)}")
+                # Proceed to commit logic
+
+        else: # Default (stage all) logic
+            click.echo("DEBUG: No --include paths provided, proceeding with default staging logic.")
+            # The original logic for determining merge/revert state for 'stage all'
+            if merge_head_exists:
+                initial_is_completing_operation = 'merge'
+                initial_merge_head_target_oid = repo.lookup_reference("MERGE_HEAD").target
+                click.echo(f"DEBUG: MERGE_HEAD confirmed. Target OID: {initial_merge_head_target_oid}")
+                click.echo("Repository is in a merge state (MERGE_HEAD found).")
+
+            if not initial_is_completing_operation and revert_head_exists:
+                reverted_commit_oid = repo.lookup_reference("REVERT_HEAD").target # We know it's a commit from above
+                reverted_commit = repo.get(reverted_commit_oid)
+                initial_is_completing_operation = 'revert'
+                initial_revert_head_details = {
+                    "short_id": reverted_commit.short_id,
+                    "id": str(reverted_commit.id),
+                    "message_first_line": reverted_commit.message.splitlines()[0]
+                }
+                click.echo(f"DEBUG: REVERT_HEAD confirmed. Details: {initial_revert_head_details}")
+                click.echo(f"Repository is in a revert state (REVERT_HEAD found for commit {initial_revert_head_details['short_id']}).")
+
+            click.echo(f"DEBUG: Initial is_completing_operation (captured for stage-all): {initial_is_completing_operation}")
+
+            if initial_is_completing_operation == 'revert':
             # Check for conflicts *before* staging for revert operations
             has_initial_revert_conflicts = False
             if repo.index.conflicts is not None:
@@ -293,22 +385,25 @@ def save(message):
                 return # Abort save
 
         # Check overall repository status for any changes (working dir or staged)
-        status = repo.status()
-        if not initial_is_completing_operation and not status:
-            click.echo("No changes to save (working directory and index are clean).")
-            return
+        # This block is now part of the 'else' for 'not include_paths'
+        if not include_paths:
+            status = repo.status()
+            if not initial_is_completing_operation and not status:
+                click.echo("No changes to save (working directory and index are clean).")
+                return
 
-        # If not already staged by the block above (for merge/revert)
-        if status and not initial_is_completing_operation:
-            repo.index.add_all()
-            repo.index.write()
-            click.echo("Staged all changes.")
-        elif initial_is_completing_operation and not status: # Merge/revert was resolved, no other changes
-             click.echo("No further working directory changes to stage. Proceeding with finalization of operation.")
-        elif not status and not initial_is_completing_operation: # Should be caught by earlier check
-             click.echo("No changes to save.")
-             return
+            # If not already staged by the block above (for merge/revert)
+            if status and not initial_is_completing_operation:
+                repo.index.add_all()
+                repo.index.write()
+                click.echo("Staged all changes.")
+            elif initial_is_completing_operation and not status: # Merge/revert was resolved, no other changes
+                 click.echo("No further working directory changes to stage. Proceeding with finalization of operation.")
+            elif not status and not initial_is_completing_operation: # Should be caught by earlier check
+                 click.echo("No changes to save.")
+                 return
 
+        # Commit logic (common for both selective and full staging, once index is prepared)
         try:
             author = repo.default_signature
         except pygit2.GitError:
