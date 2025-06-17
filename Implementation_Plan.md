@@ -143,11 +143,18 @@ Status: **Completed**
 
 ### Task 3.2 - Implement `gitwrite ignore`
 Objective: Implement commands to manage `.gitignore` entries.
-Status: **Pending**
+Status: **Completed**
 
-1.  Define `ignore add <pattern>` subcommand.
-2.  Define `ignore list` subcommand.
-3.  Implement logic to read, append to, and display `.gitignore`.
+1.  Defined `ignore add <pattern>` subcommand:
+    *   Allows adding a specified pattern to the project's `.gitignore` file.
+    *   Handles creation of `.gitignore` if it doesn't exist.
+    *   Prevents duplicate entries.
+    *   Provides user feedback on success or if pattern already exists.
+2.  Defined `ignore list` subcommand:
+    *   Displays the contents of the `.gitignore` file.
+    *   Informs the user if the file is not found or is empty.
+3.  Implemented logic to read, append to, and display `.gitignore` entries.
+4.  Added comprehensive unit tests for both subcommands, covering various scenarios including adding new/duplicate patterns, whitespace handling, and listing different states of the `.gitignore` file. All tests are passing.
 
 ### Task 3.3 - Implement `gitwrite tag`
 Objective: Implement commands for creating and listing tags.
