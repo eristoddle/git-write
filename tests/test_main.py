@@ -288,7 +288,7 @@ def test_sync_merge_no_conflict(runner, local_repo, bare_remote_repo, tmp_path):
     expected_parent_oids = {local_commit_oid_after_local_change, remote_commit_oid_on_remote_clone}
     actual_parent_oids = {p.id for p in merge_commit.parents}
     assert actual_parent_oids == expected_parent_oids, "Merge commit parents are incorrect."
-    assert f"Merge remote-tracking branch 'origin/{local_branch_name}'" in merge_commit.message
+    assert f"Merge remote-tracking branch 'refs/remotes/origin/{local_branch_name}'" in merge_commit.message
 
     # Verify both files exist in the working directory
     assert (Path(local_repo.workdir) / local_change_filename).exists()

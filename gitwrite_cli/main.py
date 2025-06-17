@@ -209,6 +209,30 @@ def save(message):
 
         click.echo(f"DEBUG: Initial is_completing_operation (captured): {initial_is_completing_operation}")
 
+        if initial_is_completing_operation == 'merge':
+            # Check for conflicts *before* staging, as staging might auto-resolve them from pygit2's perspective
+            has_initial_conflicts = False
+            if repo.index.conflicts is not None:
+                try:
+                    next(iter(repo.index.conflicts))
+                    has_initial_conflicts = True
+                except StopIteration:
+                    pass # No conflicts
+
+            if has_initial_conflicts:
+                click.echo("Error: Unresolved conflicts detected during merge.", err=True)
+                click.echo("Please resolve them before saving.", err=True)
+                conflicting_files_display = []
+                # This re-check of repo.index.conflicts is okay, it's cheap
+                if repo.index.conflicts is not None:
+                    for conflict_item_tuple in repo.index.conflicts:
+                        path_to_display = next((entry.path for entry in conflict_item_tuple if entry and entry.path), "unknown_path")
+                        if path_to_display not in conflicting_files_display:
+                            conflicting_files_display.append(path_to_display)
+                if conflicting_files_display:
+                    click.echo("Conflicting files: " + ", ".join(sorted(conflicting_files_display)), err=True)
+                return # Abort save
+
         # If in a merge or revert state, first try to stage everything.
         # This ensures user's manual resolutions in working dir are staged.
         if initial_is_completing_operation:
@@ -228,7 +252,14 @@ def save(message):
             click.echo(f"DEBUG: Index re-read. Conflicts after staging: {list(repo.index.conflicts) if repo.index.conflicts and has_index_conflicts_after_staging else 'None'}")
 
             if has_index_conflicts_after_staging:
-                click.echo(f"Error: Unresolved conflicts detected during {initial_is_completing_operation} even after staging. Please resolve them before saving.", err=True)
+                if initial_is_completing_operation == 'merge':
+                    click.echo("Error: Unresolved conflicts detected during merge.", err=True)
+                elif initial_is_completing_operation == 'revert':
+                    click.echo("Error: Unresolved conflicts detected during revert.", err=True)
+                else:
+                    # Fallback, though initial_is_completing_operation should be 'merge' or 'revert' here
+                    click.echo(f"Error: Unresolved conflicts detected during {initial_is_completing_operation} operation.", err=True)
+                click.echo("Please resolve them before saving.", err=True)
                 conflicting_files_display = []
                 if repo.index.conflicts is not None:
                     for conflict_item_tuple in repo.index.conflicts:
@@ -297,6 +328,8 @@ def save(message):
 
         if initial_is_completing_operation:
             click.echo(f"DEBUG: About to call repo.state_cleanup() for {initial_is_completing_operation}")
+            if initial_is_completing_operation == 'revert' and initial_revert_head_details:
+                click.echo(f"Finalizing revert of commit {initial_revert_head_details['short_id']}.")
             repo.state_cleanup()
             click.echo(f"Successfully completed {initial_is_completing_operation} operation.")
 
