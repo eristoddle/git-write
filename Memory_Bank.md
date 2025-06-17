@@ -32,10 +32,9 @@ The GitWrite CLI MVP development has progressed through the implementation of co
 **Completed Original Plan Items (Previously Blocked):**
 - Step 8: Implement `gitwrite revert` - **DONE** (with noted limitations for merge commits)
 - Step 9: Develop Unit and Integration Tests (for `revert`) - **DONE**
-- Unit and Integration Tests (for `sync`, `ignore`, `tag`) - **DONE**
 
 **Remaining Original Plan Items (Adjusted):**
-- Comprehensive testing for remaining CLI commands (`init`, `save`, `history`, `explore`, `switch`, `merge`, `compare`).
+- Comprehensive testing for *all* CLI commands.
 - Address `sync` command typo.
 - Step 10: Create User Documentation.
 - Step 11: Refine CLI and Address Issues (e.g., review `revert` merge limitations for future improvement if library changes).

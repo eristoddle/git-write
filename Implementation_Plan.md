@@ -185,7 +185,7 @@ Objective: Create a comprehensive test suite for all CLI commands to ensure reli
 Status: **Partially Completed / Ongoing**
 
 1.  Set up testing framework (e.g., `pytest`).
-    - Comprehensive tests for `gitwrite revert`, `gitwrite sync`, `gitwrite ignore`, and `gitwrite tag` are implemented and passing (some tag tests are marked xfail). Tests for `init`, `save`, `history`, `explore`, `switch`, `merge`, and `compare` still need to be developed.
+    - Comprehensive tests for `gitwrite revert` were successfully implemented and are passing. Tests for earlier commands still need to be developed.
 2.  Write unit tests for core logic of all implemented commands.
 3.  Write integration tests for CLI commands, covering success cases, edge cases, and error conditions.
 4.  Aim for high test coverage.

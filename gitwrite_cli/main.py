@@ -819,7 +819,7 @@ def sync(remote_name, branch_name_opt):
             if hasattr(stats, 'received_objects') and hasattr(stats, 'total_objects'):
                  click.echo(f"Fetch complete. Received {stats.received_objects}/{stats.total_objects} objects.")
             else:
-                 click.echo("Fetch complete. (No detailed stats available from fetch operation)", err=False)
+                 click.echo("Fetch complete. (No detailed stats available from fetch operation)")
         except pygit2.GitError as e:
             click.echo(f"Error during fetch: {e}", err=True)
             # Check for specific error messages if needed, e.g. authentication
