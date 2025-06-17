@@ -209,7 +209,29 @@ def save(message):
 
         click.echo(f"DEBUG: Initial is_completing_operation (captured): {initial_is_completing_operation}")
 
-        if initial_is_completing_operation == 'merge':
+        if initial_is_completing_operation == 'revert':
+            # Check for conflicts *before* staging for revert operations
+            has_initial_revert_conflicts = False
+            if repo.index.conflicts is not None:
+                try:
+                    next(iter(repo.index.conflicts))
+                    has_initial_revert_conflicts = True
+                except StopIteration:
+                    pass # No conflicts
+
+            if has_initial_revert_conflicts:
+                click.echo("Error: Unresolved conflicts detected during revert.", err=True)
+                click.echo("Please resolve them before saving.", err=True)
+                conflicting_files_display = []
+                if repo.index.conflicts is not None: # Re-check for safety, though it should be same as above
+                    for conflict_item_tuple in repo.index.conflicts:
+                        path_to_display = next((entry.path for entry in conflict_item_tuple if entry and entry.path), "unknown_path")
+                        if path_to_display not in conflicting_files_display:
+                            conflicting_files_display.append(path_to_display)
+                if conflicting_files_display:
+                    click.echo("Conflicting files: " + ", ".join(sorted(conflicting_files_display)), err=True)
+                return # Abort save
+        elif initial_is_completing_operation == 'merge':
             # Check for conflicts *before* staging, as staging might auto-resolve them from pygit2's perspective
             has_initial_conflicts = False
             if repo.index.conflicts is not None:

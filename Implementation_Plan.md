@@ -209,6 +209,17 @@ Status: **Partially Completed / Ongoing**
 4.  Enhance error handling and your feedback across all commands.
 4.  Review CLI usability (command names, arguments, options, output clarity).
 5.  Perform final round of integration testing.
+    - **Completed:**
+        - Fixed `test_revert_successful_merge_commit` to align with the `revert` command's current inability to revert merge commits directly (it now expects an error).
+        - Fixed an issue in the `save` command where it wouldn't give the most specific error message if there were unresolved conflicts during a `revert` operation. It now correctly reports "Error: Unresolved conflicts detected during revert."
+
+### Task 4.4 - Future Considerations / Known Limitations
+Objective: Document known limitations and areas for future enhancement.
+Status: **Ongoing**
+
+1.  **`gitwrite revert <merge_commit_ref>` Command:**
+    -   Currently, this command does not support reverting merge commits directly. The CLI will output an error message if a merge commit is targeted.
+    -   **Future Enhancement:** True merge revert functionality (e.g., selecting a mainline parent to revert against) could be a significant future enhancement. This would likely require more complex logic than the current `pygit2.Repository.revert()` call used for simple commits, potentially involving direct manipulation of trees and commits, or exploring alternative library functions/versions if `pygit2` enhances this capability.
 
 ---
 ## Note on Handover Protocol

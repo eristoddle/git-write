@@ -642,7 +642,7 @@ def test_revert_successful_merge_commit(local_repo, runner):
     # This should now fail with a specific message, as index-only merge reverts are not supported.
     result_revert_merge = runner.invoke(cli, ["revert", str(c4_hash)])
 
-    assert result_revert_merge.exit_code != 0, "Reverting a merge commit should fail with current implementation."
+    assert result_revert_merge.exit_code != 0, "Reverting a merge commit without --mainline should fail."
     assert f"Error: Commit '{c4_obj.short_id}' is a merge commit." in result_revert_merge.output
     assert "Reverting merge commits with specific mainline parent selection to only update the" in result_revert_merge.output
     assert "working directory/index (before creating a commit) is not supported" in result_revert_merge.output
@@ -656,6 +656,7 @@ def test_revert_successful_merge_commit(local_repo, runner):
     result_revert_merge_mainline = runner.invoke(cli, ["revert", str(c4_hash), "--mainline", "1"])
     assert result_revert_merge_mainline.exit_code != 0
     assert f"Error: Commit '{c4_obj.short_id}' is a merge commit." in result_revert_merge_mainline.output
+    assert "Reverting merge commits with specific mainline parent selection to only update the" in result_revert_merge_mainline.output
 
 
 def test_revert_with_conflicts_and_resolve(local_repo, runner):

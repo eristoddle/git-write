@@ -144,3 +144,18 @@ A new test class, `TestGitWriteSaveConflictScenarios`, was added to `tests/test_
 -   All new tests for the `gitwrite save` command, covering both normal and conflict scenarios, are **passing**.
 
 This suite of tests significantly improves the reliability and robustness of the `gitwrite save` command.
+
+---
+**CLI Command Updates and Fixes**
+
+This section details recent updates and bug fixes made to specific GitWrite CLI commands based on testing and refinement.
+
+1.  **`gitwrite revert <commit_ref>` Command (Merge Commit Handling):**
+    *   **Limitation Confirmed & Test Updated:** The `gitwrite revert` command currently does not support reverting merge commits directly due to limitations in the underlying `pygit2.Repository.revert()` method (v1.18.0) for index-only reverts, especially when mainline parent selection is needed.
+    *   The command will output a specific error message if a merge commit is targeted for revert.
+    *   The test `test_revert_successful_merge_commit` in `tests/test_main.py` was updated to assert this expected error behavior, ensuring the CLI gracefully handles this scenario.
+
+2.  **`gitwrite save` Command (During Revert with Unresolved Conflicts):**
+    *   **Bug Fix:** A bug was identified where `gitwrite save`, when used during a revert operation that resulted in unresolved conflicts, was not providing the most specific error message. It would indicate generic unresolved conflicts rather than clearly stating it was due to the ongoing revert.
+    *   **Resolution:** The `save` command in `gitwrite_cli/main.py` was updated to explicitly check if `REVERT_HEAD` is present and if conflicts exist *before* attempting to stage all changes. If this condition is met, it now outputs a more precise error: "Error: Unresolved conflicts detected during revert." and instructs the user to resolve them before saving.
+    *   The test `test_save_with_unresolved_revert_conflict` in `tests/test_main.py` now passes, verifying that this fix correctly identifies and reports the unresolved *revert* conflict.
