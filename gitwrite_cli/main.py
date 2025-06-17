@@ -4,6 +4,8 @@ import pygit2
 import os
 from pathlib import Path
 from pygit2 import Signature
+from rich.console import Console
+from rich.panel import Panel
 
 @click.group()
 def cli():
@@ -1227,6 +1229,99 @@ def revert(ctx, commit_ref, mainline_option): # Add ctx as first argument
             ctx.fail(f"Error creating revert commit: {e}\nYour working directory might contain the reverted changes, but the commit failed.\nYou may need to manually commit using 'gitwrite save'.")
         except Exception as e:
             ctx.fail(f"An unexpected error occurred during revert commit creation: {e}")
+
+
+@cli.group()
+def ignore():
+    """Manages .gitignore entries."""
+    pass
+
+@ignore.command("add")
+@click.argument("pattern")
+def ignore_add(pattern):
+    """Adds a pattern to the .gitignore file."""
+    gitignore_file = Path.cwd() / ".gitignore"
+    pattern_to_add = pattern.strip()
+
+    if not pattern_to_add:
+        click.echo("Error: Pattern cannot be empty.", err=True)
+        return
+
+    existing_patterns = set()
+    last_line_had_newline = True # Assume true for a non-existent or empty file initially
+    try:
+        if gitignore_file.exists():
+            with open(gitignore_file, "r") as f:
+                content = f.read()
+                if content: # Check if file is not empty
+                    lines = content.splitlines() # splitlines() handles various newline chars
+                    for line in lines:
+                        existing_patterns.add(line.strip())
+                    if content.endswith("\n") or content.endswith("\r"):
+                        last_line_had_newline = True
+                    else:
+                        last_line_had_newline = False
+                else: # File exists but is empty
+                    last_line_had_newline = True # Effectively, an empty file is ready for a new line
+        else: # File does not exist
+            last_line_had_newline = True # No existing content, so no need for a preceding newline
+
+    except (IOError, OSError) as e:
+        click.echo(f"Error reading .gitignore: {e}", err=True)
+        return
+
+    if pattern_to_add in existing_patterns:
+        click.echo(f"Pattern '{pattern_to_add}' already exists in .gitignore.")
+        return
+
+    try:
+        with open(gitignore_file, "a") as f:
+            if not last_line_had_newline:
+                f.write("\n")
+            f.write(f"{pattern_to_add}\n")
+        click.echo(f"Pattern '{pattern_to_add}' added to .gitignore.")
+    except (IOError, OSError) as e:
+        click.echo(f"Error writing to .gitignore: {e}", err=True)
+
+@ignore.command(name="list")
+def list_patterns():
+    """Lists all patterns in the .gitignore file."""
+    gitignore_file = Path.cwd() / ".gitignore"
+    console = Console()
+
+    try:
+        if not gitignore_file.exists():
+            click.echo(".gitignore file not found.")
+            return
+
+        with open(gitignore_file, "r") as f:
+            content = f.read()
+
+        if not content.strip():
+            click.echo(".gitignore is empty.")
+            return
+
+        # Filter out empty lines and strip whitespace from each line for display
+        patterns = [line.strip() for line in content.splitlines() if line.strip()]
+
+        if not patterns: # Possible if file only contained whitespace lines
+            click.echo(".gitignore is effectively empty (contains only whitespace).")
+            return
+
+        # Using Panel for nicer output
+        panel_content = "\n".join(patterns)
+        console.print(Panel(panel_content, title="[bold green].gitignore Contents[/bold green]", expand=False))
+
+    except (IOError, OSError) as e:
+        click.echo(f"Error reading .gitignore: {e}", err=True)
+    except ImportError: # Should not happen if rich is a dependency
+        click.echo("Error: Rich library not found. Cannot display .gitignore contents with formatting.", err=True)
+        # Fallback to plain print if rich fails for some reason, though it's a core dep for other cmds
+        if 'content' in locals():
+            click.echo("\n.gitignore Contents (basic view):")
+            for line in content.splitlines():
+                if line.strip():
+                    click.echo(line.strip())
 
 
 if __name__ == "__main__":

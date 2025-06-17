@@ -753,3 +753,131 @@ def test_revert_with_conflicts_and_resolve(local_repo, runner):
     # The repo.state might not immediately return to NONE in test environment
     # if other refs like ORIG_HEAD persist briefly or due to other nuances.
     # The critical part for CLI logic is that REVERT_HEAD/MERGE_HEAD are gone.
+
+
+#######################
+# Ignore Command Tests
+#######################
+
+def test_ignore_add_new_pattern(runner):
+    """Test adding new patterns to .gitignore."""
+    with runner.isolated_filesystem() as temp_dir:
+        temp_dir_path = Path(temp_dir)
+        gitignore_file = temp_dir_path / ".gitignore"
+
+        # Add first pattern
+        result1 = runner.invoke(cli, ['ignore', 'add', '*.log'])
+        assert result1.exit_code == 0, f"Output: {result1.output}"
+        assert "Pattern '*.log' added to .gitignore." in result1.output
+        assert gitignore_file.exists()
+        assert gitignore_file.read_text() == "*.log\n"
+
+        # Add second pattern
+        result2 = runner.invoke(cli, ['ignore', 'add', 'another_pattern'])
+        assert result2.exit_code == 0, f"Output: {result2.output}"
+        assert "Pattern 'another_pattern' added to .gitignore." in result2.output
+        assert gitignore_file.read_text() == "*.log\nanother_pattern\n"
+
+        # Test adding a pattern that requires a newline to be added first
+        # (if the file somehow ended up without a trailing newline)
+        # Manually create a .gitignore without trailing newline
+        gitignore_file.write_text("*.log\nanother_pattern") # No trailing newline
+
+        result3 = runner.invoke(cli, ['ignore', 'add', 'third_pattern'])
+        assert result3.exit_code == 0, f"Output: {result3.output}"
+        assert "Pattern 'third_pattern' added to .gitignore." in result3.output
+        # The 'add' command should add a newline before the new pattern if one is missing
+        assert gitignore_file.read_text() == "*.log\nanother_pattern\nthird_pattern\n"
+
+
+def test_ignore_add_duplicate_pattern(runner):
+    """Test adding a duplicate pattern to .gitignore."""
+    with runner.isolated_filesystem() as temp_dir:
+        temp_dir_path = Path(temp_dir)
+        gitignore_file = temp_dir_path / ".gitignore"
+        initial_pattern = "existing_pattern"
+        gitignore_file.write_text(f"{initial_pattern}\n")
+
+        result = runner.invoke(cli, ['ignore', 'add', initial_pattern])
+        assert result.exit_code == 0, f"Output: {result.output}" # Command execution is successful
+        assert f"Pattern '{initial_pattern}' already exists in .gitignore." in result.output
+        assert gitignore_file.read_text() == f"{initial_pattern}\n" # Content remains unchanged
+
+
+def test_ignore_add_pattern_strips_whitespace(runner):
+    """Test that adding a pattern strips leading/trailing whitespace."""
+    with runner.isolated_filesystem() as temp_dir:
+        temp_dir_path = Path(temp_dir)
+        gitignore_file = temp_dir_path / ".gitignore"
+
+        result = runner.invoke(cli, ['ignore', 'add', '  *.tmp  '])
+        assert result.exit_code == 0, f"Output: {result.output}"
+        assert "Pattern '*.tmp' added to .gitignore." in result.output
+        assert gitignore_file.exists()
+        assert gitignore_file.read_text() == "*.tmp\n"
+
+def test_ignore_add_empty_pattern(runner):
+    """Test adding an empty or whitespace-only pattern."""
+    with runner.isolated_filesystem() as temp_dir:
+        gitignore_file = Path(temp_dir) / ".gitignore"
+
+        # Test with empty string
+        result_empty = runner.invoke(cli, ['ignore', 'add', ''])
+        assert result_empty.exit_code == 0 # Or specific error code if designed that way
+        assert "Error: Pattern cannot be empty." in result_empty.output
+        assert not gitignore_file.exists() # No .gitignore should be created for an empty pattern
+
+        # Test with whitespace-only string
+        result_whitespace = runner.invoke(cli, ['ignore', 'add', '   '])
+        assert result_whitespace.exit_code == 0
+        assert "Error: Pattern cannot be empty." in result_whitespace.output
+        assert not gitignore_file.exists()
+
+
+def test_ignore_list_existing_gitignore(runner):
+    """Test listing patterns from an existing .gitignore file."""
+    with runner.isolated_filesystem() as temp_dir:
+        temp_dir_path = Path(temp_dir)
+        gitignore_file = temp_dir_path / ".gitignore"
+        patterns = ["pattern1", "*.log", "another/path/"]
+        gitignore_content = "\n".join(patterns) + "\n" # Ensure trailing newline
+        gitignore_file.write_text(gitignore_content)
+
+        result = runner.invoke(cli, ['ignore', 'list'])
+        assert result.exit_code == 0, f"Output: {result.output}"
+        assert ".gitignore Contents" in result.output # Title from Rich Panel
+        for pattern in patterns:
+            assert pattern in result.output
+
+
+def test_ignore_list_non_existent_gitignore(runner):
+    """Test listing when .gitignore does not exist."""
+    with runner.isolated_filesystem():
+        result = runner.invoke(cli, ['ignore', 'list'])
+        assert result.exit_code == 0, f"Output: {result.output}" # Command itself should succeed
+        assert ".gitignore file not found." in result.output
+
+
+def test_ignore_list_empty_gitignore(runner):
+    """Test listing an empty .gitignore file."""
+    with runner.isolated_filesystem() as temp_dir:
+        temp_dir_path = Path(temp_dir)
+        gitignore_file = temp_dir_path / ".gitignore"
+        gitignore_file.write_text("") # Create empty file
+
+        result = runner.invoke(cli, ['ignore', 'list'])
+        assert result.exit_code == 0, f"Output: {result.output}"
+        assert ".gitignore is empty." in result.output
+
+def test_ignore_list_gitignore_with_only_whitespace(runner):
+    """Test listing a .gitignore file that contains only whitespace."""
+    with runner.isolated_filesystem() as temp_dir:
+        temp_dir_path = Path(temp_dir)
+        gitignore_file = temp_dir_path / ".gitignore"
+        gitignore_file.write_text("\n   \n\t\n") # Whitespace and newlines
+
+        result = runner.invoke(cli, ['ignore', 'list'])
+        assert result.exit_code == 0, f"Output: {result.output}"
+        # Based on current 'ignore list' implementation, if content.strip() is empty,
+        # it's considered "empty". This covers files with only whitespace.
+        assert ".gitignore is empty." in result.output
