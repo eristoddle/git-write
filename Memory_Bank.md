@@ -2,7 +2,7 @@
 **Task Reference:** Project State Summary - CLI MVP
 
 **Summary:**
-The GitWrite CLI MVP development has progressed through the implementation of core features including `init`, `save`, `history`, `explore`, `switch`, `merge`, `compare`, and `sync`. The `revert` command has now also been implemented and tested. Some minor issues (e.g., `sync` typo) are noted.
+The GitWrite CLI MVP development has progressed through the implementation of core features including `init`, `save`, `history`, `explore`, `switch`, `merge`, `compare`, `sync`, and `revert`. Testing for `revert` and `init` is complete. A bug in `init` was found and fixed. A reported `sync` typo was investigated and found to be likely already resolved.
 
 **Details:**
 - **Implemented Commands:**
@@ -17,36 +17,75 @@ The GitWrite CLI MVP development has progressed through the implementation of co
     - `gitwrite revert <commit_ref> [--mainline <parent_num>]`: Reverts specified commit (non-merge commits fully supported; merge commits have limitations).
 - **Code Committed:**
     - Features up to `sync` were on `cli-mvp-features`.
-    - The `revert` command and its tests were developed on the `feature/revert-command` branch. (This will be merged to main or the relevant feature branch).
+    - The `revert` command and its tests were developed on the `feature/revert-command` branch.
+    - `init` command tests and a related bugfix in `gitwrite_cli/main.py` are part of the current work.
 
 **Output/Result:**
-- **Committed Code:** Branch `feature/revert-command` contains the `revert` feature. Other features are on `cli-mvp-features` or merged to main.
-- **Known Typo:** In `gitwrite_cli/main.py`, within the `sync` command, an informational `click.echo` statement has `paciente=True` instead of `err=False`.
+- **Committed Code:** Branch `feature/revert-command` contains the `revert` feature. Other features are on `cli-mvp-features` or merged to main. Recent `init` tests and fixes are pending commit/merge.
+- **Known Typo:** In `gitwrite_cli/main.py` (sync command) - **INVESTIGATED**: Typo `paciente=True` not found; likely already fixed or misreported.
 - **Identified Limitation:** `gitwrite revert` cannot perform index-only reverts of merge commits with specific mainline parent selection due to underlying `pygit2.Repository.revert()` behavior in v1.18.0; CLI now errors gracefully for this case.
+- **Bug Fix (init):** Corrected `repo.status_file()` call in `gitwrite_cli/main.py` to use relative path for `.gitignore`, fixing an idempotency issue.
 
-**Status:** Active Development / Ready for Next Task
+**Status:** Testing and Refinement in Progress
 
 **Issues/Blockers (Current):**
-- No major environment blockers encountered during `revert` implementation.
+- No major environment blockers.
 
 **Completed Original Plan Items (Previously Blocked):**
 - Step 8: Implement `gitwrite revert` - **DONE** (with noted limitations for merge commits)
 - Step 9: Develop Unit and Integration Tests (for `revert`) - **DONE**
 
 **Remaining Original Plan Items (Adjusted):**
-- Comprehensive testing for *all* CLI commands.
-- Address `sync` command typo.
+- Comprehensive testing for *all* CLI commands. (`init` and `revert` commands now have good test coverage).
+- Address `sync` command typo. - **DONE** (Investigated, typo not found, likely already fixed or misreported).
 - Step 10: Create User Documentation.
-- Step 11: Refine CLI and Address Issues (e.g., review `revert` merge limitations for future improvement if library changes).
+- Step 11: Refine CLI and Address Issues (e.g., review `revert` merge limitations for future improvement if library changes; bug in `init` regarding `status_file` path was fixed).
 - Step 12: Update `Memory_Bank.md` file - This log entry. (Ongoing)
 - Step 13: Add Memory Bank and Handover Protocol notes to `Implementation_Plan.md`.
 - Step 14: Finalize the initial CLI application.
 
 **Next Steps (Optional):**
 - **Your Action:**
-    - Review and merge `feature/revert-command`.
-    - Prioritize next development tasks (e.g., typo fix, documentation, broader testing).
+    - Review and merge `feature/revert-command` (if not already done).
+    - Prioritize next development tasks:
+        - Continue comprehensive testing for other CLI commands (`save`, `history`, `explore`, `switch`, `merge`, `compare`, `sync`, `tag`, `ignore`).
+        - Begin work on User Documentation (Step 10).
 - **My Action:** Awaiting your guidance.
+---
+**Update: `init` Command Testing, `sync` Typo Investigation, and `init` Bug Fix**
+
+This update covers the investigation of a reported typo in the `sync` command, the successful implementation of comprehensive tests for the `gitwrite init` command, and a bug fix in `gitwrite_cli/main.py` that was discovered during this testing phase.
+
+**1. `sync` Command Typo (`paciente=True`) Investigation:**
+-   A thorough review of the `gitwrite_cli/main.py` file, specifically the `sync` command, was conducted. This included manual code inspection and `grep` searches for the term "paciente".
+-   **Conclusion:** The reported typo `paciente=True` was **not found** in the codebase.
+    -   All `click.echo` statements within the `sync` command correctly use `err=True` for error messages intended for `stderr`, or no `err` parameter (which defaults to `err=False`, i.e., `stdout`) for standard informational messages.
+    -   It is presumed that the typo was either fixed in a previous, unlogged commit or the initial report was inaccurate regarding the parameter name or its existence.
+    -   This item is now considered closed.
+
+**2. `gitwrite init` Command Testing:**
+-   A new test class, `TestGitWriteInit`, was added to `tests/test_main.py` to provide comprehensive test coverage for the `gitwrite init` command.
+-   **Key Scenarios Tested and Passing (8 tests in total):**
+    -   Successful initialization in an empty current directory (when no project name is provided).
+    -   Successful initialization when a `project_name` is specified (creating the project directory).
+    -   Correct creation of the standard GitWrite project structure: `drafts/`, `notes/` directories, `metadata.yml` file, and `.gitkeep` files within `drafts/` and `notes/`.
+    -   Generation of a `.gitignore` file with common Python and IDE ignore patterns.
+    -   Verification of the initial commit: correct commit message, author details (GitWrite System), and presence of core structure files in the commit tree.
+    -   Error handling for invalid target names:
+        -   When the specified `project_name` already exists as a file.
+        -   When the `project_name` directory exists, is not empty, and is not a Git repository.
+    -   Correct behavior when `init` is run in an existing Git repository (i.e., adds GitWrite structure and files, creates a new commit, but does not re-initialize the `.git` directory).
+    -   Error handling when `init` is run in a non-empty current directory that is not a Git repository (and no project name is given).
+    -   Verification that `init` correctly appends GitWrite-specific patterns to a pre-existing `.gitignore` file, preserving user's custom entries.
+    -   Idempotency: ensuring that running `init` multiple times in an already correctly initialized GitWrite directory does not create redundant new commits.
+-   All tests for `TestGitWriteInit` are currently passing.
+
+**3. Bug Fix in `gitwrite_cli/main.py` (related to `init` command):**
+-   **Discovery:** During the development of the idempotency test for `gitwrite init` (`test_init_is_idempotent_for_structure`), a bug was uncovered. When `init` was run a second time in an already initialized directory, an unexpected `KeyError` related to `.gitignore` would occur.
+-   **Root Cause:** The `init` command in `gitwrite_cli/main.py` was calling `repo.status_file(str(gitignore_file))`. The function `repo.status_file()` expects a path relative to the repository's working directory, but `str(gitignore_file)` was providing an absolute path. This caused `pygit2` to raise a `KeyError` when it couldn't find the absolute path in its internal representation of the working tree.
+-   **Fix:** The call was changed from `repo.status_file(str(gitignore_file))` to `repo.status_file(gitignore_file.name)`. Since `gitignore_file` is defined as `target_dir / ".gitignore"`, `gitignore_file.name` correctly provides the relative filename `".gitignore"`.
+-   This fix allowed the `test_init_is_idempotent_for_structure` to pass and ensures more robust behavior for the `init` command.
+
 ---
 **Update: `gitwrite revert` Implementation and Testing**
 

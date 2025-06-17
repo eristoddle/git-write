@@ -185,7 +185,7 @@ Objective: Create a comprehensive test suite for all CLI commands to ensure reli
 Status: **Partially Completed / Ongoing**
 
 1.  Set up testing framework (e.g., `pytest`).
-    - Comprehensive tests for `gitwrite revert` were successfully implemented and are passing. Tests for earlier commands still need to be developed.
+    - Comprehensive tests for `gitwrite revert` and `gitwrite init` have been successfully implemented and are passing. Testing for other commands is ongoing.
 2.  Write unit tests for core logic of all implemented commands.
 3.  Write integration tests for CLI commands, covering success cases, edge cases, and error conditions.
 4.  Aim for high test coverage.
@@ -200,11 +200,12 @@ Status: **Pending**
 
 ### Task 4.3 - Refine CLI and Address Issues
 Objective: Iterate on the CLI based on testing results and documentation process to improve usability and robustness.
-Status: **Pending**
+Status: **Partially Completed / Ongoing**
 
-1.  Fix known typo in `gitwrite sync` (`paciente=True`).
-2.  Review all test failures and bug reports.
-3.  Enhance error handling and your feedback across all commands.
+1.  Fix known typo in `gitwrite sync` (`paciente=True`). - **DONE** (Typo not found, likely fixed previously or misreported).
+2.  Fixed bug in `gitwrite init` where `repo.status_file()` was called with an absolute path for `.gitignore`, causing errors on subsequent runs. Changed to use a relative path. - **DONE**
+3.  Review all test failures and bug reports.
+4.  Enhance error handling and your feedback across all commands.
 4.  Review CLI usability (command names, arguments, options, output clarity).
 5.  Perform final round of integration testing.
 

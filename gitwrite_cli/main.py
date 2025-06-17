@@ -84,7 +84,8 @@ def init(project_name):
             str(Path("notes") / ".gitkeep"),
             "metadata.yml"
         ]
-        if needs_gitignore_update or not gitignore_file.exists() or not repo.status_file(str(gitignore_file)):
+        # Use gitignore_file.name for status_file, as it expects relative paths
+        if needs_gitignore_update or not gitignore_file.exists() or not repo.status_file(gitignore_file.name):
             items_to_stage.append(".gitignore")
 
         staged_anything = False
