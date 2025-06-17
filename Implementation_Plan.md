@@ -7,7 +7,7 @@ Project Goal: Develop a command-line interface (CLI) for GitWrite, a Git-based v
 *   **Primary Agent for CLI Development (Original Plan):** Agent_CLI_Dev
 *   **Agent for QA (Original Plan):** Agent_QA
 *   **Git Interaction Strategy:** Prioritize using `pygit2` (libgit2 bindings) for programmatic Git operations. Fall back to direct Git command-line calls via `subprocess` only for operations not straightforwardly available or significantly more complex with `pygit2`.
-*   **Current Status:** Development is partially blocked by an environment error. Tasks from "Phase 4" onwards will likely need to be primarily handled by a human developer.
+*   **Current Status:** Active development. Task 3.1 completed. Ready for next tasks.
 
 ---
 
@@ -124,44 +124,64 @@ Status: **Completed (with known minor typo)**
 
 ---
 
-## Phase 3: Core Feature Implementation - Blocked / Pending Human Developer Intervention
+## Phase 3: Core Feature Implementation
 
-### Task 3.1 - (Originally Agent_CLI_Dev): Implement `gitwrite revert`
+### Task 3.1 - Implement `gitwrite revert`
 Objective: Implement `gitwrite revert <commit_ref>` to revert changes introduced by a specific commit, creating a new commit.
-Status: **Blocked** (Environment error prevents implementation by me)
+Status: **Completed**
 
-1.  Define `revert <commit_ref>` command using Click.
-2.  Implement Git revert logic using `pygit2` (`repo.revert()`).
+1.  Defined `revert <commit_ref>` command using Click.
+2.  Implemented Git revert logic using `pygit2` (`repo.revert()`).
+    - Successfully implemented. Reverts non-merge commits and creates a new commit.
+    - Handles conflicts by instructing manual resolution and using `gitwrite save` (which was enhanced to create appropriate revert commit messages when completing a conflicted revert).
+    - Note: Reverting merge commits directly with `pygit2.Repository.revert()` and mainline selection showed limitations with `pygit2 v1.18.0`. The CLI currently disallows this specific operation with an error, guiding users to alternative Git strategies for such cases if needed.
 3.  If revert is successful (no conflicts):
-    - Create a new commit with a standard revert message.
+    - Created a new commit with a standard revert message.
 4.  If conflicts occur during revert:
-    - Provide your feedback about conflicts.
-    - Instruct you to resolve conflicts and run `gitwrite save`.
+    - Provided feedback about conflicts.
+    - Instructed user to resolve conflicts and run `gitwrite save`.
+
+### Task 3.2 - Implement `gitwrite ignore`
+Objective: Implement commands to manage `.gitignore` entries.
+Status: **Pending**
+
+1.  Define `ignore add <pattern>` subcommand.
+2.  Define `ignore list` subcommand.
+3.  Implement logic to read, append to, and display `.gitignore`.
+
+### Task 3.3 - Implement `gitwrite tag`
+Objective: Implement commands for creating and listing tags.
+Status: **Pending**
+
+1.  Define `tag create <name> [-m <message>]` subcommand.
+2.  Define `tag list` subcommand.
+3.  Implement logic using `pygit2` for tag creation and listing.
 
 ---
 
-## Phase 4: Testing, Documentation & Refinement - Pending Human Developer Intervention
+## Phase 4: Testing, Documentation & Refinement
 
-### Task 4.1 - (Originally Agent_QA, assisted by Agent_CLI_Dev): Develop Unit and Integration Tests
+### Task 4.1 - Develop Unit and Integration Tests
 Objective: Create a comprehensive test suite for all CLI commands to ensure reliability and correctness.
-Status: **Pending / Partially Blocked** (I was blocked from extensive test creation by environment issues, human developer to complete)
+Status: **Partially Completed / Ongoing**
 
 1.  Set up testing framework (e.g., `pytest`).
+    - Comprehensive tests for `gitwrite revert` were successfully implemented and are passing. Tests for earlier commands still need to be developed.
 2.  Write unit tests for core logic of all implemented commands.
 3.  Write integration tests for CLI commands, covering success cases, edge cases, and error conditions.
 4.  Aim for high test coverage.
 
-### Task 4.2 - (Originally Agent_CLI_Dev): Create User Documentation
+### Task 4.2 - Create User Documentation
 Objective: Develop user-friendly documentation for the GitWrite CLI.
-Status: **Pending** (Human developer to complete)
+Status: **Pending**
 
 1.  Outline documentation structure (Installation, Getting Started, Command Reference, Troubleshooting).
 2.  Write content for each section.
 3.  Choose documentation format (e.g., Markdown, static site generator).
 
-### Task 4.3 - (Originally Agent_CLI_Dev & Agent_QA): Refine CLI and Address Issues
+### Task 4.3 - Refine CLI and Address Issues
 Objective: Iterate on the CLI based on testing results and documentation process to improve usability and robustness.
-Status: **Pending** (Human developer to complete)
+Status: **Pending**
 
 1.  Fix known typo in `gitwrite sync` (`paciente=True`).
 2.  Review all test failures and bug reports.
