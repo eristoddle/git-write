@@ -106,3 +106,41 @@ The `gitwrite revert <commit_ref> [--mainline <parent_num>]` command has been su
 -   **Dependencies:** Python package dependencies (`click`, `pygit2==1.18.0`, `rich`, `pytest`) were installed and utilized during development and testing.
 
 This work effectively completes the `revert` command implementation as per the original plan, within the constraints discovered with the `pygit2` library.
+---
+**Update: `gitwrite save` Command Testing**
+
+Comprehensive testing for the `gitwrite save` command has been implemented, covering normal operations and conflict scenarios.
+
+**1. Helper Fixtures and Functions:**
+To support robust testing of the `save` command, the following helper fixtures and functions were added to `tests/test_main.py`:
+-   **Fixtures:**
+    -   `repo_with_unstaged_changes`: Creates a repository with a new file that has unstaged changes.
+    -   `repo_with_staged_changes`: Creates a repository with a new file that has already been staged.
+    -   `repo_with_merge_conflict`: Sets up a repository state where a merge conflict exists (MERGE_HEAD is present, and index has conflicts).
+    -   `repo_with_revert_conflict`: Sets up a repository state where a revert operation has resulted in conflicts (REVERT_HEAD is present, and index has conflicts).
+-   **Helper Functions:**
+    -   `create_file(repo, filename, content)`: Utility to easily create a file in the test repository's working directory.
+    -   `stage_file(repo, filename)`: Utility to stage a specified file.
+    -   `resolve_conflict(repo, filename, resolved_content)`: Utility to simulate conflict resolution by writing resolved content to a file, adding it to the index, and removing the conflict entry from the index.
+
+**2. Test Coverage for Normal Save Scenarios:**
+A new test class, `TestGitWriteSaveNormalScenarios`, was added to `tests/test_main.py`. These tests cover standard `save` operations:
+-   `test_save_new_file`: Verifies that a new, previously untracked and unstaged file is correctly committed with the given message.
+-   `test_save_existing_file_modified`: Verifies that modifications to an existing, tracked file (unstaged) are committed.
+-   `test_save_no_changes`: Checks that the `save` command correctly identifies when there are no changes to commit (neither in the working directory nor staged) and does not create an empty commit.
+-   `test_save_staged_changes`: Ensures that changes already staged (e.g., via `git add` or a previous `gitwrite` operation that only staged) are properly committed.
+-   `test_save_no_message`: Tests the behavior when a commit message is not provided with the `save` command. The test is designed to accommodate implementations where this might result in an error or the use of a default commit message.
+
+**3. Test Coverage for Conflict Scenarios:**
+A new test class, `TestGitWriteSaveConflictScenarios`, was added to `tests/test_main.py`. These tests focus on how `gitwrite save` behaves during and after merge and revert conflicts:
+-   **Merge Conflicts:**
+    -   `test_save_with_unresolved_merge_conflict`: Confirms that if `save` is invoked while there are unresolved merge conflicts (MERGE_HEAD exists), the command fails or warns the user, and no commit is made.
+    -   `test_save_after_resolving_merge_conflict`: Verifies that after a merge conflict is manually resolved (simulated with `resolve_conflict` helper) and staged, `gitwrite save` successfully creates a merge commit. It also checks that the repository is no longer in a merge state (MERGE_HEAD is cleared).
+-   **Revert Conflicts:**
+    -   `test_save_with_unresolved_revert_conflict`: Confirms that if `save` is invoked while there are unresolved conflicts from a `gitwrite revert` operation (REVERT_HEAD exists), the command fails or warns the user, and the revert is not finalized.
+    -   `test_save_after_resolving_revert_conflict`: Verifies that after a revert conflict is manually resolved and staged, `gitwrite save` successfully creates a commit that finalizes the revert. It checks that the commit message correctly reflects the revert and that the repository is no longer in a revert state (REVERT_HEAD is cleared).
+
+**4. Test Status:**
+-   All new tests for the `gitwrite save` command, covering both normal and conflict scenarios, are **passing**.
+
+This suite of tests significantly improves the reliability and robustness of the `gitwrite save` command.
