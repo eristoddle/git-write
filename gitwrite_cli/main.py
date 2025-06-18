@@ -1,11 +1,14 @@
 # Test comment to check write access.
 import click
-import pygit2
-import os
+import pygit2 # pygit2 is still used by other commands
+import os # os is still used by other commands
 from pathlib import Path
+# from pygit2 import Signature # Signature might not be needed if init was the only user. Let's check.
+# Signature is used in 'save' and 'tag_add', so it should remain.
 from pygit2 import Signature
 from rich.console import Console
 from rich.panel import Panel
+from gitwrite_core.repository import initialize_repository, add_pattern_to_gitignore, list_gitignore_patterns # Added import
 
 @click.group()
 def cli():
@@ -16,160 +19,23 @@ def cli():
 @click.argument("project_name", required=False)
 def init(project_name):
     """Initializes a new GitWrite project or adds GitWrite structure to an existing Git repository."""
-    if project_name:
-        target_dir = Path(project_name)
-        try:
-            if target_dir.is_file():
-                click.echo(f"Error: '{target_dir}' exists and is a file. Please specify a directory name.", err=True)
-                return
-            if not target_dir.exists():
-                target_dir.mkdir(parents=True, exist_ok=False)
-            elif any(target_dir.iterdir()) and not (target_dir / ".git").is_dir():
-                click.echo(f"Error: Directory '{target_dir}' already exists, is not empty, and is not a Git repository.", err=True)
-                return
-        except Exception as e:
-            click.echo(f"Error handling directory '{target_dir}': {e}", err=True)
-            return
-    else:
-        target_dir = Path.cwd()
-        if any(target_dir.iterdir()) and not (target_dir / ".git").is_dir():
-            click.echo(f"Error: Current directory '{target_dir}' is not empty and not a Git repository. Please use an empty directory or an existing Git repository, or specify a project name.", err=True)
-            return
+    # Determine the base path (current working directory)
+    # The core function expects path_str to be the CWD from where CLI is called.
+    base_path_str = str(Path.cwd())
 
-    try:
-        is_existing_repo = (target_dir / ".git").is_dir()
-        if is_existing_repo:
-            repo = pygit2.Repository(str(target_dir))
-            click.echo(f"Opened existing Git repository in {target_dir.resolve()}")
-        else:
-            repo = pygit2.init_repository(str(target_dir))
-            click.echo(f"Initialized empty Git repository in {target_dir.resolve()}")
+    # Call the core function
+    result = initialize_repository(base_path_str, project_name)
 
-        # Create writer-friendly structure and .gitkeep files
-        drafts_dir = target_dir / "drafts"
-        notes_dir = target_dir / "notes"
-        drafts_dir.mkdir(exist_ok=True)
-        notes_dir.mkdir(exist_ok=True)
-
-        drafts_gitkeep = drafts_dir / ".gitkeep"
-        notes_gitkeep = notes_dir / ".gitkeep"
-        metadata_file = target_dir / "metadata.yml"
-        gitignore_file = target_dir / ".gitignore"
-
-        drafts_gitkeep.touch()
-        notes_gitkeep.touch()
-        metadata_file.touch()
-        click.echo("Created/ensured GitWrite directory structure: drafts/, notes/, metadata.yml (with .gitkeep files)")
-
-        # Manage .gitignore
-        common_ignores = ["/.venv/", "/.idea/", "/.vscode/", "*.pyc", "__pycache__/"]
-        existing_ignores = set()
-        if gitignore_file.exists():
-            with open(gitignore_file, "r") as f:
-                for line in f:
-                    existing_ignores.add(line.strip())
-
-        needs_gitignore_update = False
-        with open(gitignore_file, "a") as f:
-            for item in common_ignores:
-                if item not in existing_ignores:
-                    f.write(f"{item}\n")
-                    needs_gitignore_update = True
-
-        # Stage items
-        repo.index.read() # Load existing index if any (important for existing repos)
-
-        items_to_stage = [
-            str(Path("drafts") / ".gitkeep"),
-            str(Path("notes") / ".gitkeep"),
-            "metadata.yml"
-        ]
-        # Use gitignore_file.name for status_file, as it expects relative paths
-        if needs_gitignore_update or not gitignore_file.exists() or not repo.status_file(gitignore_file.name):
-            items_to_stage.append(".gitignore")
-
-        staged_anything = False
-        for item_path_str in items_to_stage:
-            # Check if file exists before trying to add it
-            full_item_path = target_dir / item_path_str
-            if not full_item_path.exists():
-                # This case should ideally not be hit for .gitkeep files as they are touched just before.
-                # metadata.yml is also touched. .gitignore is handled by open().
-                click.echo(f"Warning: File {full_item_path} (relative: {item_path_str}) was expected but not found for staging.", err=True)
-                continue
-
-            try:
-                status_flags = repo.status_file(item_path_str) # Get status relative to repo
-                needs_staging = False
-
-                if not is_existing_repo: # If it's a brand new repository
-                    # All structural files are considered new and should be staged.
-                    # status_flags might be GIT_STATUS_WT_NEW or pygit2 might not even list them if queried too early.
-                    # Direct add is safest for a new repo's structural files.
-                    needs_staging = True
-                else: # Existing repository, check status carefully
-                    if status_flags & pygit2.GIT_STATUS_WT_NEW or \
-                       status_flags & pygit2.GIT_STATUS_WT_MODIFIED or \
-                       status_flags & pygit2.GIT_STATUS_INDEX_NEW or \
-                       status_flags & pygit2.GIT_STATUS_INDEX_MODIFIED:
-                        needs_staging = True
-                    # No 'else' needed here; if not meeting these, needs_staging remains False for existing repo.
-
-                if needs_staging:
-                    repo.index.add(item_path_str)
-                    staged_anything = True
-
-            except KeyError:
-                # This means the file is not in the index and not in the working tree according to status_file.
-                # However, we've just created these files (e.g., .gitkeep, metadata.yml).
-                # So, if full_item_path.exists(), we should add it. This is effectively treating it as a new file.
-                if full_item_path.exists(): # Double check it exists on disk
-                    repo.index.add(item_path_str)
-                    staged_anything = True
-                else:
-                    # This would be unusual given the .touch() calls earlier.
-                    click.echo(f"Warning: File {item_path_str} was not found by status_file and also not on disk for staging.", err=True)
-            except Exception as e:
-                 click.echo(f"Warning: Could not stage {item_path_str}: {e}", err=True)
-
-
-        if staged_anything:
-            repo.index.write()
-            click.echo(f"Staged GitWrite files: {', '.join(items_to_stage)}")
-        else:
-            click.echo("No new GitWrite structure elements to stage. Files might already be tracked and unchanged.")
-            if not repo.head_is_unborn and repo.index.write_tree() == repo.head.peel(pygit2.Tree).id:
-                 click.echo("And repository tree is identical to HEAD, no commit needed.")
-                 click.echo(f"Successfully processed GitWrite initialization for {target_dir.resolve()}")
-                 return
-
-
-        # Create commit
-        author = pygit2.Signature("GitWrite System", "system@gitwrite.io")
-        committer = author
-
-        parents = []
-        if not repo.head_is_unborn:
-            parents = [repo.head.target]
-
-        tree = repo.index.write_tree()
-
-        if repo.head_is_unborn or tree != repo.head.peel(pygit2.Tree).id:
-            commit_message_for_init = f"Initialized GitWrite project structure in {target_dir.name}"
-            if is_existing_repo and parents:
-                commit_message_for_init = f"Added GitWrite structure to {target_dir.name}"
-
-            repo.create_commit("HEAD", author, committer, commit_message_for_init, tree, parents)
-            click.echo("Created GitWrite structure commit.")
-        else:
-            click.echo("No changes to commit. GitWrite structure may already be committed and identical.")
-
-        click.echo(f"Successfully processed GitWrite initialization for {target_dir.resolve()}")
-
-    except pygit2.GitError as e:
-        click.echo(f"GitError during init: {e}", err=True)
-    except Exception as e:
-        click.echo(f"An unexpected error occurred during init: {e}", err=True)
+    # Print messages based on the result
+    if result.get('status') == 'success':
+        click.echo(result.get('message', 'Initialization successful.'))
+        # Optionally, print the path if available and relevant:
+        # if result.get('path'):
+        # click.echo(f"Project path: {result.get('path')}")
+    else: # 'error' or any other status
+        click.echo(result.get('message', 'An unknown error occurred.'), err=True)
+        # Consider if a non-zero exit code should be set here, e.g. ctx.exit(1)
+        # For now, just printing to err=True is consistent with current style.
 
 @cli.command()
 @click.argument("message")
@@ -1382,88 +1248,40 @@ def ignore():
 @click.argument("pattern")
 def ignore_add(pattern):
     """Adds a pattern to the .gitignore file."""
-    gitignore_file_path = Path.cwd() / ".gitignore"
-    pattern_to_add = pattern.strip()
+    repo_path_str = str(Path.cwd()) # .gitignore is typically in CWD for this command
 
-    if not pattern_to_add:
-        click.echo("Error: Pattern cannot be empty.", err=True)
-        return
+    result = add_pattern_to_gitignore(repo_path_str, pattern)
 
-    existing_patterns = set()
-    last_line_had_newline = True
-    try:
-        if gitignore_file_path.exists():
-            with open(gitignore_file_path, "r") as f:
-                content_data = f.read()
-                if content_data:
-                    lines_data = content_data.splitlines()
-                    for line_iter_ignore in lines_data:
-                        existing_patterns.add(line_iter_ignore.strip())
-                    if content_data.endswith("\n") or content_data.endswith("\r"):
-                        last_line_had_newline = True
-                    else:
-                        last_line_had_newline = False
-                else:
-                    last_line_had_newline = True
-        else:
-            last_line_had_newline = True
-
-    except (IOError, OSError) as e:
-        click.echo(f"Error reading .gitignore: {e}", err=True)
-        return
-
-    if pattern_to_add in existing_patterns:
-        click.echo(f"Pattern '{pattern_to_add}' already exists in .gitignore.")
-        return
-
-    try:
-        with open(gitignore_file_path, "a") as f:
-            if not last_line_had_newline:
-                f.write("\n")
-            f.write(f"{pattern_to_add}\n")
-        click.echo(f"Pattern '{pattern_to_add}' added to .gitignore.")
-    except (IOError, OSError) as e:
-        click.echo(f"Error writing to .gitignore: {e}", err=True)
+    if result['status'] == 'success':
+        click.echo(result['message'])
+    elif result['status'] == 'exists':
+        click.echo(result['message']) # Info message, not an error
+    elif result['status'] == 'error':
+        click.echo(result['message'], err=True)
+    else: # Should not happen
+        click.echo("An unexpected issue occurred while adding pattern.", err=True)
 
 @ignore.command(name="list")
 def list_patterns():
     """Lists all patterns in the .gitignore file."""
-    gitignore_file_path_list = Path.cwd() / ".gitignore"
-    console = Console()
+    repo_path_str = str(Path.cwd()) # .gitignore is typically in CWD
 
-    try:
-        if not gitignore_file_path_list.exists():
-            click.echo(".gitignore file not found.")
-            return
+    result = list_gitignore_patterns(repo_path_str)
 
-        with open(gitignore_file_path_list, "r") as f:
-            content_data_list = f.read()
-
-        if not content_data_list.strip(): # Key check for empty or whitespace-only
-            click.echo(".gitignore is empty.") # This message correctly covers both empty and whitespace-only files
-            return
-
-        # If we reach here, content_data_list.strip() is True, meaning there are non-whitespace lines.
-        # So, patterns_list_ignore will not be empty.
-        patterns_list_ignore = [line.strip() for line in content_data_list.splitlines() if line.strip()]
-
-        # The following check is now redundant and can be removed:
-        # if not patterns_list_ignore:
-        #     click.echo(".gitignore is effectively empty (contains only whitespace).")
-        #     return
-
-        panel_content_data = "\n".join(patterns_list_ignore)
+    if result['status'] == 'success':
+        patterns_list = result['patterns']
+        # Retain Rich Panel formatting
+        panel_content_data = "\n".join(patterns_list)
+        console = Console()
         console.print(Panel(panel_content_data, title="[bold green].gitignore Contents[/bold green]", expand=False))
-
-    except (IOError, OSError) as e:
-        click.echo(f"Error reading .gitignore: {e}", err=True)
-    except ImportError:
-        click.echo("Error: Rich library not found. Cannot display .gitignore contents with formatting.", err=True)
-        if 'content_data_list' in locals():
-            click.echo("\n.gitignore Contents (basic view):")
-            for line_iter_basic_ignore in content_data_list.splitlines():
-                if line_iter_basic_ignore.strip():
-                    click.echo(line_iter_basic_ignore.strip())
+    elif result['status'] == 'not_found':
+        click.echo(result['message'])
+    elif result['status'] == 'empty':
+        click.echo(result['message'])
+    elif result['status'] == 'error':
+        click.echo(result['message'], err=True)
+    else: # Should not happen
+        click.echo("An unexpected issue occurred while listing patterns.", err=True)
 
 
 if __name__ == "__main__":

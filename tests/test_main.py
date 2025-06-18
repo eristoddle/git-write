@@ -8,6 +8,7 @@ from unittest.mock import patch
 
 # Assuming your CLI script is gitwrite_cli.main
 from gitwrite_cli.main import cli
+from gitwrite_core.repository import initialize_repository, COMMON_GITIGNORE_PATTERNS, add_pattern_to_gitignore, list_gitignore_patterns # New imports
 
 # Helper to create a commit
 def make_commit(repo, filename, content, message):
@@ -90,6 +91,24 @@ def bare_remote_repo(remote_repo_path, local_repo): # Depends on local_repo to h
     return repo
 
 # Test stubs will go here
+
+# Moved helper functions to top-level for use by multiple test classes
+def _assert_gitwrite_structure(base_path: Path, check_git_dir: bool = True):
+    if check_git_dir:
+        assert (base_path / ".git").is_dir(), ".git directory not found"
+    assert (base_path / "drafts").is_dir(), "drafts/ directory not found"
+    assert (base_path / "drafts" / ".gitkeep").is_file(), "drafts/.gitkeep not found"
+    assert (base_path / "notes").is_dir(), "notes/ directory not found"
+    assert (base_path / "notes" / ".gitkeep").is_file(), "notes/.gitkeep not found"
+    assert (base_path / "metadata.yml").is_file(), "metadata.yml not found"
+    assert (base_path / ".gitignore").is_file(), ".gitignore not found"
+
+def _assert_common_gitignore_patterns(gitignore_path: Path):
+    content = gitignore_path.read_text()
+    # Using COMMON_GITIGNORE_PATTERNS imported from the core module
+    for pattern in COMMON_GITIGNORE_PATTERNS:
+        assert pattern in content, f"Expected core pattern '{pattern}' not found in .gitignore"
+
 
 def test_sync_placeholder(runner, local_repo, bare_remote_repo):
     """Placeholder test to ensure fixtures are working."""
@@ -1687,135 +1706,94 @@ class TestGitWriteSaveConflictScenarios:
 
 
 #######################
-# Ignore Command Tests
+# Ignore Command Tests (CLI Runner)
 #######################
 
-def test_ignore_add_new_pattern(runner):
-    """Test adding new patterns to .gitignore."""
+def test_ignore_add_new_pattern_cli(runner):
+    """CLI: Test adding a new pattern."""
     with runner.isolated_filesystem() as temp_dir:
-        temp_dir_path = Path(temp_dir)
-        gitignore_file = temp_dir_path / ".gitignore"
+        # Core logic tested in TestIgnoreCoreFunctions.add_pattern_to_new_gitignore_core
+        result = runner.invoke(cli, ['ignore', 'add', '*.log'])
+        assert result.exit_code == 0
+        assert "Pattern '*.log' added to .gitignore." in result.output
+        # Basic check that file was created by CLI interaction
+        assert (Path(temp_dir) / ".gitignore").exists()
 
-        # Add first pattern
-        result1 = runner.invoke(cli, ['ignore', 'add', '*.log'])
-        assert result1.exit_code == 0, f"Output: {result1.output}"
-        assert "Pattern '*.log' added to .gitignore." in result1.output
-        assert gitignore_file.exists()
-        assert gitignore_file.read_text() == "*.log\n"
-
-        # Add second pattern
-        result2 = runner.invoke(cli, ['ignore', 'add', 'another_pattern'])
-        assert result2.exit_code == 0, f"Output: {result2.output}"
-        assert "Pattern 'another_pattern' added to .gitignore." in result2.output
-        assert gitignore_file.read_text() == "*.log\nanother_pattern\n"
-
-        # Test adding a pattern that requires a newline to be added first
-        # (if the file somehow ended up without a trailing newline)
-        # Manually create a .gitignore without trailing newline
-        gitignore_file.write_text("*.log\nanother_pattern") # No trailing newline
-
-        result3 = runner.invoke(cli, ['ignore', 'add', 'third_pattern'])
-        assert result3.exit_code == 0, f"Output: {result3.output}"
-        assert "Pattern 'third_pattern' added to .gitignore." in result3.output
-        # The 'add' command should add a newline before the new pattern if one is missing
-        assert gitignore_file.read_text() == "*.log\nanother_pattern\nthird_pattern\n"
-
-
-def test_ignore_add_duplicate_pattern(runner):
-    """Test adding a duplicate pattern to .gitignore."""
+def test_ignore_add_duplicate_pattern_cli(runner):
+    """CLI: Test adding a duplicate pattern."""
     with runner.isolated_filesystem() as temp_dir:
-        temp_dir_path = Path(temp_dir)
-        gitignore_file = temp_dir_path / ".gitignore"
+        gitignore_file = Path(temp_dir) / ".gitignore"
         initial_pattern = "existing_pattern"
         gitignore_file.write_text(f"{initial_pattern}\n")
 
         result = runner.invoke(cli, ['ignore', 'add', initial_pattern])
-        assert result.exit_code == 0, f"Output: {result.output}" # Command execution is successful
+        assert result.exit_code == 0
         assert f"Pattern '{initial_pattern}' already exists in .gitignore." in result.output
-        assert gitignore_file.read_text() == f"{initial_pattern}\n" # Content remains unchanged
 
-
-def test_ignore_add_pattern_strips_whitespace(runner):
-    """Test that adding a pattern strips leading/trailing whitespace."""
+def test_ignore_add_pattern_strips_whitespace_cli(runner):
+    """CLI: Test adding a pattern strips leading/trailing whitespace."""
     with runner.isolated_filesystem() as temp_dir:
-        temp_dir_path = Path(temp_dir)
-        gitignore_file = temp_dir_path / ".gitignore"
-
         result = runner.invoke(cli, ['ignore', 'add', '  *.tmp  '])
-        assert result.exit_code == 0, f"Output: {result.output}"
+        assert result.exit_code == 0
         assert "Pattern '*.tmp' added to .gitignore." in result.output
-        assert gitignore_file.exists()
-        assert gitignore_file.read_text() == "*.tmp\n"
+        # Basic check
+        assert (Path(temp_dir) / ".gitignore").exists()
 
-def test_ignore_add_empty_pattern(runner):
-    """Test adding an empty or whitespace-only pattern."""
-    with runner.isolated_filesystem() as temp_dir:
-        gitignore_file = Path(temp_dir) / ".gitignore"
-
-        # Test with empty string
+def test_ignore_add_empty_pattern_cli(runner):
+    """CLI: Test adding an empty or whitespace-only pattern."""
+    with runner.isolated_filesystem():
         result_empty = runner.invoke(cli, ['ignore', 'add', ''])
-        assert result_empty.exit_code == 0 # Or specific error code if designed that way
-        assert "Error: Pattern cannot be empty." in result_empty.output
-        assert not gitignore_file.exists() # No .gitignore should be created for an empty pattern
+        assert result_empty.exit_code == 0 # Command itself doesn't fail for user input errors
+        assert "Pattern cannot be empty." in result_empty.output # Error message from core
 
-        # Test with whitespace-only string
         result_whitespace = runner.invoke(cli, ['ignore', 'add', '   '])
         assert result_whitespace.exit_code == 0
-        assert "Error: Pattern cannot be empty." in result_whitespace.output
-        assert not gitignore_file.exists()
+        assert "Pattern cannot be empty." in result_whitespace.output
 
-
-def test_ignore_list_existing_gitignore(runner):
-    """Test listing patterns from an existing .gitignore file."""
+def test_ignore_list_existing_gitignore_cli(runner):
+    """CLI: Test listing patterns from an existing .gitignore file."""
     with runner.isolated_filesystem() as temp_dir:
-        temp_dir_path = Path(temp_dir)
-        gitignore_file = temp_dir_path / ".gitignore"
+        gitignore_file = Path(temp_dir) / ".gitignore"
         patterns = ["pattern1", "*.log", "another/path/"]
-        gitignore_content = "\n".join(patterns) + "\n" # Ensure trailing newline
+        gitignore_content = "\n".join(patterns) + "\n"
         gitignore_file.write_text(gitignore_content)
 
         result = runner.invoke(cli, ['ignore', 'list'])
-        assert result.exit_code == 0, f"Output: {result.output}"
-        assert ".gitignore Contents" in result.output # Title from Rich Panel
-        for pattern in patterns:
+        assert result.exit_code == 0
+        assert ".gitignore Contents" in result.output # Rich Panel title
+        for pattern in patterns: # Check if actual patterns are in the output
             assert pattern in result.output
 
-
-def test_ignore_list_non_existent_gitignore(runner):
-    """Test listing when .gitignore does not exist."""
+def test_ignore_list_non_existent_gitignore_cli(runner):
+    """CLI: Test listing when .gitignore does not exist."""
     with runner.isolated_filesystem():
         result = runner.invoke(cli, ['ignore', 'list'])
-        assert result.exit_code == 0, f"Output: {result.output}" # Command itself should succeed
+        assert result.exit_code == 0
         assert ".gitignore file not found." in result.output
 
-
-def test_ignore_list_empty_gitignore(runner):
-    """Test listing an empty .gitignore file."""
+def test_ignore_list_empty_gitignore_cli(runner):
+    """CLI: Test listing an empty .gitignore file."""
     with runner.isolated_filesystem() as temp_dir:
-        temp_dir_path = Path(temp_dir)
-        gitignore_file = temp_dir_path / ".gitignore"
-        gitignore_file.write_text("") # Create empty file
+        gitignore_file = Path(temp_dir) / ".gitignore"
+        gitignore_file.touch() # Create empty file
 
         result = runner.invoke(cli, ['ignore', 'list'])
-        assert result.exit_code == 0, f"Output: {result.output}"
+        assert result.exit_code == 0
         assert ".gitignore is empty." in result.output
 
-def test_ignore_list_gitignore_with_only_whitespace(runner):
-    """Test listing a .gitignore file that contains only whitespace."""
+def test_ignore_list_gitignore_with_only_whitespace_cli(runner):
+    """CLI: Test listing a .gitignore file that contains only whitespace."""
     with runner.isolated_filesystem() as temp_dir:
-        temp_dir_path = Path(temp_dir)
-        gitignore_file = temp_dir_path / ".gitignore"
-        gitignore_file.write_text("\n   \n\t\n") # Whitespace and newlines
+        gitignore_file = Path(temp_dir) / ".gitignore"
+        gitignore_file.write_text("\n   \n\t\n")
 
         result = runner.invoke(cli, ['ignore', 'list'])
-        assert result.exit_code == 0, f"Output: {result.output}"
-        # Based on current 'ignore list' implementation, if content.strip() is empty,
-        # it's considered "empty". This covers files with only whitespace.
+        assert result.exit_code == 0
         assert ".gitignore is empty." in result.output
 
 
 #######################
-# Init Command Tests
+# Init Command Tests (CLI Runner - already refactored for core calls)
 #######################
 
 @pytest.fixture
@@ -1832,21 +1810,8 @@ def init_test_dir(tmp_path):
 
 class TestGitWriteInit:
 
-    def _assert_gitwrite_structure(self, base_path: Path, check_git_dir: bool = True):
-        if check_git_dir:
-            assert (base_path / ".git").is_dir(), ".git directory not found"
-        assert (base_path / "drafts").is_dir(), "drafts/ directory not found"
-        assert (base_path / "drafts" / ".gitkeep").is_file(), "drafts/.gitkeep not found"
-        assert (base_path / "notes").is_dir(), "notes/ directory not found"
-        assert (base_path / "notes" / ".gitkeep").is_file(), "notes/.gitkeep not found"
-        assert (base_path / "metadata.yml").is_file(), "metadata.yml not found"
-        assert (base_path / ".gitignore").is_file(), ".gitignore not found"
-
-    def _assert_common_gitignore_patterns(self, gitignore_path: Path):
-        content = gitignore_path.read_text()
-        common_ignores = ["/.venv/", "/.idea/", "/.vscode/", "*.pyc", "__pycache__/"]
-        for pattern in common_ignores:
-            assert pattern in content, f"Expected pattern '{pattern}' not found in .gitignore"
+    # Helper methods _assert_gitwrite_structure and _assert_common_gitignore_patterns
+    # have been moved to the top level of the file to be shared.
 
     def test_init_in_empty_directory_no_project_name(self, runner: CliRunner, tmp_path: Path):
         """Test `gitwrite init` in an empty directory (uses current dir)."""
@@ -1856,43 +1821,16 @@ class TestGitWriteInit:
 
         result = runner.invoke(cli, ["init"])
         assert result.exit_code == 0, f"CLI Error: {result.output}"
-        assert f"Initialized empty Git repository in {test_dir.resolve()}" in result.output
-        assert "Created/ensured GitWrite directory structure" in result.output
-        assert "Staged GitWrite files" in result.output
-        assert "Created GitWrite structure commit." in result.output
+        # Check for messages from the core function's success response
+        dir_name = test_dir.name # Core function uses the directory name
+        assert f"Initialized empty Git repository in {dir_name}" in result.output
+        assert f"Created GitWrite directory structure in {dir_name}" in result.output
+        assert f"Staged GitWrite files in {dir_name}" in result.output
+        assert f"Created GitWrite structure commit in {dir_name}" in result.output
 
-        self._assert_gitwrite_structure(test_dir)
-        self._assert_common_gitignore_patterns(test_dir / ".gitignore")
-
-        repo = pygit2.Repository(str(test_dir))
-        assert not repo.is_empty
-        assert not repo.head_is_unborn
-        last_commit = repo.head.peel(pygit2.Commit)
-        assert "Initialized GitWrite project structure" in last_commit.message
-        assert last_commit.author.name == "GitWrite System"
-
-        # Check tree contents
-        expected_tree_items = {".gitignore", "metadata.yml", "drafts/.gitkeep", "notes/.gitkeep"}
-        actual_tree_items = {item.name for item in last_commit.tree}
-        # For items in subdirectories, pygit2 tree lists them at top level if not a tree object itself
-        # Need to check specifically for 'drafts' and 'notes' as tree objects if they contain files.
-        # For .gitkeep, they are files.
-        # The structure of tree iteration might be more complex if we want to ensure they are in correct subtrees.
-        # For now, let's check the main ones.
-        assert ".gitignore" in actual_tree_items
-        assert "metadata.yml" in actual_tree_items
-        assert "drafts" in actual_tree_items # 'drafts' itself is a tree
-        assert "notes" in actual_tree_items  # 'notes' itself is a tree
-
-        drafts_tree = last_commit.tree['drafts']
-        assert drafts_tree is not None
-        assert drafts_tree.type == pygit2.GIT_OBJECT_TREE
-        assert (test_dir / "drafts" / ".gitkeep").exists() # Already checked by _assert_gitwrite_structure
-
-        notes_tree = last_commit.tree['notes']
-        assert notes_tree is not None
-        assert notes_tree.type == pygit2.GIT_OBJECT_TREE
-        assert (test_dir / "notes" / ".gitkeep").exists() # Already checked
+        # Basic check that a repo was made
+        assert (test_dir / ".git").is_dir()
+        # Detailed structure and commit content is tested in TestInitializeRepositoryCore
 
     def test_init_with_project_name(self, runner: CliRunner, tmp_path: Path):
         """Test `gitwrite init project_name`."""
@@ -1905,18 +1843,17 @@ class TestGitWriteInit:
 
         result = runner.invoke(cli, ["init", project_name])
         assert result.exit_code == 0, f"CLI Error: {result.output}"
-        assert project_dir.exists(), "Project directory was not created"
+        assert project_dir.exists(), "Project directory was not created by CLI call"
         assert project_dir.is_dir()
-        assert f"Initialized empty Git repository in {project_dir.resolve()}" in result.output
-        assert "Created GitWrite structure commit." in result.output
 
-        self._assert_gitwrite_structure(project_dir)
-        self._assert_common_gitignore_patterns(project_dir / ".gitignore")
+        # Check for messages from the core function's success response
+        assert f"Initialized empty Git repository in {project_name}" in result.output
+        assert f"Created GitWrite directory structure in {project_name}" in result.output
+        assert f"Created GitWrite structure commit in {project_name}" in result.output
 
-        repo = pygit2.Repository(str(project_dir))
-        assert not repo.is_empty
-        last_commit = repo.head.peel(pygit2.Commit)
-        assert f"Initialized GitWrite project structure in {project_name}" in last_commit.message
+        # Basic check
+        assert (project_dir / ".git").is_dir()
+        # Detailed structure and commit content is tested in TestInitializeRepositoryCore
 
     def test_init_error_project_directory_is_a_file(self, runner: CliRunner, tmp_path: Path):
         """Test error when `gitwrite init project_name` and project_name is an existing file."""
@@ -1929,8 +1866,9 @@ class TestGitWriteInit:
 
         os.chdir(base_dir)
         result = runner.invoke(cli, ["init", project_name])
-        assert result.exit_code == 0 # Command itself doesn't fail, but prints error
-        assert f"Error: '{file_path.name}' exists and is a file." in result.output
+        # CLI should echo the error message from the core function
+        assert f"Error: A file named '{project_name}' already exists" in result.output
+        assert result.exit_code == 0 # CLI itself doesn't crash, just prints error from core
         assert not (base_dir / project_name / ".git").exists() # No git repo created
 
     def test_init_error_project_directory_exists_not_empty_not_git(self, runner: CliRunner, tmp_path: Path):
@@ -1945,66 +1883,39 @@ class TestGitWriteInit:
 
         os.chdir(base_dir)
         result = runner.invoke(cli, ["init", project_name])
-        assert result.exit_code == 0 # Command prints error
-        assert f"Error: Directory '{project_dir_path.name}' already exists, is not empty, and is not a Git repository." in result.output
+        # CLI should echo the error message from the core function
+        assert f"Error: Directory '{project_name}' already exists, is not empty, and is not a Git repository." in result.output
+        assert result.exit_code == 0 # CLI prints error
         assert not (project_dir_path / ".git").exists()
 
     def test_init_in_existing_git_repository(self, runner: CliRunner, local_repo: pygit2.Repository, local_repo_path: Path):
         """Test `gitwrite init` in an existing Git repository."""
-        # local_repo fixture already provides an initialized git repo with one commit
         os.chdir(local_repo_path)
-
-        initial_commit_count = len(list(local_repo.walk(local_repo.head.target, pygit2.GIT_SORT_TOPOLOGICAL)))
+        repo_name = local_repo_path.name
 
         result = runner.invoke(cli, ["init"])
         assert result.exit_code == 0, f"CLI Error: {result.output}"
 
-        assert f"Opened existing Git repository in {local_repo_path.resolve()}" in result.output
-        assert "Created/ensured GitWrite directory structure" in result.output
-        assert "Staged GitWrite files" in result.output # Might stage .gitignore if it's new/modified
-        # Check output based on whether a commit was made
-        last_commit_after_init = local_repo.head.peel(pygit2.Commit)
-        # initial_commit_count was before this init. If a new commit was made, count increases.
-        # The fixture local_repo already has 1 commit.
-        current_commit_count = len(list(local_repo.walk(local_repo.head.target, pygit2.GIT_SORT_TOPOLOGICAL)))
-
-        if current_commit_count > initial_commit_count :
-            assert "Created GitWrite structure commit." in result.output
-        else:
-            # This case implies no new structural elements were staged and committed.
-            assert "No changes to commit" in result.output or \
-                   "No new GitWrite structure elements to stage" in result.output
-
-
-        self._assert_gitwrite_structure(local_repo_path, check_git_dir=True) # .git already exists
-        self._assert_common_gitignore_patterns(local_repo_path / ".gitignore")
-
-        # Verify a new commit was made for GitWrite files
-        current_commit_count = len(list(local_repo.walk(local_repo.head.target, pygit2.GIT_SORT_TOPOLOGICAL)))
-        # Depending on whether .gitignore was already present and identical, a commit might or might not be made.
-        # The init command tries to be idempotent for structure if already committed.
-        # Let's check the commit message of the latest commit.
-        last_commit = local_repo.head.peel(pygit2.Commit)
-        if current_commit_count > initial_commit_count:
-            assert f"Added GitWrite structure to {local_repo_path.name}" in last_commit.message
-            assert last_commit.author.name == "GitWrite System"
-        else:
-            # If no new commit, it means the structure was already there and committed.
-            # The output should indicate this.
-            assert "No changes to commit" in result.output or "No new GitWrite structure elements to stage" in result.output
-
+        # Check for messages from the core function's success response for existing repo
+        assert f"Created GitWrite directory structure in {repo_name}" in result.output
+        # This message implies it's an existing repo
+        assert f"Added GitWrite structure to {repo_name}" in result.output
+        # Basic check
+        assert (local_repo_path / "drafts").is_dir()
+        # Detailed structure, commit changes, .gitignore handling are tested in TestInitializeRepositoryCore
 
     def test_init_in_existing_non_empty_dir_not_git_no_project_name(self, runner: CliRunner, tmp_path: Path):
         """Test `gitwrite init` in current dir if it's non-empty and not a Git repo."""
         test_dir = tmp_path / "existing_non_empty_current_dir"
         test_dir.mkdir()
         (test_dir / "my_random_file.txt").write_text("content")
+        dir_name = test_dir.name
 
         os.chdir(test_dir)
         result = runner.invoke(cli, ["init"])
-        assert result.exit_code == 0 # Command prints error
-        # The error message in main.py uses str(target_dir) which is the full path
-        assert f"Error: Current directory '{str(test_dir)}' is not empty and not a Git repository." in result.output
+        assert result.exit_code == 0 # CLI prints error
+        # CLI should echo the error message from the core function
+        assert f"Error: Current directory '{dir_name}' is not empty and not a Git repository." in result.output
         assert not (test_dir / ".git").exists()
 
     def test_init_gitignore_appends_not_overwrites(self, runner: CliRunner, tmp_path: Path):
@@ -2027,15 +1938,15 @@ class TestGitWriteInit:
         result = runner.invoke(cli, ["init"])
         assert result.exit_code == 0, f"CLI Error: {result.output}"
 
-        self._assert_gitwrite_structure(test_dir)
-        self._assert_common_gitignore_patterns(gitignore_path)
+        _assert_gitwrite_structure(test_dir) # Now using top-level helper
+        _assert_common_gitignore_patterns(gitignore_path) # Now using top-level helper
 
         # Verify user's entry is still there
         final_gitignore_content = gitignore_path.read_text()
         assert user_entry.strip() in final_gitignore_content # .strip() because init might add newlines
 
-        # Check that GitWrite patterns were added
-        assert "/.venv/" in final_gitignore_content
+        # Check that GitWrite patterns were added (core patterns)
+        assert COMMON_GITIGNORE_PATTERNS[0] in final_gitignore_content # Example check
 
         # Check commit
         last_commit = repo.head.peel(pygit2.Commit)
@@ -2053,7 +1964,8 @@ class TestGitWriteInit:
         # First init
         result1 = runner.invoke(cli, ["init"])
         assert result1.exit_code == 0, f"First init failed: {result1.output}"
-        assert "Created GitWrite structure commit." in result1.output
+        # Message comes from core function now
+        assert "Created GitWrite structure commit." in result1.output # This is part of the core message
 
         repo = pygit2.Repository(str(test_dir))
         commit1_hash = repo.head.target
@@ -2062,11 +1974,355 @@ class TestGitWriteInit:
         result2 = runner.invoke(cli, ["init"])
         assert result2.exit_code == 0, f"Second init failed: {result2.output}"
         # This message indicates that the structure was found and no new commit was needed.
-        assert "No changes to commit. GitWrite structure may already be committed and identical." in result2.output or \
-               "And repository tree is identical to HEAD, no commit needed." in result2.output or \
-               "No new GitWrite structure elements to stage." in result2.output
+        # Check for messages from the core function's return
+        assert "GitWrite structure already present and tracked." in result2.output or \
+               "GitWrite structure already present and up-to-date." in result2.output
 
 
         commit2_hash = repo.head.target
         assert commit1_hash == commit2_hash, "No new commit should have been made on second init."
-        self._assert_gitwrite_structure(test_dir)
+        _assert_gitwrite_structure(test_dir) # Now using top-level helper
+
+
+#######################################
+# Core Repository Function Tests
+#######################################
+
+class TestInitializeRepositoryCore:
+
+    def test_init_new_project_core(self, tmp_path: Path):
+        """Test initialize_repository in a new directory with a project name."""
+        base_tmp_path = tmp_path / "core_init_base"
+        base_tmp_path.mkdir()
+        project_name = "new_core_project"
+
+        result = initialize_repository(str(base_tmp_path), project_name=project_name)
+
+        project_path = base_tmp_path / project_name
+
+        assert result['status'] == 'success'
+        assert project_path.exists()
+        assert str(project_path.resolve()) == result['path']
+        assert f"Initialized empty Git repository in {project_name}" in result['message']
+        assert f"Created GitWrite directory structure in {project_name}" in result['message']
+        assert f"Staged GitWrite files in {project_name}" in result['message']
+        assert f"Created GitWrite structure commit in {project_name}" in result['message']
+
+        _assert_gitwrite_structure(project_path)
+        _assert_common_gitignore_patterns(project_path / ".gitignore")
+
+        repo = pygit2.Repository(str(project_path))
+        assert not repo.is_empty
+        assert not repo.head_is_unborn
+        last_commit = repo.head.peel(pygit2.Commit)
+        assert f"Initialized GitWrite project structure in {project_name}" in last_commit.message
+        assert last_commit.author.name == "GitWrite System"
+
+        expected_tree_items = {".gitignore", "metadata.yml", "drafts", "notes"}
+        actual_tree_items = {item.name for item in last_commit.tree}
+        assert expected_tree_items == actual_tree_items
+
+        drafts_tree = last_commit.tree['drafts'].peel(pygit2.Tree)
+        assert ".gitkeep" in {item.name for item in drafts_tree}
+        notes_tree = last_commit.tree['notes'].peel(pygit2.Tree)
+        assert ".gitkeep" in {item.name for item in notes_tree}
+
+    def test_init_current_empty_dir_core(self, tmp_path: Path):
+        """Test initialize_repository in current empty directory (no project name)."""
+        test_dir = tmp_path / "current_empty_core_init"
+        test_dir.mkdir()
+
+        # For core function, CWD is passed as path_str
+        result = initialize_repository(str(test_dir), project_name=None)
+
+        assert result['status'] == 'success'
+        assert str(test_dir.resolve()) == result['path']
+        dir_name = test_dir.name
+        assert f"Initialized empty Git repository in {dir_name}" in result['message']
+        assert f"Created GitWrite directory structure in {dir_name}" in result['message']
+
+        _assert_gitwrite_structure(test_dir)
+        _assert_common_gitignore_patterns(test_dir / ".gitignore")
+
+        repo = pygit2.Repository(str(test_dir))
+        assert not repo.is_empty
+        last_commit = repo.head.peel(pygit2.Commit)
+        assert f"Initialized GitWrite project structure in {dir_name}" in last_commit.message
+
+    def test_init_error_target_is_file_core(self, tmp_path: Path):
+        """Test initialize_repository core error: target_dir is a file."""
+        base_dir = tmp_path / "core_file_conflict_base"
+        base_dir.mkdir()
+        project_name_as_file = "i_am_a_file.txt"
+        file_path = base_dir / project_name_as_file
+        file_path.write_text("Some content")
+
+        result = initialize_repository(str(base_dir), project_name=project_name_as_file)
+        assert result['status'] == 'error'
+        assert f"A file named '{project_name_as_file}' already exists" in result['message']
+        assert result['path'] == str(file_path.resolve())
+
+    def test_init_error_target_exists_not_empty_not_git_core(self, tmp_path: Path):
+        """Test initialize_repository core error: target exists, not empty, not Git."""
+        base_dir = tmp_path / "core_non_empty_conflict"
+        base_dir.mkdir()
+        project_name_conflict = "existing_non_empty_dir"
+        project_dir_path = base_dir / project_name_conflict
+        project_dir_path.mkdir()
+        (project_dir_path / "some_file.txt").write_text("Hello")
+
+        # Test with project_name specified
+        result = initialize_repository(str(base_dir), project_name=project_name_conflict)
+        assert result['status'] == 'error'
+        assert f"Error: Directory '{project_name_conflict}' already exists, is not empty, and is not a Git repository." in result['message']
+        assert result['path'] == str(project_dir_path.resolve())
+
+        # Test with no project_name (target_dir is the non-empty dir itself)
+        result_no_project_name = initialize_repository(str(project_dir_path), project_name=None)
+        assert result_no_project_name['status'] == 'error'
+        assert f"Error: Current directory '{project_dir_path.name}' is not empty and not a Git repository." in result_no_project_name['message']
+        assert result_no_project_name['path'] == str(project_dir_path.resolve())
+
+
+    def test_init_existing_git_repo_core(self, tmp_path: Path):
+        """Test initialize_repository in an existing Git repository."""
+        existing_repo_path = tmp_path / "existing_core_repo"
+        existing_repo_path.mkdir()
+
+        # Initialize a bare git repo and make an initial commit
+        repo = pygit2.init_repository(str(existing_repo_path))
+        author = pygit2.Signature("Test Author", "test@example.com")
+        committer = author
+        # Create an empty tree for the initial commit
+        empty_tree_oid = repo.TreeBuilder().write()
+        initial_commit_oid = repo.create_commit("HEAD", author, committer, "Initial user commit", empty_tree_oid, [])
+
+        result = initialize_repository(str(existing_repo_path), project_name=None)
+
+        assert result['status'] == 'success'
+        assert str(existing_repo_path.resolve()) == result['path']
+        # Message should reflect adding to existing repo
+        dir_name = existing_repo_path.name
+        assert f"Created GitWrite directory structure in {dir_name}" in result['message'] # No "Initialized empty"
+        assert f"Added GitWrite structure to {dir_name}" in result['message']
+
+
+        _assert_gitwrite_structure(existing_repo_path) # .git already existed
+        _assert_common_gitignore_patterns(existing_repo_path / ".gitignore")
+
+        # Verify a new commit was made for GitWrite files
+        repo = pygit2.Repository(str(existing_repo_path)) # Re-open to be sure
+        last_commit = repo.head.peel(pygit2.Commit)
+        assert last_commit.id != initial_commit_oid
+        assert f"Added GitWrite structure to {dir_name}" in last_commit.message
+        assert last_commit.author.name == "GitWrite System"
+        assert len(last_commit.parents) == 1
+        assert last_commit.parents[0].id == initial_commit_oid
+
+        # Check .gitignore handling: add a user pattern and ensure it's kept + new ones added
+        gitignore_path = existing_repo_path / ".gitignore"
+        gitignore_path.write_text("my_secret_file.txt\n") # Simulate user adding a file before running init
+        make_commit(repo, ".gitignore", "my_secret_file.txt\n", "User adds own .gitignore")
+        user_commit_oid = repo.head.target
+
+        result_gitignore = initialize_repository(str(existing_repo_path), project_name=None)
+        assert result_gitignore['status'] == 'success'
+
+        final_gitignore_content = gitignore_path.read_text()
+        assert "my_secret_file.txt" in final_gitignore_content
+        assert COMMON_GITIGNORE_PATTERNS[0] in final_gitignore_content # check one of the core patterns
+
+        repo = pygit2.Repository(str(existing_repo_path)) # Re-open
+        last_commit_gitignore = repo.head.peel(pygit2.Commit)
+        if last_commit_gitignore.id != user_commit_oid: # if a new commit was made for .gitignore changes
+            assert f"Added GitWrite structure to {dir_name}" in last_commit_gitignore.message # or similar
+            assert ".gitignore" in last_commit_gitignore.tree
+            gitignore_blob_content = last_commit_gitignore.tree[".gitignore"].data.decode('utf-8')
+            assert "my_secret_file.txt" in gitignore_blob_content
+            assert COMMON_GITIGNORE_PATTERNS[0] in gitignore_blob_content
+        else: # No new commit means .gitignore was already compliant or only GitWrite files were added.
+             assert "GitWrite structure already present and tracked" in result_gitignore['message'] or \
+                    "GitWrite structure already present and up-to-date" in result_gitignore['message']
+
+
+    def test_init_idempotency_core(self, tmp_path: Path):
+        """Test initialize_repository is idempotent."""
+        test_dir = tmp_path / "core_idempotent_test"
+        test_dir.mkdir()
+
+        # First call
+        result1 = initialize_repository(str(test_dir), project_name=None)
+        assert result1['status'] == 'success'
+        assert "Created GitWrite structure commit" in result1['message']
+
+        repo = pygit2.Repository(str(test_dir))
+        commit1_hash = repo.head.target
+
+        # Second call
+        result2 = initialize_repository(str(test_dir), project_name=None)
+        assert result2['status'] == 'success'
+        # Check for messages indicating no changes
+        assert "GitWrite structure already present and tracked" in result2['message'] or \
+               "GitWrite structure already present and up-to-date" in result2['message'] or \
+               "No changes to commit" in result2['message']
+
+
+        repo = pygit2.Repository(str(test_dir)) # Re-open
+        commit2_hash = repo.head.target
+        assert commit1_hash == commit2_hash, "A new commit was made on the second identical call."
+        _assert_gitwrite_structure(test_dir)
+
+    def test_init_handles_existing_empty_project_dir(self, tmp_path: Path):
+        """Test init when project_name dir exists but is empty."""
+        base_dir = tmp_path / "base_for_existing_empty"
+        base_dir.mkdir()
+        project_name = "existing_empty_project"
+        project_dir = base_dir / project_name
+        project_dir.mkdir() # Directory exists but is empty
+
+        result = initialize_repository(str(base_dir), project_name=project_name)
+        assert result['status'] == 'success'
+        assert project_dir.exists()
+        assert f"Initialized empty Git repository in {project_name}" in result['message']
+        _assert_gitwrite_structure(project_dir)
+        repo = pygit2.Repository(str(project_dir))
+        assert not repo.head_is_unborn
+
+
+#######################################
+# Core Ignore Function Tests
+#######################################
+
+class TestIgnoreCoreFunctions:
+
+    def test_add_pattern_to_new_gitignore_core(self, tmp_path: Path):
+        """Core: Add pattern when .gitignore does not exist."""
+        repo_dir = tmp_path / "repo_for_ignore_new"
+        repo_dir.mkdir()
+        gitignore_path = repo_dir / ".gitignore"
+
+        pattern = "*.log"
+        result = add_pattern_to_gitignore(str(repo_dir), pattern)
+
+        assert result['status'] == 'success'
+        assert result['message'] == f"Pattern '{pattern}' added to .gitignore."
+        assert gitignore_path.exists()
+        assert gitignore_path.read_text() == f"{pattern}\n"
+
+    def test_add_pattern_to_existing_gitignore_core(self, tmp_path: Path):
+        """Core: Add pattern to an existing .gitignore."""
+        repo_dir = tmp_path / "repo_for_ignore_existing"
+        repo_dir.mkdir()
+        gitignore_path = repo_dir / ".gitignore"
+        existing_pattern = "node_modules/"
+        gitignore_path.write_text(f"{existing_pattern}\n")
+
+        new_pattern = "*.tmp"
+        result = add_pattern_to_gitignore(str(repo_dir), new_pattern)
+
+        assert result['status'] == 'success'
+        assert result['message'] == f"Pattern '{new_pattern}' added to .gitignore."
+        content = gitignore_path.read_text()
+        assert f"{existing_pattern}\n" in content
+        assert f"{new_pattern}\n" in content
+
+    def test_add_duplicate_pattern_core(self, tmp_path: Path):
+        """Core: Add a pattern that already exists."""
+        repo_dir = tmp_path / "repo_for_ignore_duplicate"
+        repo_dir.mkdir()
+        gitignore_path = repo_dir / ".gitignore"
+        pattern = "*.log"
+        gitignore_path.write_text(f"{pattern}\n")
+
+        result = add_pattern_to_gitignore(str(repo_dir), pattern)
+        assert result['status'] == 'exists'
+        assert result['message'] == f"Pattern '{pattern}' already exists in .gitignore."
+        assert gitignore_path.read_text() == f"{pattern}\n" # Unchanged
+
+    def test_add_pattern_strips_whitespace_core(self, tmp_path: Path):
+        """Core: Added pattern should be stripped of whitespace."""
+        repo_dir = tmp_path / "repo_for_ignore_strip"
+        repo_dir.mkdir()
+        gitignore_path = repo_dir / ".gitignore"
+
+        pattern_with_space = "  *.cache  "
+        stripped_pattern = "*.cache"
+        result = add_pattern_to_gitignore(str(repo_dir), pattern_with_space)
+
+        assert result['status'] == 'success'
+        assert result['message'] == f"Pattern '{stripped_pattern}' added to .gitignore."
+        assert gitignore_path.read_text() == f"{stripped_pattern}\n"
+
+    def test_add_empty_pattern_core(self, tmp_path: Path):
+        """Core: Attempting to add an empty or whitespace-only pattern."""
+        repo_dir = tmp_path / "repo_for_ignore_empty"
+        repo_dir.mkdir()
+
+        result_empty = add_pattern_to_gitignore(str(repo_dir), "")
+        assert result_empty['status'] == 'error'
+        assert result_empty['message'] == 'Pattern cannot be empty.'
+
+        result_whitespace = add_pattern_to_gitignore(str(repo_dir), "   ")
+        assert result_whitespace['status'] == 'error'
+        assert result_whitespace['message'] == 'Pattern cannot be empty.'
+
+    def test_add_pattern_to_file_without_trailing_newline_core(self, tmp_path: Path):
+        """Core: Add pattern to .gitignore that doesn't end with a newline."""
+        repo_dir = tmp_path / "repo_for_ignore_no_newline"
+        repo_dir.mkdir()
+        gitignore_path = repo_dir / ".gitignore"
+        gitignore_path.write_text("pattern1") # No trailing newline
+
+        pattern2 = "pattern2"
+        result = add_pattern_to_gitignore(str(repo_dir), pattern2)
+        assert result['status'] == 'success'
+        assert gitignore_path.read_text() == f"pattern1\n{pattern2}\n"
+
+    def test_list_existing_gitignore_core(self, tmp_path: Path):
+        """Core: List patterns from an existing .gitignore."""
+        repo_dir = tmp_path / "repo_for_list_existing"
+        repo_dir.mkdir()
+        gitignore_path = repo_dir / ".gitignore"
+        patterns = ["*.log", "build/", "", "  # comment  ", "dist"]
+        gitignore_path.write_text("\n".join(patterns) + "\n")
+
+        result = list_gitignore_patterns(str(repo_dir))
+        assert result['status'] == 'success'
+        # Core function filters out empty lines and comments if they become empty after strip
+        expected_patterns = ["*.log", "build/", "# comment", "dist"]
+        assert result['patterns'] == expected_patterns
+        assert result['message'] == 'Successfully retrieved patterns.'
+
+    def test_list_non_existent_gitignore_core(self, tmp_path: Path):
+        """Core: List patterns when .gitignore does not exist."""
+        repo_dir = tmp_path / "repo_for_list_non_existent"
+        repo_dir.mkdir()
+
+        result = list_gitignore_patterns(str(repo_dir))
+        assert result['status'] == 'not_found'
+        assert result['patterns'] == []
+        assert result['message'] == '.gitignore file not found.'
+
+    def test_list_empty_gitignore_core(self, tmp_path: Path):
+        """Core: List patterns from an empty .gitignore."""
+        repo_dir = tmp_path / "repo_for_list_empty"
+        repo_dir.mkdir()
+        gitignore_path = repo_dir / ".gitignore"
+        gitignore_path.touch() # Create empty file
+
+        result = list_gitignore_patterns(str(repo_dir))
+        assert result['status'] == 'empty'
+        assert result['patterns'] == []
+        assert result['message'] == '.gitignore is empty.'
+
+    def test_list_gitignore_with_only_whitespace_core(self, tmp_path: Path):
+        """Core: List patterns from .gitignore with only whitespace/blank lines."""
+        repo_dir = tmp_path / "repo_for_list_whitespace"
+        repo_dir.mkdir()
+        gitignore_path = repo_dir / ".gitignore"
+        gitignore_path.write_text("\n   \n\t\n  \n")
+
+        result = list_gitignore_patterns(str(repo_dir))
+        assert result['status'] == 'empty' # Core function strips lines, resulting in no actual patterns
+        assert result['patterns'] == []
+        assert result['message'] == '.gitignore is empty.'

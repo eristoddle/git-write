@@ -33,7 +33,7 @@ Status: **Pending**
 
 ### Task 1.2 - Agent_CLI_Dev: Refactor `init` and `ignore` commands
 Objective: Move the logic for the `init` and `ignore` commands into the new core library and update the CLI and tests.
-Status: **Pending**
+Status: **Completed**
 
 1.  **`init` command:**
     - Create a function `initialize_repository(path)` in `gitwrite_core/repository.py`.

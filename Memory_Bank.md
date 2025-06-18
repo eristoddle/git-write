@@ -49,3 +49,24 @@ None.
 
 **Next Steps (Optional):**
 Proceed with Phase 1, Task 1.2, which involves moving the first piece of logic (e.g., repository initialization or status checking) into the new `gitwrite_core` library.
+---
+**Agent:** Implementation Agent (Jules)
+**Task Reference:** Implementation Plan: Core Logic Refactoring, Phase 1, Task 1.2: Refactor `init` and `ignore` commands
+**Summary:** Completed the refactoring of `init` and `ignore` commands. Core logic was moved from `gitwrite_cli/main.py` to new functions in `gitwrite_core/repository.py`. CLI commands were updated to be thin wrappers. Tests were refactored into unit tests for core logic and integration tests for CLI interaction.
+**Details:**
+ - **`init` command:**
+   - Logic moved to `gitwrite_core.repository.initialize_repository(path_str, project_name=None)`.
+   - CLI `init` command now calls this core function and handles output.
+   - Tests refactored: `TestInitializeRepositoryCore` for unit tests, `TestGitWriteInit` for CLI integration.
+ - **`ignore` command (add & list):**
+   - Logic for `add` moved to `gitwrite_core.repository.add_pattern_to_gitignore(repo_path_str, pattern)`.
+   - Logic for `list` moved to `gitwrite_core.repository.list_gitignore_patterns(repo_path_str)`.
+   - CLI `ignore add` and `ignore list` commands call these core functions.
+   - Tests refactored: `TestIgnoreCoreFunctions` for unit tests, existing CLI tests adapted for integration.
+**Output/Result:**
+ - `gitwrite_core/repository.py` now contains `initialize_repository`, `add_pattern_to_gitignore`, and `list_gitignore_patterns`.
+ - `gitwrite_cli/main.py` `init`, `ignore add`, `ignore list` commands are wrappers.
+ - `tests/test_main.py` updated with new unit test classes (`TestInitializeRepositoryCore`, `TestIgnoreCoreFunctions`) and refactored CLI tests.
+**Status:** Completed
+**Issues/Blockers:** None.
+**Next Steps (Optional):** Proceed with Phase 2, Task 2.1: Refactor `tag` Command.
