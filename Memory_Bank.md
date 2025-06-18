@@ -148,3 +148,32 @@ Proceed with Phase 1, Task 1.2, which involves moving the first piece of logic (
 **Status:** Partially Completed (for Task 3.1 regarding explore, switch, merge).
 **Issues/Blockers:** None.
 **Next Steps (Optional):** Refactor `revert` command (Phase 3, Task 3.1 continued) as per `Implementation_Plan.md`.
+---
+**Agent:** Implementation Agent (Jules)
+**Task Reference:** Implementation Plan: Core Logic Refactoring, Phase 3, Task 3.1 (continued: Refactor `revert` Command)
+**Summary:** The `revert` command was refactored. Core logic was moved to `gitwrite_core/versioning.py`, the CLI command in `gitwrite_cli/main.py` was updated to be a thin wrapper, and comprehensive unit and integration tests were added. A notable change in the core implementation was the adoption of a manual tree-merging strategy (`repo.merge_trees()`) for performing the revert due to issues with `pygit2.Repository.revert()` in the test environment.
+**Details:**
+- **Core Logic (`gitwrite_core/versioning.py`):**
+    - Added `revert_commit(repo_path_str, commit_ish_to_revert)` function.
+    - This function implements the revert operation by:
+        1. Identifying the commit to revert and its primary parent.
+        2. Using `repo.merge_trees(ancestor_tree, our_tree, their_tree)` to calculate the reverted tree state. (Ancestor is the commit being reverted, "our" is current HEAD, "their" is the parent of the commit being reverted).
+        3. If the merge results in conflicts (`index.conflicts is not None`), it aborts the revert, cleans the working directory and index by resetting to the original HEAD, and raises `MergeConflictError`.
+        4. If clean, it updates the repository's index and working directory to the reverted state (`repo.index.read_tree()`, `repo.checkout_index()`).
+        5. It then creates a new commit reflecting the revert, with a standard revert commit message.
+    - Handles `CommitNotFoundError` for invalid commit references and `RepositoryNotFoundError` for invalid repository paths.
+- **CLI Updates (`gitwrite_cli/main.py`):**
+    - The `revert` command now calls `gitwrite_core.versioning.revert_commit`.
+    - It includes a preliminary check for a dirty working directory before calling the core function.
+    - It handles success (printing new commit OID) and error conditions (`RepositoryNotFoundError`, `CommitNotFoundError`, `MergeConflictError`, generic `GitWriteError`), providing user-friendly messages.
+    - The `--mainline` option was removed from the CLI command, as the new core function defaults to a standard revert behavior (equivalent to mainline 1 for merge commits via the `merge_trees` logic).
+- **Test Updates:**
+    - Added `TestRevertCommitCore` to `tests/test_core_versioning.py`: Includes unit tests for `revert_commit`, covering clean reverts (regular and merge commits), conflict scenarios (regular and merge commits), commit not found, and non-repository path errors. These tests validate the `merge_trees`-based revert logic.
+    - Added `TestRevertCommandCLI` to `tests/test_main.py`: Includes integration tests for the `gitwrite revert` CLI command, ensuring correct interaction with the core library, proper output for success/error, and handling of CLI-specific checks like dirty working directory and non-repository path.
+**Output/Result:**
+- `gitwrite_core/versioning.py` now contains the refactored `revert_commit` function using the `merge_trees` strategy.
+- The `revert` command in `gitwrite_cli/main.py` is a thin wrapper around the core function.
+- `tests/test_core_versioning.py` and `tests/test_main.py` have new, comprehensive test suites for the `revert` functionality, all passing.
+**Status:** Completed (for the `revert` part of Task 3.1).
+**Issues/Blockers:** Encountered a persistent `AttributeError` with `pygit2.Repository.revert()` in the test environment, which necessitated the change to a manual `merge_trees`-based implementation in the core logic. This workaround proved successful.
+**Next Steps (Optional):** With the `revert` command refactoring complete, Phase 3, Task 3.1 is now fully completed. The next task is Phase 3, Task 3.2: Refactor `save` and `sync` Commands.

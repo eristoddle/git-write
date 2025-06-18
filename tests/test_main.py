@@ -3603,3 +3603,187 @@ class TestMergeCommandCLI:
         result = runner.invoke(cli, ["merge", "feature"])
         assert result.exit_code == 0, f"CLI Error: {result.output}"
         assert "Error: User signature (user.name and user.email) not configured in Git." in result.output
+
+
+class TestRevertCommandCLI:
+    # Helper to get a clean repo for each revert test, similar to local_repo but may be specialized
+    @pytest.fixture
+    def revert_test_repo(self, tmp_path):
+        repo_path = tmp_path / "revert_cli_test_repo"
+        if repo_path.exists():
+            shutil.rmtree(repo_path)
+        repo_path.mkdir()
+        repo = pygit2.init_repository(str(repo_path), bare=False)
+
+        # Configure user for commits
+        config = repo.config
+        config["user.name"] = "Revert Test User"
+        config["user.email"] = "revert_test@example.com"
+
+        # Initial commit
+        make_commit(repo, "file1.txt", "Initial content for file1", "C1: Initial commit")
+        return repo
+
+    def test_cli_revert_successful_clean(self, runner, revert_test_repo):
+        repo = revert_test_repo
+        os.chdir(repo.workdir)
+
+        c1_hash = repo.head.target
+        # c1_tree_id = repo[c1_hash].tree.id # Not used
+
+        # Make a second commit (C2)
+        make_commit(repo, "file2.txt", "Content for file2", "C2: Add file2.txt")
+        c2_hash = repo.head.target
+        # c2_short_hash = str(c2_hash)[:7] # Not used directly for assertion
+
+        # Make a third commit (C3) on top, so we revert C2 which is not HEAD
+        make_commit(repo, "file1.txt", "Updated content for file1 in C3", "C3: Modify file1.txt")
+        c3_hash = repo.head.target
+
+        # Revert C2
+        result = runner.invoke(cli, ["revert", str(c2_hash)])
+        assert result.exit_code == 0, f"CLI Error: {result.output}"
+
+        # Check CLI output messages (updated based on Step 2)
+        # Message from CLI: "Successfully reverted commit '{commit_ish}'. New commit: {result['new_commit_oid']}"
+        # Message from core: result['message'] = "Commit reverted successfully."
+        # So CLI output is: "Commit reverted successfully. (Original: '{commit_ish}')"
+        # Let's use a regex or partial match for the original commit_ish part.
+        assert "Commit reverted successfully." in result.output
+        assert f"(Original: '{str(c2_hash)}')" in result.output or f"(Original: '{str(c2_hash)[:7]}')" in result.output
+        assert "New commit: " in result.output
+
+        revert_commit_short_hash_from_output = result.output.strip().split("New commit: ")[-1][:7]
+        revert_commit = repo.revparse_single(revert_commit_short_hash_from_output)
+        assert revert_commit is not None
+        assert repo.head.target == revert_commit.id
+
+        original_c2_commit = repo.get(c2_hash)
+        expected_revert_msg_start = f"Revert \"{original_c2_commit.message.splitlines()[0]}\""
+        assert revert_commit.message.startswith(expected_revert_msg_start)
+
+        assert not (Path(repo.workdir) / "file2.txt").exists()
+        assert (Path(repo.workdir) / "file1.txt").read_text() == "Updated content for file1 in C3"
+
+        assert "file2.txt" not in revert_commit.tree
+        assert revert_commit.tree["file1.txt"].id == repo.get(c3_hash).tree["file1.txt"].id
+
+
+    def test_cli_revert_commit_not_found(self, runner, revert_test_repo):
+        repo = revert_test_repo
+        os.chdir(repo.workdir)
+
+        non_existent_sha = "abcdef1234567890abcdef1234567890abcdef12"
+        result = runner.invoke(cli, ["revert", non_existent_sha])
+
+        assert result.exit_code == 1, f"Expected non-zero exit code. Output: {result.output}"
+        assert f"Error: Commit '{non_existent_sha}' not found or is not a valid commit reference." in result.output
+
+    def test_cli_revert_on_non_repository(self, runner, tmp_path):
+        non_repo_dir = tmp_path / "non_repo_for_revert_cli"
+        non_repo_dir.mkdir()
+        os.chdir(non_repo_dir)
+
+        result = runner.invoke(cli, ["revert", "HEAD"]) # SHA doesn't matter here
+        assert result.exit_code == 1, f"Expected non-zero exit code. Output: {result.output}"
+        assert "Error: Current directory is not a Git repository or no repository found." in result.output
+
+    def test_cli_revert_dirty_working_directory(self, runner, revert_test_repo):
+        repo = revert_test_repo
+        os.chdir(repo.workdir)
+
+        make_commit(repo, "file_for_revert.txt", "content v1", "C2: File to revert")
+        c2_hash_to_revert = repo.head.target
+
+        make_commit(repo, "other_file.txt", "content v3", "C3: Another commit")
+        c3_head_hash = repo.head.target
+
+
+        (Path(repo.workdir) / "file1.txt").write_text("This is now dirty content.")
+
+        result = runner.invoke(cli, ["revert", str(c2_hash_to_revert)])
+        assert result.exit_code == 1, f"Expected non-zero exit code for dirty workdir. Output: {result.output}"
+        assert "Error: Your working directory or index has uncommitted changes." in result.output
+        assert "Please commit or stash them before attempting to revert." in result.output
+
+        assert repo.head.target == c3_head_hash
+        assert (Path(repo.workdir) / "file1.txt").read_text() == "This is now dirty content."
+
+
+    def test_cli_revert_results_in_conflict(self, runner, tmp_path):
+        # Fresh repo setup for this specific conflict test to avoid fixture complexities
+        repo_path = tmp_path / "revert_conflict_cli_repo"
+        repo_path.mkdir()
+        os.chdir(repo_path)
+        repo = pygit2.init_repository(str(repo_path))
+        config = repo.config
+        config["user.name"] = "Revert Conflict CLI User"
+        config["user.email"] = "revert_conflict_cli@example.com"
+
+        # C1
+        make_commit(repo, "file_c.txt", "line1\nline2\nline3", "C1: Base for conflict")
+
+        # C2: Modify line2
+        make_commit(repo, "file_c.txt", "line1\nMODIFIED_BY_C2\nline3", "C2: Modify line2")
+        c2_hash_to_revert = repo.head.target
+
+        # C3: Modify line2 again (conflicting with C2's change relative to C1)
+        make_commit(repo, "file_c.txt", "line1\nMODIFIED_BY_C3\nline3", "C3: Modify line2 again")
+        c3_hash_original_head = repo.head.target
+
+        result = runner.invoke(cli, ["revert", str(c2_hash_to_revert)])
+        assert result.exit_code == 1, f"Expected non-zero exit code for conflict. Output: {result.output}"
+
+        assert f"Error: Reverting commit '{str(c2_hash_to_revert)}' resulted in conflicts." in result.output
+        assert "Revert resulted in conflicts. The revert has been aborted and the working directory is clean." in result.output
+
+        assert repo.head.target == c3_hash_original_head
+        status = repo.status()
+        assert not status, f"Repository should be clean after failed revert, but status is: {status}"
+        assert (Path(repo.workdir) / "file_c.txt").read_text() == "line1\nMODIFIED_BY_C3\nline3"
+
+
+    def test_cli_revert_merge_commit_clean(self, runner, revert_test_repo):
+        repo = revert_test_repo # Starts with C1: file1.txt
+        os.chdir(repo.workdir)
+        sig = repo.default_signature
+
+        c1_main_hash = repo.head.target
+        make_commit(repo, "main_branch_file.txt", "Content on main", "C1.5: Main branch commit")
+        c1_5_main_hash = repo.head.target
+
+        repo.create_branch("feature_branch_cli", repo.get(c1_5_main_hash))
+        repo.checkout("refs/heads/feature_branch_cli")
+        make_commit(repo, "feature_file.txt", "Feature content", "C2F: Commit on feature_branch_cli")
+        c2_feature_hash = repo.head.target
+
+        main_branch_name = "main" if "main" in repo.branches else "master"
+        repo.checkout(repo.branches[main_branch_name].name)
+        make_commit(repo, "main_branch_file.txt", "Content on main updated further", "C3M: Another commit on main")
+        c3_main_hash = repo.head.target
+
+        repo.merge(c2_feature_hash)
+        tree_merge = repo.index.write_tree()
+        merge_commit_message = "C4Merge: Merge feature_branch_cli into main"
+        c4_merge_hash = repo.create_commit("HEAD", sig, sig, merge_commit_message, tree_merge, [c3_main_hash, c2_feature_hash])
+        repo.state_cleanup()
+
+        assert (Path(repo.workdir) / "feature_file.txt").exists()
+
+        result = runner.invoke(cli, ["revert", str(c4_merge_hash)])
+        assert result.exit_code == 0, f"CLI Error for clean merge revert: {result.output}"
+
+        assert "Commit reverted successfully." in result.output
+        assert f"(Original: '{str(c4_merge_hash)}')" in result.output or f"(Original: '{str(c4_merge_hash)[:7]}')" in result.output
+        assert "New commit: " in result.output
+
+        revert_commit_obj = repo.get(repo.head.target)
+        expected_revert_msg_start = f"Revert \"{merge_commit_message}\""
+        assert revert_commit_obj.message.startswith(expected_revert_msg_start)
+
+        assert not (Path(repo.workdir) / "feature_file.txt").exists()
+        assert (Path(repo.workdir) / "main_branch_file.txt").read_text() == "Content on main updated further"
+        status = repo.status()
+        assert not status, f"Repository should be clean after reverting merge, but status is: {status}"
+
+# End of TestRevertCommandCLI class

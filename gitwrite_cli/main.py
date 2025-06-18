@@ -10,7 +10,7 @@ from rich.console import Console
 from rich.panel import Panel
 from gitwrite_core.repository import initialize_repository, add_pattern_to_gitignore, list_gitignore_patterns # Added import
 from gitwrite_core.tagging import create_tag
-from gitwrite_core.versioning import get_commit_history, get_diff
+from gitwrite_core.versioning import get_commit_history, get_diff, revert_commit # Added revert_commit
 from gitwrite_core.branching import ( # Updated for merge
     create_and_switch_branch,
     list_branches,
@@ -824,143 +824,78 @@ def sync(remote_name, branch_name_opt):
 
 
 @cli.command()
-@click.argument("commit_ref")
+@click.argument("commit_ish")
 @click.pass_context
-@click.option("-m", "--mainline", "mainline_option", type=int, default=None, help="For merge commits, the parent number (1-indexed) to revert towards.")
-def revert(ctx, commit_ref, mainline_option):
-    """Reverts a commit.
+def revert(ctx, commit_ish):
+    """Reverts a specified commit.
 
-    <commit_ref> is the commit reference (e.g., commit hash, branch name, HEAD) to revert.
-    For merge commits, use --mainline to specify the parent (e.g., 1 or 2).
+    <commit_ish> is the commit reference (e.g., commit hash, branch name, HEAD) to revert.
+    If the revert results in conflicts, the operation is aborted, and the working directory
+    is kept clean.
     """
     try:
-        repo_path_str = pygit2.discover_repository(str(Path.cwd()))
-        if repo_path_str is None:
-            ctx.fail("Error: Not a Git repository (or any of the parent directories).")
-        repo = pygit2.Repository(repo_path_str)
-    except pygit2.GitError as e:
-        ctx.fail(f"Error initializing repository: {e}")
+        repo_path_str_cli = str(Path.cwd())
 
-    if repo.is_bare:
-        ctx.fail("Error: Cannot revert in a bare repository.")
+        # Explicitly check discovery before Repository() constructor
+        discovered_path_cli = pygit2.discover_repository(repo_path_str_cli)
+        if discovered_path_cli is None:
+            click.secho("Error: Current directory is not a Git repository or no repository found.", fg="red")
+            ctx.exit(1)
+            return # Should not be reached due to ctx.exit(1)
 
-    try:
-        commit_to_revert_obj_revert = repo.revparse_single(commit_ref)
-        if commit_to_revert_obj_revert.type != pygit2.GIT_OBJECT_COMMIT:
-            ctx.fail(f"Error: '{commit_ref}' does not resolve to a commit.")
-        commit_to_revert = commit_to_revert_obj_revert.peel(pygit2.Commit)
-        click.echo(f"Attempting to revert commit: {commit_to_revert.short_id} ('{commit_to_revert.message.strip().splitlines()[0]}')")
+        # Now that we know a repo path was discovered, proceed with checks
+        repo_for_checks_cli = pygit2.Repository(discovered_path_cli)
 
-    except (KeyError, pygit2.GitError):
-        ctx.fail(f"Error: Invalid or ambiguous commit reference '{commit_ref}'.")
-    except Exception as e:
-        ctx.fail(f"Error resolving commit '{commit_ref}': {e}")
+        if repo_for_checks_cli.is_bare:
+            click.secho("Error: Cannot revert in a bare repository.", fg="red")
+            ctx.exit(1)
+            return
 
-    status_revert = repo.status()
-    is_dirty = False
-    for _filepath_revert, flags_revert in status_revert.items():
-        if flags_revert != pygit2.GIT_STATUS_CURRENT:
-            if flags_revert & pygit2.GIT_STATUS_WT_NEW and not (flags_revert & pygit2.GIT_STATUS_INDEX_NEW):
-                continue
-            is_dirty = True
-            break
+        status_flags_check = repo_for_checks_cli.status()
+        is_dirty = False
+        for _filepath, flags in status_flags_check.items():
+            # Check for any uncommitted changes in worktree or index, excluding untracked files
+            # (as revert itself doesn't typically care about untracked files unless they conflict)
+            if (flags != pygit2.GIT_STATUS_CURRENT and
+                not (flags & pygit2.GIT_STATUS_WT_NEW and not (flags & pygit2.GIT_STATUS_INDEX_NEW))): # Exclude untracked files that are not in index
+                is_dirty = True
+                break
+        if is_dirty:
+            click.secho("Error: Your working directory or index has uncommitted changes.", fg="red")
+            click.secho("Please commit or stash them before attempting to revert.", fg="yellow")
+            ctx.exit(1)
+            return
+        del repo_for_checks_cli # clean up temporary repo object
 
-    if is_dirty:
-        ctx.fail("Error: Your working directory or index has uncommitted changes.\nPlease commit or stash them before attempting to revert.")
+        # Call the core function using the initially determined repo_path_str_cli,
+        # as core function also does its own discovery.
+        result = revert_commit(repo_path_str=repo_path_str_cli, commit_ish_to_revert=commit_ish)
 
-    is_merge_commit = len(commit_to_revert.parents) > 1
+        click.echo(click.style(f"{result['message']} (Original: '{commit_ish}')", fg="green"))
+        click.echo(f"New commit: {result['new_commit_oid']}")
 
-    if is_merge_commit:
-        ctx.fail(
-            f"Error: Commit '{commit_to_revert.short_id}' is a merge commit. "
-            "Reverting merge commits with specific mainline parent selection to only update the "
-            "working directory/index (before creating a commit) is not supported with the current "
-            "underlying library (pygit2.Repository.revert()). "
-            "Consider reverting using standard git commands or a different tool for this specific operation."
-        )
-    elif mainline_option is not None:
-        click.echo(f"Warning: Commit {commit_to_revert.short_id} is not a merge commit. The --mainline option will be ignored.", fg="yellow")
-
-    try:
-        repo.revert(commit_to_revert)
-        click.echo(f"Index updated to reflect revert of commit {commit_to_revert.short_id}.")
-
-    except pygit2.GitError as e:
-        error_message_detail = str(e)
-        custom_error_message = (
-            f"Error during revert operation: {error_message_detail}\nThis might be due to complex changes that "
-            "cannot be automatically reverted or unresolved conflicts."
-        )
-        if "takes 1 positional argument but 2 were given" in error_message_detail or \
-           "takes at most 1 positional argument" in error_message_detail or \
-           "unexpected keyword argument" in error_message_detail:
-            custom_error_message = (
-                f"Error during revert operation: {error_message_detail}.\n"
-                "This indicates an issue with how pygit2's Repository.revert() handles arguments for mainline parent selection (if at all for index-only reverts)."
-            )
-
-        has_conflicts_after_error_revert = False
-        if repo.index.conflicts is not None:
-            try:
-                next(iter(repo.index.conflicts))
-                has_conflicts_after_error_revert = True
-            except StopIteration:
-                pass
-        if has_conflicts_after_error_revert:
-            custom_error_message += "\nConflicts were detected in the index. Please resolve them and then commit."
-        ctx.fail(custom_error_message)
-    except Exception as e:
-        ctx.fail(f"An unexpected error occurred during revert: {e}")
-
-    has_conflicts_revert_check = False
-    if repo.index.conflicts is not None:
-        try:
-            next(iter(repo.index.conflicts))
-            has_conflicts_revert_check = True
-        except StopIteration:
-            pass
-
-    if has_conflicts_revert_check:
-        click.echo("Conflicts detected after revert. Automatic commit aborted.", err=True)
-        click.echo("Please resolve the conflicts manually and then commit the changes using 'gitwrite save'.", err=True)
-        click.echo("Conflicting files:", err=True)
-        if repo.index.conflicts:
-            for conflict_entries_tuple_iter_revert in repo.index.conflicts:
-                our_entry_revert = conflict_entries_tuple_iter_revert[1]
-                their_entry_revert = conflict_entries_tuple_iter_revert[2]
-                path_to_print_revert = (our_entry_revert.path if our_entry_revert else
-                                 (their_entry_revert.path if their_entry_revert else "unknown_path"))
-                click.echo(f"  {path_to_print_revert}", err=True)
-        return
-    else:
-        click.echo("No conflicts detected. Proceeding to create revert commit.")
-        try:
-            try:
-                author_sig_revert = repo.default_signature
-                committer_sig_revert = repo.default_signature
-            except pygit2.GitError:
-                author_name_env_revert = os.environ.get("GIT_AUTHOR_NAME", "GitWrite User")
-                author_email_env_revert = os.environ.get("GIT_AUTHOR_EMAIL", "user@gitwrite.io")
-                author_sig_revert = Signature(author_name_env_revert, author_email_env_revert)
-                committer_sig_revert = author_sig_revert
-
-            original_message_first_line_revert = commit_to_revert.message.splitlines()[0]
-            revert_message_text = f"Revert \"{original_message_first_line_revert}\"\n\nThis reverts commit {commit_to_revert.id}."
-
-            if repo.head_is_unborn:
-                ctx.fail("Error: HEAD is unborn. Cannot create revert commit.")
-            parents_revert = [repo.head.target]
-            tree_oid_revert = repo.index.write_tree()
-            new_commit_oid_revert = repo.create_commit("HEAD", author_sig_revert, committer_sig_revert, revert_message_text, tree_oid_revert, parents_revert)
-            reverted_commit_short_id_display = commit_to_revert.short_id
-            new_commit_short_id_display = str(new_commit_oid_revert)[:7]
-            click.echo(f"Successfully reverted commit {reverted_commit_short_id_display}. New commit: {new_commit_short_id_display}")
-            repo.state_cleanup()
-        except pygit2.GitError as e:
-            ctx.fail(f"Error creating revert commit: {e}\nYour working directory might contain the reverted changes, but the commit failed.\nYou may need to manually commit using 'gitwrite save'.")
-        except Exception as e:
-            ctx.fail(f"An unexpected error occurred during revert commit creation: {e}")
-
+    except RepositoryNotFoundError: # This will be caught if core function fails discovery
+        click.secho("Error: Current directory is not a Git repository or no repository found.", fg="red")
+        ctx.exit(1)
+    except CommitNotFoundError: # From core function
+        click.secho(f"Error: Commit '{commit_ish}' not found or is not a valid commit reference.", fg="red")
+        ctx.exit(1)
+    except MergeConflictError as e:
+        # The core function's error message for MergeConflictError is:
+        # "Revert resulted in conflicts. The revert has been aborted and the working directory is clean."
+        click.secho(f"Error: Reverting commit '{commit_ish}' resulted in conflicts.", fg="red")
+        click.secho(str(e), fg="red") # This will print the detailed message from the core function.
+        # No need for further instructions to resolve manually if the core function aborted.
+        ctx.exit(1)
+    except GitWriteError as e: # Catch other specific errors from gitwrite_core
+        click.secho(f"Error during revert: {e}", fg="red")
+        ctx.exit(1)
+    except pygit2.GitError as e: # Catch pygit2 errors that might occur before core logic (e.g. status check)
+        click.secho(f"A Git operation failed: {e}", fg="red")
+        ctx.exit(1)
+    except Exception as e: # Generic catch-all for unexpected issues
+        click.secho(f"An unexpected error occurred: {e}", fg="red")
+        ctx.exit(1)
 
 @cli.group()
 def tag():

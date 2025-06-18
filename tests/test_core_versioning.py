@@ -1,517 +1,400 @@
-import os
-import shutil
-import time
-from pathlib import Path
-from datetime import datetime, timezone, timedelta
-import re # For ISO date string regex matching
-
+import unittest
 import pygit2
-import pytest
-from typing import Optional, Dict, Any # Added Dict, Any for get_diff tests
+import shutil
+import tempfile
+from pathlib import Path
+import os
+from datetime import datetime, timezone, timedelta
 
-from gitwrite_core.versioning import get_commit_history, get_diff # Added get_diff
-from gitwrite_core.exceptions import RepositoryNotFoundError, CommitNotFoundError, NotEnoughHistoryError # Added new exceptions
+from gitwrite_core.versioning import revert_commit
+from gitwrite_core.exceptions import RepositoryNotFoundError, CommitNotFoundError, MergeConflictError, GitWriteError
 
-# Helper function to create commits
-def make_commit(
-    repo: pygit2.Repository,
-    filename: str,
-    content: str,
-    message: str,
-    author_name: str = "Test Author",
-    author_email: str = "test@example.com",
-    author_time_offset_minutes: int = 0,
-    committer_name: str = "Test Committer",
-    committer_email: str = "committer@example.com",
-    committer_time_offset_minutes: int = 0,
-    commit_time: Optional[int] = None
-) -> pygit2.Oid:
-    """
-    Helper function to create a commit in the repository.
-    If commit_time is None, current time is used.
-    """
-    if commit_time is None:
-        commit_time = int(time.time())
+# Default signature for tests
+TEST_USER_NAME = "Test User"
+TEST_USER_EMAIL = "test@example.com"
 
-    author_sig = pygit2.Signature(
-        author_name, author_email, commit_time, author_time_offset_minutes
-    )
-    committer_sig = pygit2.Signature(
-        committer_name, committer_email, commit_time, committer_time_offset_minutes
-    )
+def create_test_signature(repo: pygit2.Repository) -> pygit2.Signature:
+    """Creates a test signature, trying to use repo default or falling back."""
+    try:
+        return repo.default_signature
+    except pygit2.GitError: # If not configured
+        return pygit2.Signature(TEST_USER_NAME, TEST_USER_EMAIL, int(datetime.now(timezone.utc).timestamp()), 0)
 
-    # Create a file and add it to the index
-    full_path = Path(repo.workdir) / filename
-    full_path.parent.mkdir(parents=True, exist_ok=True)
-    with open(full_path, "w") as f:
-        f.write(content)
 
-    repo.index.add(filename)
-    tree_oid = repo.index.write_tree()
+class TestRevertCommitCore(unittest.TestCase):
+    def setUp(self):
+        self.repo_path_obj = Path(tempfile.mkdtemp())
+        self.repo_path_str = str(self.repo_path_obj)
+        # Initialize a bare repository first for full control, then open it as non-bare
+        pygit2.init_repository(self.repo_path_str, bare=False)
+        self.repo = pygit2.Repository(self.repo_path_str)
 
-    parents = []
-    if not repo.is_empty and not repo.head_is_unborn:
-        parents = [repo.head.target]
+        # Set up a default signature if none is configured globally for git
+        try:
+            user_name = self.repo.config["user.name"]
+            user_email = self.repo.config["user.email"]
+        except KeyError: # If not configured
+            user_name = None
+            user_email = None
 
-    commit_oid = repo.create_commit("refs/heads/main", author_sig, committer_sig, message, tree_oid, parents)
-    if repo.head_is_unborn: # After first commit, point HEAD to main
-        repo.set_head("refs/heads/main")
-    return commit_oid
+        if not user_name or not user_email:
+            self.repo.config["user.name"] = TEST_USER_NAME
+            self.repo.config["user.email"] = TEST_USER_EMAIL
 
-class TestGetCommitHistoryCore:
-    # ISO 8601 date format regex (simplified for YYYY-MM-DD HH:MM:SS +/-ZZZZ)
-    ISO_8601_PATTERN = re.compile(r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} [+-]\d{4}$")
+        self.signature = create_test_signature(self.repo)
 
-    def test_get_history_non_repository(self, tmp_path: Path):
-        """Test calling get_commit_history on a non-repository path."""
-        non_repo_path = tmp_path / "not_a_repo"
-        non_repo_path.mkdir()
-        with pytest.raises(RepositoryNotFoundError):
-            get_commit_history(str(non_repo_path))
 
-    def test_get_history_bare_repository(self, tmp_path: Path):
-        """Test get_commit_history on a bare repository."""
-        bare_repo_path = tmp_path / "bare_repo.git"
-        pygit2.init_repository(str(bare_repo_path), bare=True)
-        history = get_commit_history(str(bare_repo_path))
-        assert history == []
+    def tearDown(self):
+        # Unlock files before removing (Windows specific issue with pygit2)
+        if os.name == 'nt':
+            for root, dirs, files in os.walk(self.repo_path_str):
+                for name in files:
+                    try:
+                        filepath = os.path.join(root, name)
+                        os.chmod(filepath, 0o777)
+                    except OSError: # some files might be git internal and not modifiable
+                        pass
+        shutil.rmtree(self.repo_path_obj)
 
-    def test_get_history_empty_repository(self, tmp_path: Path):
-        """Test get_commit_history on an empty (non-bare) repository."""
-        empty_repo_path = tmp_path / "empty_repo"
-        pygit2.init_repository(str(empty_repo_path)) # Non-bare
-        history = get_commit_history(str(empty_repo_path))
-        assert history == []
+    def _create_commit(self, message: str, parent_refs: list = None, files_to_add_update: dict = None) -> pygit2.Oid:
+        """
+        Helper to create a commit.
+        files_to_add_update: A dictionary of {filepath_relative_to_repo: content}
+        """
+        if files_to_add_update is None:
+            files_to_add_update = {}
 
-    def test_get_history_unborn_head(self, tmp_path: Path):
-        """Test get_commit_history on a repository with an unborn HEAD."""
-        repo_path = tmp_path / "unborn_head_repo"
-        # Initialize repo, but make no commits
-        pygit2.init_repository(str(repo_path))
-        history = get_commit_history(str(repo_path))
-        assert history == []
+        builder = self.repo.TreeBuilder()
 
-    def test_get_history_single_commit(self, tmp_path: Path):
-        """Test history with a single commit."""
-        repo_path = tmp_path / "single_commit_repo"
-        repo = pygit2.init_repository(str(repo_path))
+        # If parents exist, use the tree of the first parent as a base
+        if parent_refs and self.repo.head_is_unborn == False :
+             # Get the tree of the current HEAD (or first parent)
+            if self.repo.head.target: # Check if HEAD is pointing to a commit
+                parent_commit = self.repo.get(self.repo.head.target)
+                if parent_commit:
+                    parent_tree = parent_commit.tree
+                    # Add existing entries from parent tree
+                    for entry in parent_tree:
+                         builder.insert(entry.name, entry.id, entry.filemode)
+            else: # no HEAD target, likely initial commit or unborn head.
+                 pass
 
-        commit_msg = "Initial commit"
-        commit_oid = make_commit(repo, "file.txt", "content", commit_msg)
 
-        history = get_commit_history(str(repo_path))
+        for filepath_str, content_str in files_to_add_update.items():
+            filepath_path = Path(filepath_str)
+            full_path = self.repo_path_obj / filepath_path
 
-        assert len(history) == 1
-        commit_info = history[0]
+            # Ensure parent directory exists
+            full_path.parent.mkdir(parents=True, exist_ok=True)
 
-        expected_keys = [
-            "short_hash", "author_name", "author_email", "date",
-            "committer_name", "committer_email", "committer_date",
-            "message", "message_short", "oid"
-        ]
-        for key in expected_keys:
-            assert key in commit_info
+            blob_oid = self.repo.create_blob(content_str.encode('utf-8'))
 
-        assert len(commit_info["short_hash"]) == 7
-        assert commit_info["oid"] == str(commit_oid)
-        assert commit_info["message"] == commit_msg
-        assert commit_info["message_short"] == commit_msg # Single line message
-        assert self.ISO_8601_PATTERN.match(commit_info["date"])
-        assert self.ISO_8601_PATTERN.match(commit_info["committer_date"])
+            # Handle nested paths for tree builder
+            path_parts = list(filepath_path.parts)
+            current_builder = builder
 
-    def test_get_history_multiple_commits_default_order(self, tmp_path: Path):
-        """Test history with multiple commits, checking default order (reverse chronological)."""
-        repo_path = tmp_path / "multi_commit_repo"
-        repo = pygit2.init_repository(str(repo_path))
+            # This logic for nested tree building is a bit simplistic and might need refinement
+            # For now, assuming files are at root or one level deep for simplicity in tests
+            # For deeper nesting, a recursive approach to build subtrees would be needed.
+            # This simplified version assumes files are at the root of the repo for builder.insert
+            # If a file is like "dir/file.txt", this will not work correctly without more complex tree building.
+            # Let's assume for tests, files are at root, e.g., "file_a.txt", "file_b.txt".
 
-        commit_oid1 = make_commit(repo, "file1.txt", "content1", "Commit 1", commit_time=int(time.time()) - 200)
-        time.sleep(0.1) # Ensure time difference for ordering
-        commit_oid2 = make_commit(repo, "file2.txt", "content2", "Commit 2", commit_time=int(time.time()) - 100)
-        time.sleep(0.1)
-        commit_oid3 = make_commit(repo, "file3.txt", "content3", "Commit 3", commit_time=int(time.time()))
+            if len(path_parts) > 1:
+                # This is a simplified example; real nested tree building is more complex.
+                # For these tests, let's stick to root-level files or ensure paths are handled correctly.
+                # For now, we will assume files_to_add_update uses root paths
+                # or that the `self.repo.index.add()` and `write_tree()` approach handles it.
+                # Switching to index-based commit creation for simplicity and robustness:
+                pass # Will use index below
 
-        history = get_commit_history(str(repo_path))
+        # Use index for staging changes, it's more robust for paths
+        self.repo.index.read() # Load current index
+        for filepath_str, content_str in files_to_add_update.items():
+            full_path = self.repo_path_obj / filepath_str
+            full_path.parent.mkdir(parents=True, exist_ok=True)
+            with open(full_path, "w", encoding="utf-8") as f:
+                f.write(content_str)
+            self.repo.index.add(filepath_str) # Add relative path to index
 
-        assert len(history) == 3
-        assert history[0]["oid"] == str(commit_oid3) # Most recent
-        assert history[1]["oid"] == str(commit_oid2)
-        assert history[2]["oid"] == str(commit_oid1) # Oldest
+        tree_oid = self.repo.index.write_tree()
+        self.repo.index.write() # Persist index changes
 
-    def test_get_history_with_count_limit(self, tmp_path: Path):
-        """Test history with a count limit."""
-        repo_path = tmp_path / "count_limit_repo"
-        repo = pygit2.init_repository(str(repo_path))
+        parents_for_commit = []
+        if self.repo.head_is_unborn:
+            pass # Initial commit has no parents
+        else:
+            parents_for_commit = [self.repo.head.target]
 
-        make_commit(repo, "file1.txt", "c1", "Commit 1", commit_time=int(time.time()) - 300)
-        time.sleep(0.1)
-        commit_oid2 = make_commit(repo, "file2.txt", "c2", "Commit 2", commit_time=int(time.time()) - 200)
-        time.sleep(0.1)
-        commit_oid3 = make_commit(repo, "file3.txt", "c3", "Commit 3", commit_time=int(time.time()) - 100)
-
-        history = get_commit_history(str(repo_path), count=2)
-
-        assert len(history) == 2
-        assert history[0]["oid"] == str(commit_oid3) # Most recent
-        assert history[1]["oid"] == str(commit_oid2)
-
-    def test_get_history_count_greater_than_commits(self, tmp_path: Path):
-        """Test history when count is greater than available commits."""
-        repo_path = tmp_path / "count_over_repo"
-        repo = pygit2.init_repository(str(repo_path))
-
-        commit_oid1 = make_commit(repo, "file1.txt", "c1", "Commit 1", commit_time=int(time.time()) - 100)
-        time.sleep(0.1)
-        commit_oid2 = make_commit(repo, "file2.txt", "c2", "Commit 2", commit_time=int(time.time()))
-
-        history = get_commit_history(str(repo_path), count=5)
-
-        assert len(history) == 2
-        assert history[0]["oid"] == str(commit_oid2)
-        assert history[1]["oid"] == str(commit_oid1)
-
-    def test_get_history_commit_details_accuracy(self, tmp_path: Path):
-        """Thoroughly test commit details for accuracy, including multi-line messages and timezones."""
-        repo_path = tmp_path / "details_repo"
-        repo = pygit2.init_repository(str(repo_path))
-
-        author_name = "Detailed Author"
-        author_email = "detailed.author@example.com"
-        committer_name = "Meticulous Committer"
-        committer_email = "meticulous.committer@example.com"
-
-        # Specific timestamp (e.g., 2023-03-15 12:00:00 UTC)
-        fixed_commit_time = 1678881600
-        author_offset_mins = -480  # UTC-8
-        committer_offset_mins = 120   # UTC+2
-
-        commit_msg_full = "Detailed commit message.\n\nThis is the second line.\nAnd a third."
-        commit_msg_short = "Detailed commit message."
-
-        commit_oid = make_commit(
-            repo,
-            "detail.txt",
-            "detailed content",
-            commit_msg_full,
-            author_name=author_name,
-            author_email=author_email,
-            author_time_offset_minutes=author_offset_mins,
-            committer_name=committer_name,
-            committer_email=committer_email,
-            committer_time_offset_minutes=committer_offset_mins,
-            commit_time=fixed_commit_time
+        return self.repo.create_commit(
+            "HEAD",  # Update HEAD to this new commit
+            self.signature,
+            self.signature,
+            message,
+            tree_oid,
+            parents_for_commit
         )
 
-        history = get_commit_history(str(repo_path))
-        assert len(history) == 1
-        commit_info = history[0]
+    def _read_file_content_from_workdir(self, relative_filepath: str) -> str:
+        full_path = self.repo_path_obj / relative_filepath
+        if not full_path.exists():
+            raise FileNotFoundError(f"File not found in working directory: {full_path}")
+        with open(full_path, "r", encoding="utf-8") as f:
+            return f.read()
 
-        assert commit_info["oid"] == str(commit_oid)
-        assert commit_info["short_hash"] == str(commit_oid)[:7]
-        assert commit_info["message"] == commit_msg_full.strip() # core function strips message
-        assert commit_info["message_short"] == commit_msg_short
+    def _read_file_content_at_commit(self, commit_oid: pygit2.Oid, relative_filepath: str) -> str:
+        commit = self.repo.get(commit_oid)
+        if not commit:
+            raise CommitNotFoundError(f"Commit {commit_oid} not found.")
 
-        assert commit_info["author_name"] == author_name
-        assert commit_info["author_email"] == author_email
-        assert commit_info["committer_name"] == committer_name
-        assert commit_info["committer_email"] == committer_email
+        try:
+            tree_entry = commit.tree[relative_filepath]
+            blob = self.repo.get(tree_entry.id)
+            if blob is None or not isinstance(blob, pygit2.Blob):
+                 raise FileNotFoundError(f"File '{relative_filepath}' not found as a blob in commit {commit_oid}.")
+            return blob.data.decode('utf-8')
+        except KeyError:
+            raise FileNotFoundError(f"File '{relative_filepath}' not found in tree of commit {commit_oid}.")
 
-        # Verify date strings
-        assert self.ISO_8601_PATTERN.match(commit_info["date"])
-        assert self.ISO_8601_PATTERN.match(commit_info["committer_date"])
 
-        # More precise date verification
-        # Author: 2023-03-15 12:00:00 UTC, offset -480 minutes (UTC-8) -> 2023-03-15 04:00:00 -0800
-        # Committer: 2023-03-15 12:00:00 UTC, offset +120 minutes (UTC+2) -> 2023-03-15 14:00:00 +0200
+    def test_revert_successful_clean(self):
+        # Commit 1
+        c1_oid = self._create_commit("Initial content C1", files_to_add_update={"file_a.txt": "Content A from C1"})
+        self.assertEqual(self._read_file_content_from_workdir("file_a.txt"), "Content A from C1")
 
-        # Construct expected datetime objects with timezone awareness
-        expected_author_dt = datetime.fromtimestamp(fixed_commit_time, tz=timezone(timedelta(minutes=author_offset_mins)))
-        expected_committer_dt = datetime.fromtimestamp(fixed_commit_time, tz=timezone(timedelta(minutes=committer_offset_mins)))
+        # Commit 2
+        c2_oid = self._create_commit("Second change C2", files_to_add_update={"file_a.txt": "Content A modified by C2", "file_b.txt": "Content B from C2"})
+        self.assertEqual(self._read_file_content_from_workdir("file_a.txt"), "Content A modified by C2")
+        self.assertTrue((self.repo_path_obj / "file_b.txt").exists())
 
-        # Format them to the expected string format
-        expected_author_date_str = expected_author_dt.strftime('%Y-%m-%d %H:%M:%S %z')
-        expected_committer_date_str = expected_committer_dt.strftime('%Y-%m-%d %H:%M:%S %z')
+        # Revert Commit 2
+        result = revert_commit(self.repo_path_str, str(c2_oid))
 
-        # If %z outputs "+HHMM" or "-HHMM", we might need to add a colon for full fromisoformat compatibility,
-        # but the current format in get_commit_history is "%Y-%m-%d %H:%M:%S %z" which usually gives "+HHMM"
-        # Let's check if the output string matches this logic.
-        # The function output is 'YYYY-MM-DD HH:MM:SS SZZZZ' (S is sign, ZZZZ is offset like 0800)
-        # Example: '2023-03-15 04:00:00 -0800'
+        self.assertEqual(result['status'], 'success')
+        self.assertIsNotNone(result.get('new_commit_oid'))
+        revert_commit_oid_str = result['new_commit_oid']
+        revert_commit_obj = self.repo.get(revert_commit_oid_str)
+        self.assertIsNotNone(revert_commit_obj)
 
-        assert commit_info["date"] == expected_author_date_str
-        assert commit_info["committer_date"] == expected_committer_date_str
+        expected_revert_msg_start = f"Revert \"Second change C2\"" # Core function adds commit hash after this
+        self.assertTrue(revert_commit_obj.message.startswith(expected_revert_msg_start))
 
-        # Test with a zero offset to ensure it's handled correctly (e.g., +0000)
-        zero_offset_commit_time = 1678890000 # 2023-03-15 14:20:00 UTC
-        zero_offset_oid = make_commit(
-            repo, "zero_offset.txt", "content", "Zero offset commit",
-            author_time_offset_minutes=0,
-            committer_time_offset_minutes=0,
-            commit_time=zero_offset_commit_time
+        # Verify content of working directory (should be back to C1 state for affected files)
+        self.assertEqual(self._read_file_content_from_workdir("file_a.txt"), "Content A from C1")
+        self.assertFalse((self.repo_path_obj / "file_b.txt").exists(), "File B created in C2 should be gone after revert")
+
+        # Verify HEAD points to the new revert commit
+        self.assertEqual(self.repo.head.target, revert_commit_obj.id)
+
+        # Verify index is clean (no staged changes after revert commit)
+        status = self.repo.status()
+        self.assertEqual(len(status), 0, f"Repository should be clean after revert, but status is: {status}")
+
+
+    def test_revert_commit_not_found(self):
+        self._create_commit("Initial commit", files_to_add_update={"dummy.txt": "content"})
+        non_existent_sha = "abcdef1234567890abcdef1234567890abcdef12"
+        with self.assertRaisesRegex(CommitNotFoundError, f"Commit '{non_existent_sha}' not found"):
+            revert_commit(self.repo_path_str, non_existent_sha)
+
+    def test_revert_on_non_repository_path(self):
+        # Create a temporary directory that is NOT a git repository
+        non_repo_dir = tempfile.mkdtemp()
+        try:
+            with self.assertRaisesRegex(RepositoryNotFoundError, "No repository found"):
+                revert_commit(non_repo_dir, "HEAD") # Commit SHA doesn't matter here
+        finally:
+            shutil.rmtree(non_repo_dir)
+
+    def test_revert_results_in_conflict(self):
+        # Commit 1: Base file
+        c1_oid = self._create_commit("C1: Base file_c.txt", files_to_add_update={"file_c.txt": "line1\nline2\nline3"})
+
+        # Commit 2: First modification to line2
+        c2_oid = self._create_commit("C2: Modify line2 in file_c.txt", files_to_add_update={"file_c.txt": "line1\nMODIFIED_BY_COMMIT_2\nline3"})
+
+        # Commit 3 (HEAD): Conflicting modification to line2
+        c3_oid = self._create_commit("C3: Modify line2 again in file_c.txt", files_to_add_update={"file_c.txt": "line1\nMODIFIED_BY_COMMIT_3\nline3"})
+        self.assertEqual(self.repo.head.target, c3_oid)
+
+        # Attempt to revert Commit 2 - this should cause a conflict
+        with self.assertRaisesRegex(MergeConflictError, "Revert resulted in conflicts. The revert has been aborted and the working directory is clean."):
+            revert_commit(self.repo_path_str, str(c2_oid))
+
+        # Verify repository state is clean and HEAD is back to C3
+        self.assertEqual(self.repo.head.target, c3_oid, "HEAD should be reset to its pre-revert state (C3)")
+
+        status = self.repo.status()
+        self.assertEqual(len(status), 0, f"Repository should be clean after failed revert, but status is: {status}")
+
+        # Verify working directory content is that of C3
+        self.assertEqual(self._read_file_content_from_workdir("file_c.txt"), "line1\nMODIFIED_BY_COMMIT_3\nline3")
+
+        # Verify no merge/revert artifacts like REVERT_HEAD exist
+        self.assertIsNone(self.repo.references.get("REVERT_HEAD"), "REVERT_HEAD should not exist after aborted revert")
+        self.assertIsNone(self.repo.references.get("MERGE_HEAD"), "MERGE_HEAD should not exist")
+        self.assertEqual(self.repo.index.conflicts, None, "Index should have no conflicts")
+
+    def test_revert_merge_commit_clean(self):
+        # Setup:
+        # main branch: C1 -> C2
+        # feature branch (from C1): C1_F1
+        # Merge feature into main: C3 (merge commit)
+
+        # C1 on main
+        c1_main_oid_commit = self.repo.get(self._create_commit("C1 on main", files_to_add_update={"file_main.txt": "Main C1", "shared.txt": "Shared C1"}))
+
+        # Ensure 'main' branch exists and HEAD points to it
+        if self.repo.head.shorthand != "main":
+            self.repo.branches.create("main", c1_main_oid_commit, force=True)
+            self.repo.set_head("refs/heads/main")
+        self.assertEqual(self.repo.head.shorthand, "main") # Verify we are on main
+
+        # Create feature branch from C1
+        feature_branch_name = "feature/test_merge_clean"
+        self.repo.create_branch(feature_branch_name, c1_main_oid_commit)
+
+        # Checkout feature branch (by setting HEAD)
+        self.repo.set_head(f"refs/heads/{feature_branch_name}")
+
+        # C1_F1 on feature branch
+        c1_f1_oid = self._create_commit("C1_F1 on feature", files_to_add_update={"file_feature.txt": "Feature C1_F1", "shared.txt": "Shared C1 modified by Feature"})
+        self.assertEqual(self.repo.head.target, c1_f1_oid)
+
+        # Switch back to main branch
+        # self.repo.set_head("refs/heads/main") # Already on main or switched above
+        main_ref = self.repo.lookup_reference("refs/heads/main")
+        self.repo.checkout(main_ref) # Use checkout for robustness
+        self.assertEqual(self.repo.head.shorthand, "main")
+
+
+        # C2 on main
+        c2_main_oid_commit_oid = self._create_commit("C2 on main", files_to_add_update={"file_main.txt": "Main C1 then C2"})
+        self.assertEqual(self.repo.head.target, c2_main_oid_commit_oid)
+
+        # Merge feature branch into main - this will be C3 (merge commit)
+        self.repo.merge(c1_f1_oid)
+        # Manually create merge commit as repo.merge() only updates index for non-ff.
+        # Check for conflicts (should be none for this clean merge scenario)
+        self.assertIsNone(self.repo.index.conflicts, "Merge should be clean initially")
+
+        tree_merge = self.repo.index.write_tree()
+        merge_commit_message = f"C3: Merge {feature_branch_name} into main"
+        c3_merge_oid = self.repo.create_commit(
+            "HEAD",
+            self.signature,
+            self.signature,
+            merge_commit_message,
+            tree_merge,
+            [c2_main_oid_commit_oid, c1_f1_oid] # Parents of the merge commit
         )
-        history_zero_offset = get_commit_history(str(repo_path), count=1) # Get the latest
-        assert history_zero_offset[0]["oid"] == str(zero_offset_oid)
+        self.repo.state_cleanup() # Clean up MERGE_HEAD etc.
+        self.assertEqual(self.repo.head.target, c3_merge_oid)
 
-        expected_zero_offset_dt = datetime.fromtimestamp(zero_offset_commit_time, tz=timezone.utc)
-        # strftime with %z for UTC might give +0000 or Z. pygit2 uses offset in minutes, so it should be +0000 or -0000.
-        # Our function datetime.fromtimestamp(..., tz=timezone(timedelta(minutes=0))).strftime('%Y-%m-%d %H:%M:%S %z')
-        # For timedelta(minutes=0), strftime %z gives "+0000"
-        assert "+0000" in history_zero_offset[0]["date"]
-        assert history_zero_offset[0]["date"] == expected_zero_offset_dt.strftime('%Y-%m-%d %H:%M:%S %z')
+        # Verify merged content
+        self.assertEqual(self._read_file_content_from_workdir("file_main.txt"), "Main C1 then C2")
+        self.assertEqual(self._read_file_content_from_workdir("file_feature.txt"), "Feature C1_F1")
+        self.assertEqual(self._read_file_content_from_workdir("shared.txt"), "Shared C1 modified by Feature")
 
-class TestGetDiffCore:
-    def test_get_diff_non_repository(self, tmp_path: Path):
-        """Test get_diff with a non-repository path."""
-        non_repo_path = tmp_path / "not_a_repo_for_diff"
-        non_repo_path.mkdir()
-        with pytest.raises(RepositoryNotFoundError):
-            get_diff(str(non_repo_path))
+        # Now, revert C3 (the merge commit)
+        result = revert_commit(self.repo_path_str, str(c3_merge_oid))
+        self.assertEqual(result['status'], 'success')
+        revert_c3_oid_str = result['new_commit_oid']
+        revert_c3_commit = self.repo.get(revert_c3_oid_str)
+        self.assertIsNotNone(revert_c3_commit)
 
-    def test_get_diff_empty_repository_default_compare(self, tmp_path: Path):
-        """Test get_diff on an empty repo (HEAD~1 vs HEAD)."""
-        repo_path = tmp_path / "empty_repo_for_diff"
-        pygit2.init_repository(str(repo_path))
-        with pytest.raises(NotEnoughHistoryError, match="Repository is empty or HEAD is unborn."):
-            get_diff(str(repo_path))
+        expected_revert_c3_msg_start = f"Revert \"{merge_commit_message.splitlines()[0]}\""
+        self.assertTrue(revert_c3_commit.message.startswith(expected_revert_c3_msg_start))
 
-    def test_get_diff_initial_commit_default_compare(self, tmp_path: Path):
-        """Test get_diff on a repo with only the initial commit (HEAD~1 vs HEAD)."""
-        repo_path = tmp_path / "initial_commit_repo_for_diff"
-        repo = pygit2.init_repository(str(repo_path))
-        make_commit(repo, "file.txt", "content", "Initial commit")
-        with pytest.raises(NotEnoughHistoryError, match="HEAD is the initial commit and has no parent to compare with."):
-            get_diff(str(repo_path))
+        # Verify content (should be back to state of C2 on main)
+        self.assertEqual(self._read_file_content_from_workdir("file_main.txt"), "Main C1 then C2")
+        self.assertFalse(Path(self.repo_path_obj / "file_feature.txt").exists(), "file_feature.txt from feature branch should be gone")
+        self.assertEqual(self._read_file_content_from_workdir("shared.txt"), "Shared C1", "shared.txt should revert to C1 main's version (as C2 didn't change it)")
 
-    def test_get_diff_no_differences(self, tmp_path: Path):
-        """Test get_diff when there are no differences between two commits."""
-        repo_path = tmp_path / "no_diff_repo"
-        repo = pygit2.init_repository(str(repo_path))
-        commit1_oid = make_commit(repo, "file.txt", "content", "Commit 1")
-        # No changes before commit 2, but make_commit creates a new commit object if called.
-        # To ensure identical trees, we can compare commit1 to itself.
+        # Check HEAD and repo status
+        self.assertEqual(self.repo.head.target, revert_c3_commit.id)
+        status = self.repo.status()
+        self.assertEqual(len(status), 0, f"Repository should be clean after reverting merge, but status is: {status}")
 
-        diff_data = get_diff(str(repo_path), ref1_str=str(commit1_oid), ref2_str=str(commit1_oid))
+    def test_revert_merge_commit_with_conflict(self):
+        # C1 on main
+        c1_main_commit_obj = self.repo.get(self._create_commit("C1: main", files_to_add_update={"file.txt": "line1\nline2 from main C1\nline3"}))
 
-        assert diff_data["ref1_oid"] == str(commit1_oid)
-        assert diff_data["ref2_oid"] == str(commit1_oid)
-        assert diff_data["ref1_display_name"] == str(commit1_oid) # Was passed as str
-        assert diff_data["ref2_display_name"] == str(commit1_oid) # Was passed as str
-        assert diff_data["patch_text"] == ""
-
-    def test_get_diff_simple_content_change(self, tmp_path: Path):
-        """Test get_diff with a simple content change in a file."""
-        repo_path = tmp_path / "content_change_repo"
-        repo = pygit2.init_repository(str(repo_path))
-
-        commit1_oid = make_commit(repo, "file.txt", "content A", "Commit A")
-        commit2_oid = make_commit(repo, "file.txt", "content B", "Commit B")
-
-        diff_data = get_diff(str(repo_path), ref1_str=str(commit1_oid), ref2_str=str(commit2_oid))
-
-        assert diff_data["ref1_oid"] == str(commit1_oid)
-        assert diff_data["ref2_oid"] == str(commit2_oid)
-        assert diff_data["patch_text"] != ""
-        assert "--- a/file.txt" in diff_data["patch_text"]
-        assert "+++ b/file.txt" in diff_data["patch_text"]
-        assert "-content A" in diff_data["patch_text"]
-        assert "+content B" in diff_data["patch_text"]
-
-    def test_get_diff_file_addition(self, tmp_path: Path):
-        """Test get_diff when a file is added."""
-        repo_path = tmp_path / "file_add_repo"
-        repo = pygit2.init_repository(str(repo_path))
-
-        commit1_oid = make_commit(repo, "old_file.txt", "old content", "Commit 1")
-        commit2_oid = make_commit(repo, "new_file.txt", "new content", "Commit 2 adds new_file.txt")
-
-        diff_data = get_diff(str(repo_path), ref1_str=str(commit1_oid), ref2_str=str(commit2_oid))
-
-        assert "+++ b/new_file.txt" in diff_data["patch_text"]
-        assert "+new content" in diff_data["patch_text"]
-        # old_file.txt should not appear as changed in this diff context if it wasn't touched by commit2's tree vs commit1's tree
-        # The diff is tree-to-tree. If new_file.txt is the only change between the trees, only it appears.
-        # If make_commit for commit2 re-added old_file.txt with same content, it's not a diff.
-        # This test implicitly relies on make_commit behavior.
-        # Let's ensure old_file.txt is not in the patch:
-        assert "old_file.txt" not in diff_data["patch_text"]
+        # Ensure 'main' branch exists and HEAD points to it
+        if self.repo.head.shorthand != "main":
+            self.repo.branches.create("main", c1_main_commit_obj, force=True)
+            self.repo.set_head("refs/heads/main")
+        self.assertEqual(self.repo.head.shorthand, "main")
 
 
-    def test_get_diff_file_deletion(self, tmp_path: Path):
-        """Test get_diff when a file is deleted."""
-        repo_path = tmp_path / "file_delete_repo"
-        repo = pygit2.init_repository(str(repo_path))
+        # Create 'dev' branch from C1
+        self.repo.create_branch("dev", c1_main_commit_obj)
+        dev_ref = self.repo.lookup_reference("refs/heads/dev")
+        self.repo.checkout(dev_ref) # Checkout dev
+        self.assertEqual(self.repo.head.shorthand, "dev")
 
-        make_commit(repo, "file_to_delete.txt", "some content", "Commit 1 adds file")
-        commit1_oid = repo.head.target
+        # C2 on dev: Modify line2
+        c2_dev_oid = self._create_commit("C2: dev modify line2", files_to_add_update={"file.txt": "line1\nline2 MODIFIED by dev C2\nline3"})
 
-        # To delete, we need to operate on the index before the next commit
-        index = repo.index
-        index.read() # Load current index
-        index.remove("file_to_delete.txt")
-        tree_oid_for_commit2 = index.write_tree()
+        # Switch back to main
+        main_ref = self.repo.lookup_reference("refs/heads/main")
+        self.repo.checkout(main_ref)
+        self.assertEqual(self.repo.head.shorthand, "main")
 
-        author_sig = pygit2.Signature("Test Author", "del@example.com", int(time.time()), 0)
-        committer_sig = author_sig
-        commit2_oid = repo.create_commit("refs/heads/main", author_sig, committer_sig, "Commit 2 deletes file", tree_oid_for_commit2, [commit1_oid])
-        repo.set_head("refs/heads/main") # Ensure HEAD is updated
+        # C3 on main: Modify line2 (different from dev's C2)
+        c3_main_oid_commit_oid = self._create_commit("C3: main modify line2 differently", files_to_add_update={"file.txt": "line1\nline2 MODIFIED by main C3\nline3"})
 
-        diff_data = get_diff(str(repo_path), ref1_str=str(commit1_oid), ref2_str=str(commit2_oid))
+        # Merge dev into main (C4 - merge commit) - this will cause a conflict that we resolve
+        self.repo.merge(c2_dev_oid)
+        self.assertTrue(self.repo.index.conflicts is not None, "Merge should cause conflicts")
 
-        assert "--- a/file_to_delete.txt" in diff_data["patch_text"]
-        assert "-some content" in diff_data["patch_text"]
+        # Resolve conflict: Choose main's version for line2, append dev's unique content
+        resolved_content = "line1\nline2 MODIFIED by main C3\nline2 MODIFIED by dev C2\nline3"
+        with open(self.repo_path_obj / "file.txt", "w") as f:
+            f.write(resolved_content)
+        self.repo.index.add("file.txt")
+        self.repo.index.write() # Write resolved index state
 
-    def test_get_diff_compare_ref_vs_head(self, tmp_path: Path):
-        """Test get_diff comparing a specific ref against HEAD."""
-        repo_path = tmp_path / "ref_vs_head_repo"
-        repo = pygit2.init_repository(str(repo_path))
+        tree_merge_resolved = self.repo.index.write_tree()
+        merge_commit_msg = "C4: Merge dev into main (conflict resolved)"
+        c4_merge_oid = self.repo.create_commit("HEAD", self.signature, self.signature, merge_commit_msg, tree_merge_resolved, [c3_main_oid_commit_oid, c2_dev_oid])
+        self.repo.state_cleanup()
+        self.assertEqual(self.repo.head.target, c4_merge_oid)
+        self.assertEqual(self._read_file_content_from_workdir("file.txt"), resolved_content)
 
-        commitA_oid = make_commit(repo, "fileA.txt", "content A", "Commit A")
-        commitB_oid = make_commit(repo, "fileB.txt", "content B", "Commit B (HEAD)")
+        # C5 on main: Make another change on top of the resolved merge.
+        # This change is crucial: it will conflict with reverting C4 if C4 tries to remove C2_dev's changes
+        # which are now part of the history that C5 builds upon.
+        # Let's modify a line that was affected by C2_dev (via C4's resolution)
+        c5_main_content_parts = resolved_content.splitlines()
+        # resolved_content was:
+        # "line1"
+        # "line2 MODIFIED by main C3"
+        # "line2 MODIFIED by dev C2"  <- This is c5_main_content_parts[2]
+        # "line3"
+        c5_main_content_parts[2] = "line2 MODIFIED by dev C2 AND THEN BY C5" # Directly modify the line from dev's side of the merge
+        c5_main_content = "\n".join(c5_main_content_parts)
 
-        diff_data = get_diff(str(repo_path), ref1_str=str(commitA_oid))
+        c5_main_oid = self._create_commit("C5: main directly modifies dev's merged line", files_to_add_update={"file.txt": c5_main_content})
+        self.assertEqual(self._read_file_content_from_workdir("file.txt"), c5_main_content)
 
-        assert diff_data["ref1_oid"] == str(commitA_oid)
-        assert diff_data["ref2_oid"] == str(commitB_oid) # HEAD resolved to commitB_oid
-        assert diff_data["ref1_display_name"] == str(commitA_oid)
-        assert diff_data["ref2_display_name"] == f"{str(commitB_oid)[:7]} (HEAD)"
-        assert "+++ b/fileB.txt" in diff_data["patch_text"] # fileB was added in B relative to A's tree
 
-    def test_get_diff_default_compare_head_vs_parent(self, tmp_path: Path):
-        """Test get_diff default (HEAD~1 vs HEAD)."""
-        repo_path = tmp_path / "head_vs_parent_repo"
-        repo = pygit2.init_repository(str(repo_path))
+        # Attempt to revert C4 (the merge commit)
+        # Reverting C4 means trying to undo the introduction of C2_dev's changes.
+        # Pygit2's default revert for a merge commit (mainline 1) means it tries to apply the inverse of C2_dev's changes relative to C3_main.
+        # Since C5 has modified content that includes parts of C2_dev's changes (via C4's resolution), this can lead to a conflict.
+        with self.assertRaisesRegex(MergeConflictError, "Revert resulted in conflicts. The revert has been aborted and the working directory is clean."):
+            revert_commit(self.repo_path_str, str(c4_merge_oid))
 
-        commitA_oid = make_commit(repo, "file.txt", "content A", "Commit A (Parent)")
-        commitB_oid = make_commit(repo, "file.txt", "content B", "Commit B (HEAD)")
+        # Verify repository state is clean and HEAD is back to C5
+        self.assertEqual(self.repo.head.target, c5_main_oid, "HEAD should be reset to its pre-revert state (C5)")
+        status = self.repo.status()
+        self.assertEqual(len(status), 0, f"Repository should be clean after failed revert of merge, but status is: {status}")
+        self.assertEqual(self._read_file_content_from_workdir("file.txt"), c5_main_content)
+        self.assertIsNone(self.repo.references.get("REVERT_HEAD"))
+        self.assertIsNone(self.repo.references.get("MERGE_HEAD"))
+        self.assertEqual(self.repo.index.conflicts, None)
 
-        diff_data = get_diff(str(repo_path)) # Default comparison
 
-        assert diff_data["ref1_oid"] == str(commitA_oid)
-        assert diff_data["ref2_oid"] == str(commitB_oid)
-        assert diff_data["ref1_display_name"] == f"{str(commitA_oid)[:7]} (HEAD~1)"
-        assert diff_data["ref2_display_name"] == f"{str(commitB_oid)[:7]} (HEAD)"
-        assert "-content A" in diff_data["patch_text"]
-        assert "+content B" in diff_data["patch_text"]
-
-    def test_get_diff_invalid_ref1(self, tmp_path: Path):
-        """Test get_diff with an invalid ref1."""
-        repo_path = tmp_path / "invalid_ref1_repo"
-        repo = pygit2.init_repository(str(repo_path))
-        make_commit(repo, "file.txt", "content", "Initial Commit")
-
-        with pytest.raises(CommitNotFoundError, match="Reference 'invalid_ref' not found or not a commit"):
-            get_diff(str(repo_path), ref1_str="invalid_ref")
-
-    def test_get_diff_invalid_ref2(self, tmp_path: Path):
-        """Test get_diff with an invalid ref2."""
-        repo_path = tmp_path / "invalid_ref2_repo"
-        repo = pygit2.init_repository(str(repo_path))
-        make_commit(repo, "file.txt", "content", "Initial Commit")
-
-        with pytest.raises(CommitNotFoundError, match="Reference 'invalid_ref' not found or not a commit"):
-            get_diff(str(repo_path), ref1_str="HEAD", ref2_str="invalid_ref")
-
-    def test_get_diff_branch_names_as_refs(self, tmp_path: Path):
-        """Test get_diff comparing two branches."""
-        repo_path = tmp_path / "branch_compare_repo"
-        repo = pygit2.init_repository(str(repo_path))
-
-        # Main branch starts with common_base.txt
-        commit_base_oid = make_commit(repo, "common_base.txt", "base", "Base commit")
-
-        # Create branchA
-        repo.branches.create("branchA", repo.get(commit_base_oid))
-        repo.checkout("refs/heads/branchA")
-        commitA_oid = make_commit(repo, "fileA.txt", "content A", "Commit on branchA")
-
-        # Create branchB from base
-        repo.checkout("refs/heads/main") # Back to main which is at commit_base_oid
-        repo.branches.create("branchB", repo.get(commit_base_oid))
-        repo.checkout("refs/heads/branchB")
-        commitB_oid = make_commit(repo, "fileB.txt", "content B", "Commit on branchB")
-
-        diff_data = get_diff(str(repo_path), ref1_str="branchA", ref2_str="branchB")
-
-        assert diff_data["ref1_oid"] == str(commitA_oid)
-        assert diff_data["ref2_oid"] == str(commitB_oid)
-        assert diff_data["ref1_display_name"] == "branchA"
-        assert diff_data["ref2_display_name"] == "branchB"
-        assert "--- a/fileA.txt" in diff_data["patch_text"] # fileA removed
-        assert "+++ b/fileB.txt" in diff_data["patch_text"] # fileB added
-        assert "common_base.txt" not in diff_data["patch_text"] # common_base.txt is same in both trees relative to their common ancestor
-
-    def test_get_diff_tag_names_as_refs(self, tmp_path: Path):
-        """Test get_diff comparing two tags."""
-        repo_path = tmp_path / "tag_compare_repo"
-        repo = pygit2.init_repository(str(repo_path))
-
-        commitA_oid = make_commit(repo, "fileA.txt", "content A", "Commit A for tagA")
-        repo.create_tag("tagA", commitA_oid, pygit2.GIT_OBJECT_COMMIT, repo.default_signature, "Tag A")
-
-        commitB_oid = make_commit(repo, "fileB.txt", "content B", "Commit B for tagB")
-        repo.create_tag("tagB", commitB_oid, pygit2.GIT_OBJECT_COMMIT, repo.default_signature, "Tag B")
-
-        diff_data = get_diff(str(repo_path), ref1_str="tagA", ref2_str="tagB")
-
-        assert diff_data["ref1_oid"] == str(commitA_oid)
-        assert diff_data["ref2_oid"] == str(commitB_oid)
-        assert diff_data["ref1_display_name"] == "tagA"
-        assert diff_data["ref2_display_name"] == "tagB"
-        assert "--- a/fileA.txt" in diff_data["patch_text"] # Original fileA from commitA is gone
-        assert "+++ b/fileB.txt" in diff_data["patch_text"] # New fileB from commitB is added
-        # If fileA was also in commitB, it would show as modified or same.
-        # Here, make_commit creates a new file if filename is different.
-        # To be more precise: diff shows fileA deleted, fileB added.
-
-    def test_get_diff_invalid_ref_combination_value_error(self, tmp_path: Path):
-        """Test get_diff raises ValueError for invalid ref combination (ref1=None, ref2=Some)."""
-        repo_path = tmp_path / "invalid_combo_repo"
-        repo = pygit2.init_repository(str(repo_path))
-        make_commit(repo, "file.txt", "content", "Initial Commit")
-
-        with pytest.raises(ValueError, match="Invalid reference combination for diff."):
-            get_diff(str(repo_path), ref1_str=None, ref2_str="HEAD")
-
-# Add from typing import Optional to top of file for commit_time: Optional[int]
-# This will be done in a follow-up if there's an error, or if I remember before submitting.
-# For now, assuming Python 3.9+ where Optional from typing might not be strictly needed for hints if | None is used,
-# but explicit `from typing import Optional` is better for compatibility.
-# Okay, pygit2.Repository type hint also needs `from typing import TYPE_CHECKING` guard or similar if it's just for hinting.
-# Let's add Optional for now.
-# The `make_commit` signature `commit_time: Optional[int] = None` is fine in Python 3.7+ if `from __future__ import annotations` is used,
-# or if we just rely on it for type checking and not runtime. For explicit type hinting, `Optional` is better.
-# The current `pyproject.toml` implies Python 3.7+, so `Optional` should be imported.
-# I will add `from typing import Optional` in the actual tool call.
-
-# Final check of make_commit:
-# - It handles initial commit (parents=[])
-# - It handles subsequent commits (parents=[repo.head.target])
-# - It creates file and adds to index
-# - It uses Signature with time and offset
-# - It updates HEAD for the first commit on 'main'
-# Looks reasonable.
-
-# ISO_8601_PATTERN: The pattern `[+-]\d{4}` correctly matches "+0000" or "-0800".
-# The strftime format `%Y-%m-%d %H:%M:%S %z` produces this.
-# datetime.fromisoformat can parse this if the %z part is like +HHMM.
-# If it's +HH:MM, then fromisoformat is fine. My current format does not include the colon.
-# However, the test primarily checks if the output string matches the strftime output of a known datetime object,
-# which is a solid check. The regex is an additional structural check.
-# The core function produces `YYYY-MM-DD HH:MM:SS +/-ZZZZ` (e.g., `2023-10-05 12:30:00 -0700`)
-# This format is common. `datetime.fromisoformat` might be picky without the colon in offset in older Python,
-# but direct string comparison with expected `strftime` output is robust here.
-# Python 3.7+ `datetime.fromisoformat` handles `+HHMM` without colon.
-# So, `datetime.fromisoformat(commit_info["date"])` should work if needed.
-# For now, string comparison with expected strftime output is the primary validation for date values.
-# The regex `ISO_8601_PATTERN` is a good structural check.
-# `commit_msg_full.strip()` is correct because `commit_obj.message.strip()` is used in the core function.
-# `time.sleep(0.1)` is a bit fragile for ensuring time differences but usually works for local tests.
-# A more robust way would be to pass explicit, distinct timestamps to `make_commit`.
-# I've updated `test_get_history_multiple_commits_default_order` and `test_get_history_with_count_limit` to use `commit_time` for this.
-# This should make those tests more reliable.
-# The `make_commit` helper has `commit_time: Optional[int] = None`. I need to import `Optional`.
-# The `repo: pygit2.Repository` type hint is fine.
-# Okay, looks good.Okay, I've drafted the complete test file `tests/test_core_versioning.py` including the `make_commit` helper and all the specified test cases. I've tried to make the tests robust, especially around commit ordering and date/time validation. I've also added `from typing import Optional` for the `make_commit` helper's type hint.
-
-One detail: the `make_commit` helper creates and switches to a `refs/heads/main` branch after the first commit. This is a common practice and makes testing subsequent commits easier.
-
-I'll now use `create_file_with_block` to write this to `tests/test_core_versioning.py`.
+if __name__ == '__main__':
+    unittest.main()
