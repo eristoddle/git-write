@@ -10,8 +10,25 @@ from rich.console import Console
 from rich.panel import Panel
 from gitwrite_core.repository import initialize_repository, add_pattern_to_gitignore, list_gitignore_patterns # Added import
 from gitwrite_core.tagging import create_tag
-from gitwrite_core.versioning import get_commit_history, get_diff # Added for history and compare commands
-from gitwrite_core.exceptions import RepositoryNotFoundError, CommitNotFoundError, TagAlreadyExistsError, GitWriteError, NotEnoughHistoryError # Added NotEnoughHistoryError
+from gitwrite_core.versioning import get_commit_history, get_diff
+from gitwrite_core.branching import ( # Updated for merge
+    create_and_switch_branch,
+    list_branches,
+    switch_to_branch,
+    merge_branch_into_current
+)
+from gitwrite_core.exceptions import (
+    RepositoryNotFoundError,
+    CommitNotFoundError,
+    TagAlreadyExistsError,
+    GitWriteError,
+    NotEnoughHistoryError,
+    RepositoryEmptyError,
+    BranchAlreadyExistsError,
+    BranchNotFoundError,
+    MergeConflictError # Added for merge
+)
+from rich.table import Table # Ensure Table is imported for switch
 
 @click.group()
 def cli():
@@ -381,34 +398,21 @@ def history(count):
 def explore(branch_name):
     """Creates and switches to a new exploration (branch)."""
     try:
-        repo_path_str = pygit2.discover_repository(str(Path.cwd()))
-        if repo_path_str is None:
-            click.echo("Error: Not a Git repository.", err=True)
-            return
-        repo = pygit2.Repository(repo_path_str)
+        current_path_str = str(Path.cwd())
+        result = create_and_switch_branch(current_path_str, branch_name)
+        # Success message uses the branch name from the result for consistency
+        click.echo(f"Switched to a new exploration: {result['branch_name']}")
 
-        if repo.is_bare:
-            click.echo("Error: Cannot explore in a bare repository.", err=True)
-            return
-        if repo.is_empty or repo.head_is_unborn:
-            click.echo("Error: Cannot create an exploration in an empty repository. Please make some commits first.", err=True)
-            return
-
-        if branch_name in repo.branches.local:
-            click.echo(f"Error: Exploration '{branch_name}' already exists.", err=True)
-            return
-
-        commit_obj_explore = repo.head.peel(pygit2.Commit)
-        new_branch = repo.branches.local.create(branch_name, commit_obj_explore)
-        refname = f"refs/heads/{branch_name}"
-        repo.checkout(refname, strategy=pygit2.GIT_CHECKOUT_SAFE)
-        repo.set_head(refname)
-
-        click.echo(f"Switched to a new exploration: {branch_name}")
-
-    except pygit2.GitError as e:
-        click.echo(f"GitError during explore: {e}", err=True)
-    except Exception as e:
+    except RepositoryNotFoundError as e:
+        click.echo(f"Error: {e}", err=True)
+    except RepositoryEmptyError as e:
+        # Custom message to be more user-friendly for CLI context
+        click.echo(f"Error: {e}", err=True)
+    except BranchAlreadyExistsError as e:
+        click.echo(f"Error: {e}", err=True)
+    except GitWriteError as e: # Catches other specific errors from core like bare repo
+        click.echo(f"Error: {e}", err=True)
+    except Exception as e: # General catch-all for unexpected issues
         click.echo(f"An unexpected error occurred during explore: {e}", err=True)
 
 
@@ -417,76 +421,53 @@ def explore(branch_name):
 def switch(branch_name):
     """Switches to an existing exploration (branch) or lists all explorations."""
     try:
-        repo_path_str = pygit2.discover_repository(str(Path.cwd()))
-        if repo_path_str is None:
-            click.echo("Error: Not a Git repository.", err=True)
-            return
-        repo = pygit2.Repository(repo_path_str)
-
-        if repo.is_bare:
-            click.echo("Error: Cannot switch branches in a bare repository.", err=True)
-            return
+        current_path_str = str(Path.cwd())
 
         if branch_name is None:
-            if repo.is_empty or repo.head_is_unborn:
+            # List branches
+            branches_data = list_branches(current_path_str)
+            if not branches_data:
                 click.echo("No explorations (branches) yet.")
                 return
 
-            from rich.table import Table
-            from rich.console import Console
-
+            # Console is already imported at the top level if other commands use it,
+            # or this will rely on the general ImportError.
+            # Table is now explicitly imported at the top for this command.
             table = Table(title="Available Explorations")
-            table.add_column("Name", style="cyan")
+            table.add_column("Name", style="cyan") # Keep existing style
+            for b_data in branches_data: # Assumes branches_data is sorted by name from core function
+                prefix = "* " if b_data.get('is_current', False) else "  "
+                table.add_row(f"{prefix}{b_data['name']}")
 
-            current_branch_ref_name = repo.head.name
-
-            branches_list = list(repo.branches.local)
-            if not branches_list:
-                click.echo("No explorations (branches) found.")
-                return
-
-            for b_name_iter in sorted(branches_list):
-                ref_name_for_branch = f"refs/heads/{b_name_iter}"
-                if ref_name_for_branch == current_branch_ref_name:
-                    table.add_row(f"* {b_name_iter}")
-                else:
-                    table.add_row(f"  {b_name_iter}")
-
-            console = Console()
+            console = Console() # Create console instance to print table
             console.print(table)
-            return
-
-        if repo.is_empty or repo.head_is_unborn:
-             click.echo(f"Error: Repository is empty or HEAD is unborn. Cannot switch to '{branch_name}'.", err=True)
-             return
-
-        target_branch_ref_name = f"refs/heads/{branch_name}"
-        branch_obj = repo.branches.get(branch_name)
-
-        if branch_obj is None :
-            branch_obj = repo.branches.get(f"origin/{branch_name}")
-            if branch_obj:
-                target_branch_ref_name = branch_obj.name
-            else:
-                click.echo(f"Error: Exploration '{branch_name}' not found locally or on common remote 'origin'.", err=True)
-                return
         else:
-             target_branch_ref_name = branch_obj.name
+            # Switch branch
+            result = switch_to_branch(current_path_str, branch_name)
 
+            status = result.get('status')
+            returned_branch_name = result.get('branch_name', branch_name) # Fallback to input if not in result
 
-        if repo.head.name == target_branch_ref_name:
-            click.echo(f"Already on exploration: {branch_name}")
-            return
+            if status == 'success':
+                click.echo(f"Switched to exploration: {returned_branch_name}")
+                if result.get('is_detached'):
+                    click.echo(click.style("Note: HEAD is now in a detached state. You are not on a local branch.", fg="yellow"))
+            elif status == 'already_on_branch':
+                click.echo(f"Already on exploration: {returned_branch_name}")
+            else:
+                # Should not happen if core function adheres to defined return statuses
+                click.echo(f"Unknown status from switch operation: {status}", err=True)
 
-        repo.checkout(target_branch_ref_name, strategy=pygit2.GIT_CHECKOUT_SAFE)
-        repo.set_head(target_branch_ref_name)
-
-        click.echo(f"Switched to exploration: {branch_name}")
-
-    except pygit2.GitError as e:
-        click.echo(f"GitError during switch: {e}", err=True)
+    except RepositoryNotFoundError as e:
+        click.echo(f"Error: {e}", err=True)
+    except BranchNotFoundError as e:
+        click.echo(f"Error: {e}", err=True)
+    except RepositoryEmptyError as e:
+        click.echo(f"Error: {e}", err=True)
+    except GitWriteError as e:
+        click.echo(f"Error: {e}", err=True)
     except ImportError:
-        click.echo("Error: Rich library is not installed for listing branches.", err=True)
+        click.echo("Error: Rich library is not installed. Please ensure it is installed to list branches.", err=True)
     except Exception as e:
         click.echo(f"An unexpected error occurred during switch: {e}", err=True)
 
@@ -495,94 +476,40 @@ def switch(branch_name):
 def merge_command(branch_name):
     """Merges the specified exploration (branch) into the current one."""
     try:
-        repo_path_str = pygit2.discover_repository(str(Path.cwd()))
-        if repo_path_str is None:
-            click.echo("Error: Not a Git repository.", err=True)
-            return
-        repo = pygit2.Repository(repo_path_str)
+        current_path_str = str(Path.cwd())
+        result = merge_branch_into_current(current_path_str, branch_name)
 
-        if repo.is_bare:
-            click.echo("Error: Cannot merge in a bare repository.", err=True)
-            return
-        if repo.is_empty or repo.head_is_unborn:
-            click.echo("Error: Repository is empty or HEAD is unborn. Cannot perform merge.", err=True)
-            return
+        status = result.get('status')
+        merged_branch = result.get('branch_name', branch_name) # Branch that was merged
+        current_branch = result.get('current_branch', 'current branch') # Branch merged into
+        commit_oid = result.get('commit_oid')
 
-        current_branch_shorthand = repo.head.shorthand
-        if current_branch_shorthand == branch_name:
-            click.echo("Error: Cannot merge a branch into itself.", err=True)
-            return
-
-        target_branch_obj = repo.branches.get(branch_name)
-        if not target_branch_obj:
-            click.echo(f"Error: Exploration '{branch_name}' not found.", err=True)
-            return
-
-        target_commit_obj_merge = repo[target_branch_obj.target]
-
-        merge_result_analysis, _ = repo.merge_analysis(target_commit_obj_merge.id)
-
-        if merge_result_analysis & pygit2.GIT_MERGE_ANALYSIS_UP_TO_DATE:
-            click.echo(f"Already up-to-date with {branch_name}.")
-            return
-
-        elif merge_result_analysis & pygit2.GIT_MERGE_ANALYSIS_FASTFORWARD:
-            click.echo(f"Attempting Fast-forward merge for {branch_name} into {current_branch_shorthand}...")
-            current_branch_full_ref_name_merge = repo.head.name
-            current_branch_ref = repo.lookup_reference(current_branch_full_ref_name_merge)
-            current_branch_ref.set_target(target_commit_obj_merge.id)
-            repo.checkout(current_branch_full_ref_name_merge, strategy=pygit2.GIT_CHECKOUT_FORCE)
-            click.echo(f"Fast-forwarded {current_branch_shorthand} to {branch_name} (commit {str(target_commit_obj_merge.id)[:7]}).")
-            return
-
-        elif merge_result_analysis & pygit2.GIT_MERGE_ANALYSIS_NORMAL:
-            click.echo(f"Attempting Normal merge for {branch_name} into {current_branch_shorthand}...")
-            repo.merge(target_commit_obj_merge.id)
-
-            has_conflicts_merge = False
-            if repo.index.conflicts is not None:
-                for _conflict_entry_merge in repo.index.conflicts:
-                    has_conflicts_merge = True
-                    break
-
-            if has_conflicts_merge:
-                click.echo("Automatic merge failed; fix conflicts and then commit the result using 'gitwrite save'.", err=True)
-                click.echo("Conflicting files:")
-                if repo.index.conflicts:
-                    for conflict_entries_tuple_merge in repo.index.conflicts:
-                        our_entry = conflict_entries_tuple_merge[1]
-                        their_entry = conflict_entries_tuple_merge[2]
-                        path_to_print = (our_entry.path if our_entry else
-                                         (their_entry.path if their_entry else "unknown_path"))
-                        click.echo(f"  {path_to_print}")
-                return
-
-            try:
-                author_sig = repo.default_signature
-            except pygit2.GitError:
-                author_name_env = os.environ.get("GIT_AUTHOR_NAME", "Unknown Author")
-                author_email_env = os.environ.get("GIT_AUTHOR_EMAIL", "author@example.com")
-                author_sig = pygit2.Signature(author_name_env, author_email_env)
-            committer_sig = author_sig
-
-            tree = repo.index.write_tree()
-            parents = [repo.head.target, target_commit_obj_merge.id]
-            merge_commit_msg_text = f"Merge branch '{branch_name}' into {current_branch_shorthand}"
-
-            repo.create_commit("HEAD", author_sig, committer_sig, merge_commit_msg_text, tree, parents)
-            click.echo(f"Merged {branch_name} into {current_branch_shorthand}.")
-            repo.state_cleanup()
-            return
-
+        if status == 'up_to_date':
+            click.echo(f"'{current_branch}' is already up-to-date with '{merged_branch}'.")
+        elif status == 'fast_forwarded':
+            click.echo(f"Fast-forwarded '{current_branch}' to '{merged_branch}' (commit {commit_oid[:7]}).")
+        elif status == 'merged_ok':
+            click.echo(f"Merged '{merged_branch}' into '{current_branch}'. New commit: {commit_oid[:7]}.")
         else:
-            click.echo(f"Merge not possible. Analysis result code: {merge_result_analysis}", err=True)
-            if merge_result_analysis & pygit2.GIT_MERGE_ANALYSIS_UNBORN:
-                 click.echo("The HEAD of the repository is unborn; cannot merge.", err=True)
+            click.echo(f"Merge operation completed with unhandled status: {status}", err=True)
 
-
-    except pygit2.GitError as e:
-        click.echo(f"GitError during merge: {e}", err=True)
-    except Exception as e:
+    except MergeConflictError as e:
+        # str(e) or e.message will give the main error message from core
+        click.echo(str(e), err=True)
+        if hasattr(e, 'conflicting_files') and e.conflicting_files:
+            click.echo("Conflicting files:", err=True)
+            for f_path in e.conflicting_files:
+                click.echo(f"  {f_path}", err=True)
+        click.echo("Please resolve conflicts and then use 'gitwrite save <message>' to commit the merge.", err=True)
+    except RepositoryNotFoundError as e:
+        click.echo(f"Error: {e}", err=True)
+    except BranchNotFoundError as e:
+        click.echo(f"Error: {e}", err=True)
+    except RepositoryEmptyError as e:
+        click.echo(f"Error: {e}", err=True)
+    except GitWriteError as e: # Catches other core errors like detached HEAD, no signature, etc.
+        click.echo(f"Error: {e}", err=True)
+    except Exception as e: # General catch-all for unexpected issues
         click.echo(f"An unexpected error occurred during merge: {e}", err=True)
 
 @cli.command()

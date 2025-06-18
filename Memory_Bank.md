@@ -118,3 +118,33 @@ Proceed with Phase 1, Task 1.2, which involves moving the first piece of logic (
 **Status:** Completed
 **Issues/Blockers:** None.
 **Next Steps (Optional):** Determine the next task from `Implementation_Plan.md`.
+---
+**Agent:** Implementation Agent (Jules)
+**Task Reference:** Implementation Plan: Core Logic Refactoring, Phase 3, Task 3.1 (Partial: explore, switch, merge)
+**Summary:** Completed refactoring of `explore`, `switch`, and `merge` commands. Core logic was moved from `gitwrite_cli/main.py` to new functions in `gitwrite_core/branching.py`. CLI commands were updated to be thin wrappers. Unit tests for new core functions and integration tests for CLI commands were added/refactored.
+**Details:**
+- **`explore` command:**
+  - Logic moved to `gitwrite_core.branching.create_and_switch_branch(repo_path_str, branch_name)`.
+  - CLI `explore` command now calls this core function.
+  - Tests: Unit tests for `create_and_switch_branch` added to `tests/test_core_branching.py`. CLI tests in `tests/test_main.py` refactored.
+- **`switch` command (list & switch actions):**
+  - Listing logic moved to `gitwrite_core.branching.list_branches(repo_path_str)`.
+  - Switching logic moved to `gitwrite_core.branching.switch_to_branch(repo_path_str, branch_name)`.
+  - CLI `switch` command calls these core functions. `rich.Table` used for list display.
+  - Tests: Unit tests for core functions added to `tests/test_core_branching.py`. CLI tests in `tests/test_main.py` refactored.
+- **`merge` command:**
+  - Logic moved to `gitwrite_core.branching.merge_branch_into_current(repo_path_str, branch_to_merge_name)`.
+  - CLI `merge` command calls this core function. Handles various merge outcomes (FF, normal, conflict, up-to-date) based on core function's return.
+  - Tests: Unit tests for core function added to `tests/test_core_branching.py`. CLI tests in `tests/test_main.py` refactored.
+- **Exceptions Added/Used:**
+  - `gitwrite_core.exceptions.BranchAlreadyExistsError`
+  - `gitwrite_core.exceptions.RepositoryEmptyError`
+  - (Existing exceptions like `RepositoryNotFoundError`, `BranchNotFoundError`, `MergeConflictError`, `GitWriteError` were utilized by new core functions).
+**Output/Result:**
+- `gitwrite_core/branching.py` now contains `create_and_switch_branch`, `list_branches`, `switch_to_branch`, and `merge_branch_into_current`.
+- `gitwrite_cli/main.py` `explore`, `switch`, and `merge` commands are now thin wrappers.
+- `tests/test_core_branching.py` created/updated with unit tests for these new core branching functions.
+- `tests/test_main.py` updated with refactored/new integration tests for the CLI commands.
+**Status:** Partially Completed (for Task 3.1 regarding explore, switch, merge).
+**Issues/Blockers:** None.
+**Next Steps (Optional):** Refactor `revert` command (Phase 3, Task 3.1 continued) as per `Implementation_Plan.md`.

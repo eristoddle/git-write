@@ -10,6 +10,25 @@ from unittest.mock import patch
 # Assuming your CLI script is gitwrite_cli.main
 from gitwrite_cli.main import cli
 from gitwrite_core.repository import initialize_repository, COMMON_GITIGNORE_PATTERNS, add_pattern_to_gitignore, list_gitignore_patterns # New imports
+from gitwrite_core.branching import (
+    create_and_switch_branch,
+    list_branches,
+    switch_to_branch,
+    merge_branch_into_current # Added for merge
+)
+from gitwrite_core.exceptions import (
+    RepositoryNotFoundError,
+    CommitNotFoundError,
+    TagAlreadyExistsError,
+    GitWriteError,
+    NotEnoughHistoryError,
+    RepositoryEmptyError,
+    BranchAlreadyExistsError,
+    BranchNotFoundError, # Added for switch
+    MergeConflictError # Added for merge
+)
+from rich.table import Table # Ensure Table is imported for switch (already present due to prior switch command update)
+
 
 # Helper to create a commit
 def make_commit(repo, filename, content, message):
@@ -779,6 +798,270 @@ def test_revert_with_conflicts_and_resolve(local_repo, runner):
     # The repo.state might not immediately return to NONE in test environment
     # if other refs like ORIG_HEAD persist briefly or due to other nuances.
     # The critical part for CLI logic is that REVERT_HEAD/MERGE_HEAD are gone.
+
+
+#######################################
+# Explore Command Tests (CLI Runner)
+#######################################
+
+# This fixture is already defined from the previous step for 'explore' tests.
+# It can be reused for 'switch' tests that need a basic repo with one commit.
+@pytest.fixture
+def cli_test_repo(tmp_path: Path):
+    """Creates a standard initialized repo for CLI tests, returning its path."""
+    repo_path = tmp_path / "cli_git_repo_explore" # Unique name
+    repo_path.mkdir()
+    repo = pygit2.init_repository(str(repo_path), bare=False)
+    # Initial commit
+    file_path = repo_path / "initial.txt"
+    file_path.write_text("initial content for explore tests")
+    repo.index.add("initial.txt")
+    repo.index.write()
+    author = pygit2.Signature("Test Author CLI", "testcli@example.com")
+    tree = repo.index.write_tree()
+    repo.create_commit("HEAD", author, author, "Initial commit for CLI explore", tree, [])
+    return repo_path
+
+class TestExploreCommandCLI:
+    def test_explore_success_cli(self, runner: CliRunner, cli_test_repo: Path):
+        os.chdir(cli_test_repo) # CLI operates on CWD
+        branch_name = "my-new-adventure"
+        result = runner.invoke(cli, ["explore", branch_name])
+
+        assert result.exit_code == 0, f"CLI Error: {result.output}"
+        assert f"Switched to a new exploration: {branch_name}" in result.output
+
+        repo = pygit2.Repository(str(cli_test_repo))
+        assert repo.head.shorthand == branch_name
+        assert not repo.head_is_detached
+
+    def test_explore_branch_exists_cli(self, runner: CliRunner, cli_test_repo: Path):
+        os.chdir(cli_test_repo)
+        branch_name = "existing-feature-branch"
+
+        repo = pygit2.Repository(str(cli_test_repo))
+        repo.branches.local.create(branch_name, repo.head.peel(pygit2.Commit)) # Pre-create the branch
+
+        result = runner.invoke(cli, ["explore", branch_name])
+        assert result.exit_code == 0, f"CLI Error: {result.output}" # CLI handles error gracefully
+        assert f"Error: Branch '{branch_name}' already exists." in result.output
+
+    def test_explore_empty_repo_cli(self, runner: CliRunner, tmp_path: Path):
+        empty_repo_dir = tmp_path / "empty_repo_for_cli_explore"
+        empty_repo_dir.mkdir()
+        pygit2.init_repository(str(empty_repo_dir)) # Initialize empty repo
+        os.chdir(empty_repo_dir)
+
+        result = runner.invoke(cli, ["explore", "some-branch"])
+        assert result.exit_code == 0, f"CLI Error: {result.output}"
+        # This message comes from the core function, propagated by the CLI
+        assert "Error: Cannot create branch: HEAD is unborn. Commit changes first." in result.output
+
+    def test_explore_bare_repo_cli(self, runner: CliRunner, tmp_path: Path):
+        bare_repo_dir = tmp_path / "bare_repo_for_cli_explore.git"
+        pygit2.init_repository(str(bare_repo_dir), bare=True)
+
+        # For CLI tests, `discover_repository` is called on `Path.cwd()`.
+        # If CWD is the bare repo path, it will be discovered.
+        os.chdir(bare_repo_dir)
+
+        result = runner.invoke(cli, ["explore", "any-branch"])
+        assert result.exit_code == 0, f"CLI Error: {result.output}"
+        assert "Error: Operation not supported in bare repositories." in result.output
+
+    def test_explore_non_git_directory_cli(self, runner: CliRunner, tmp_path: Path):
+        non_git_dir = tmp_path / "non_git_dir_for_cli_explore"
+        non_git_dir.mkdir()
+        os.chdir(non_git_dir)
+
+        result = runner.invoke(cli, ["explore", "any-branch"])
+        assert result.exit_code == 0, f"CLI Error: {result.output}"
+        # The error message includes the path that was checked.
+        # For CWD, this is often represented as '.' or the full path.
+        # The core function error is "Repository not found at or above '{repo_path_str}'"
+        # The CLI passes str(Path.cwd()) which becomes the path_str.
+        # We check for the core parts of the message.
+        assert "Error: Repository not found at or above" in result.output
+        # Check if the path is mentioned, could be '.' or absolute path
+        assert f"'{str(Path.cwd())}'" in result.output or "'.'" in result.output
+
+#Fixture for testing CLI commands that interact with remotes
+@pytest.fixture
+def cli_repo_with_remote(tmp_path: Path):
+    local_repo_path = tmp_path / "cli_local_for_remote"
+    local_repo_path.mkdir()
+    local_repo = pygit2.init_repository(str(local_repo_path))
+    # Use the make_commit helper defined in this file
+    make_commit(local_repo, "main_file.txt", "content on main", "Initial commit on main")
+
+    bare_remote_path = tmp_path / "cli_remote_server.git"
+    pygit2.init_repository(str(bare_remote_path), bare=True)
+
+    origin_remote = local_repo.remotes.create("origin", str(bare_remote_path))
+
+    # Push main to establish it on remote
+    main_branch_name = local_repo.head.shorthand
+    origin_remote.push([f"refs/heads/{main_branch_name}:refs/heads/{main_branch_name}"])
+
+    # Create feature-x, commit, push to origin/feature-x
+    main_commit = local_repo.head.peel(pygit2.Commit)
+    local_repo.branches.local.create("feature-x", main_commit)
+    local_repo.checkout("refs/heads/feature-x")
+    make_commit(local_repo, "fx_file.txt", "feature-x content", "Commit on feature-x")
+    origin_remote.push(["refs/heads/feature-x:refs/heads/feature-x"])
+
+    # Create another remote branch origin/feature-y without a local counterpart after push
+    local_repo.checkout(f"refs/heads/{main_branch_name}") # Back to main
+    main_commit_again = local_repo.head.peel(pygit2.Commit)
+    local_repo.branches.local.create("feature-y-local", main_commit_again) # Temporary local branch
+    local_repo.checkout("refs/heads/feature-y-local")
+    make_commit(local_repo, "fy_file.txt", "feature-y content", "Commit for feature-y")
+    origin_remote.push(["refs/heads/feature-y-local:refs/heads/feature-y"]) # Push to 'feature-y' on remote
+    local_repo.branches.local.delete("feature-y-local") # Delete the temp local branch
+
+    # Return to main branch in local repo
+    local_repo.checkout(f"refs/heads/{main_branch_name}")
+
+    return local_repo_path
+
+
+class TestSwitchCommandCLI:
+    def test_switch_list_success_cli(self, runner: CliRunner, cli_test_repo: Path):
+        os.chdir(cli_test_repo)
+        repo = pygit2.Repository(str(cli_test_repo))
+        # cli_test_repo has 'main' (or default like 'master'). Let's assume 'main'.
+        # Create 'develop' for listing.
+        main_commit = repo.head.peel(pygit2.Commit)
+        repo.branches.local.create("develop", main_commit)
+        # Current branch is 'main' (or the default from cli_test_repo fixture)
+
+        result = runner.invoke(cli, ["switch"])
+        assert result.exit_code == 0, f"CLI Error: {result.output}"
+        assert "Available Explorations" in result.output # Table title
+        # Order depends on sorting, core list_branches sorts alphabetically.
+        # Fixture creates 'main', we add 'develop'. Expected: 'develop', 'main'
+        # Current branch (main) should be marked with '*'
+        output_lines = result.output.splitlines()
+        assert any("  develop" in line for line in output_lines)
+        assert any(f"* {repo.head.shorthand}" in line for line in output_lines)
+
+
+    def test_switch_list_empty_repo_cli(self, runner: CliRunner, tmp_path: Path):
+        empty_repo_dir = tmp_path / "empty_for_cli_switch_list"
+        empty_repo_dir.mkdir()
+        pygit2.init_repository(str(empty_repo_dir))
+        os.chdir(empty_repo_dir)
+
+        result = runner.invoke(cli, ["switch"])
+        assert result.exit_code == 0, f"CLI Error: {result.output}"
+        assert "No explorations (branches) yet." in result.output
+
+    def test_switch_list_bare_repo_cli(self, runner: CliRunner, tmp_path: Path):
+        bare_repo_dir = tmp_path / "bare_for_cli_switch_list.git"
+        pygit2.init_repository(str(bare_repo_dir), bare=True)
+        os.chdir(bare_repo_dir)
+
+        result = runner.invoke(cli, ["switch"])
+        assert result.exit_code == 0, f"CLI Error: {result.output}"
+        assert "Error: Operation not supported in bare repositories." in result.output
+
+    def test_switch_list_non_git_directory_cli(self, runner: CliRunner, tmp_path: Path):
+        non_git_dir = tmp_path / "non_git_for_cli_switch_list"
+        non_git_dir.mkdir()
+        os.chdir(non_git_dir)
+
+        result = runner.invoke(cli, ["switch"])
+        assert result.exit_code == 0, f"CLI Error: {result.output}"
+        assert "Error: Repository not found at or above" in result.output
+
+    def test_switch_to_local_branch_success_cli(self, runner: CliRunner, cli_test_repo: Path):
+        os.chdir(cli_test_repo)
+        repo = pygit2.Repository(str(cli_test_repo))
+        initial_branch = repo.head.shorthand
+
+        repo.branches.local.create("develop", repo.head.peel(pygit2.Commit))
+
+        result = runner.invoke(cli, ["switch", "develop"])
+        assert result.exit_code == 0, f"CLI Error: {result.output}"
+        assert f"Switched to exploration: develop" in result.output
+
+        repo.head.resolve() # Ensure head is refreshed
+        assert repo.head.shorthand == "develop"
+        assert not repo.head_is_detached
+
+    def test_switch_already_on_branch_cli(self, runner: CliRunner, cli_test_repo: Path):
+        os.chdir(cli_test_repo)
+        repo = pygit2.Repository(str(cli_test_repo))
+        current_branch = repo.head.shorthand
+
+        result = runner.invoke(cli, ["switch", current_branch])
+        assert result.exit_code == 0, f"CLI Error: {result.output}"
+        assert f"Already on exploration: {current_branch}" in result.output
+
+    def test_switch_to_remote_branch_detached_head_cli(self, runner: CliRunner, cli_repo_with_remote: Path):
+        os.chdir(cli_repo_with_remote)
+        # 'feature-y' exists on remote 'origin' but not locally in the fixture.
+        # Core function resolves "feature-y" to "origin/feature-y"
+
+        result = runner.invoke(cli, ["switch", "feature-y"])
+        assert result.exit_code == 0, f"CLI Error: {result.output}"
+        assert f"Switched to exploration: origin/feature-y" in result.output # Core returns resolved name
+        assert "Note: HEAD is now in a detached state." in result.output
+
+        repo = pygit2.Repository(str(cli_repo_with_remote))
+        assert repo.head_is_detached
+
+    def test_switch_branch_not_found_cli(self, runner: CliRunner, cli_test_repo: Path):
+        os.chdir(cli_test_repo)
+        result = runner.invoke(cli, ["switch", "no-such-branch-here"])
+        assert result.exit_code == 0, f"CLI Error: {result.output}"
+        assert "Error: Branch 'no-such-branch-here' not found" in result.output
+
+    def test_switch_in_bare_repo_action_cli(self, runner: CliRunner, tmp_path: Path):
+        bare_repo_dir = tmp_path / "bare_for_cli_switch_action.git"
+        pygit2.init_repository(str(bare_repo_dir), bare=True)
+        os.chdir(bare_repo_dir)
+
+        result = runner.invoke(cli, ["switch", "anybranch"])
+        assert result.exit_code == 0, f"CLI Error: {result.output}"
+        assert "Error: Operation not supported in bare repositories." in result.output
+
+    def test_switch_in_empty_repo_action_cli(self, runner: CliRunner, tmp_path: Path):
+        empty_repo_dir = tmp_path / "empty_for_cli_switch_action"
+        empty_repo_dir.mkdir()
+        pygit2.init_repository(str(empty_repo_dir))
+        os.chdir(empty_repo_dir)
+
+        result = runner.invoke(cli, ["switch", "anybranch"])
+        assert result.exit_code == 0, f"CLI Error: {result.output}"
+        # Core `switch_to_branch` raises RepositoryEmptyError in this specific case
+        assert "Error: Cannot switch branch in an empty repository to non-existent branch 'anybranch'." in result.output
+
+    def test_switch_dirty_workdir_cli(self, runner: CliRunner, cli_test_repo: Path):
+        os.chdir(cli_test_repo)
+        repo = pygit2.Repository(str(cli_test_repo))
+
+        # Create 'develop' branch
+        main_commit = repo.head.peel(pygit2.Commit)
+        develop_branch = repo.branches.local.create("develop", main_commit)
+
+        # Make a commit on 'develop' that modifies a file
+        repo.checkout(develop_branch.name)
+        repo.set_head(develop_branch.name)
+        (Path(str(cli_test_repo)) / "conflict_file.txt").write_text("Version on develop")
+        make_commit(repo, "conflict_file.txt", "Version on develop", "Commit on develop")
+
+        # Switch back to 'main'
+        main_branch = repo.branches.local[repo.head.shorthand if repo.head.shorthand == 'main' else 'master'] # Get main/master
+        repo.checkout(main_branch.name)
+        repo.set_head(main_branch.name)
+
+        # Create the same file on 'main' with different content and make it dirty
+        (Path(str(cli_test_repo)) / "conflict_file.txt").write_text("Dirty version on main")
+
+        result = runner.invoke(cli, ["switch", "develop"])
+        assert result.exit_code == 0, f"CLI Error: {result.output}"
+        assert "Error: Checkout failed: Your local changes to tracked files would be overwritten by checkout of 'develop'." in result.output
 
 
 #######################################
@@ -3134,3 +3417,189 @@ class TestTagCommandsCLI:
         assert result['status'] == 'empty' # Core function strips lines, resulting in no actual patterns
         assert result['patterns'] == []
         assert result['message'] == '.gitignore is empty.'
+
+# Helper for configuring user for tests that create commits
+@pytest.fixture
+def configure_git_user_for_cli(tmp_path): # Renamed to avoid conflict if imported from core tests
+    """Fixture to configure user.name and user.email for CLI tests requiring commits."""
+    def _configure(repo_path_str: str):
+        # This helper assumes repo_path_str is valid and repo exists
+        repo = pygit2.Repository(repo_path_str)
+        config = repo.config
+        config.set_multivar("user.name", "CLITest User")
+        config.set_multivar("user.email", "clitest@example.com")
+    return _configure
+
+@pytest.fixture
+def cli_repo_for_merge(tmp_path: Path, configure_git_user_for_cli) -> Path:
+    repo_path = tmp_path / "cli_merge_normal_repo"
+    repo_path.mkdir()
+    pygit2.init_repository(str(repo_path))
+    configure_git_user_for_cli(str(repo_path))
+    repo = pygit2.Repository(str(repo_path))
+
+    # C0 - Initial commit on main
+    make_commit(repo, "common.txt", "line0", "C0: Initial on main")
+    c0_oid = repo.head.target
+
+    # C1 on main
+    make_commit(repo, "main_file.txt", "main content", "C1: Commit on main")
+
+    # Create feature branch from C0
+    feature_branch = repo.branches.local.create("feature", repo.get(c0_oid))
+    repo.checkout(feature_branch.name)
+    make_commit(repo, "feature_file.txt", "feature content", "C2: Commit on feature")
+
+    # Switch back to main for the test starting point
+    repo.checkout(repo.branches.local['main'].name)
+    return repo_path
+
+@pytest.fixture
+def cli_repo_for_ff_merge(tmp_path: Path, configure_git_user_for_cli) -> Path:
+    repo_path = tmp_path / "cli_repo_for_ff_merge"
+    repo_path.mkdir()
+    pygit2.init_repository(str(repo_path))
+    configure_git_user_for_cli(str(repo_path))
+    repo = pygit2.Repository(str(repo_path))
+
+    make_commit(repo, "main_base.txt", "base for ff", "C0: Base on main")
+    c0_oid = repo.head.target
+
+    feature_branch = repo.branches.local.create("feature", repo.get(c0_oid))
+    repo.checkout(feature_branch.name)
+    make_commit(repo, "feature_ff.txt", "ff content", "C1: Commit on feature")
+
+    repo.checkout(repo.branches.local['main'].name)
+    return repo_path
+
+@pytest.fixture
+def cli_repo_for_conflict_merge(tmp_path: Path, configure_git_user_for_cli) -> Path:
+    repo_path = tmp_path / "cli_repo_for_conflict_merge"
+    repo_path.mkdir()
+    pygit2.init_repository(str(repo_path))
+    configure_git_user_for_cli(str(repo_path))
+    repo = pygit2.Repository(str(repo_path))
+
+    conflict_file = "conflict.txt"
+    make_commit(repo, conflict_file, "Line1\nCommon Line\nLine3", "C0: Common ancestor")
+    c0_oid = repo.head.target
+
+    make_commit(repo, conflict_file, "Line1\nChange on Main\nLine3", "C1: Change on main")
+
+    feature_branch = repo.branches.local.create("feature", repo.get(c0_oid))
+    repo.checkout(feature_branch.name)
+    make_commit(repo, conflict_file, "Line1\nChange on Feature\nLine3", "C2: Change on feature")
+
+    repo.checkout(repo.branches.local['main'].name)
+    return repo_path
+
+class TestMergeCommandCLI:
+    def test_merge_normal_success_cli(self, runner: CliRunner, cli_repo_for_merge: Path):
+        os.chdir(cli_repo_for_merge)
+        result = runner.invoke(cli, ["merge", "feature"])
+
+        assert result.exit_code == 0, f"CLI Error: {result.output}"
+        assert "Merged 'feature' into 'main'. New commit:" in result.output
+
+        repo = pygit2.Repository(str(cli_repo_for_merge))
+        match = re.search(r"New commit: ([a-f0-9]{7,})\.", result.output)
+        assert match, "Could not find commit OID in output."
+        merge_commit_oid_short = match.group(1)
+
+        merge_commit = repo.revparse_single(merge_commit_oid_short)
+        assert merge_commit is not None
+        assert len(merge_commit.parents) == 2
+        assert repo.state == pygit2.GIT_REPOSITORY_STATE_NONE
+
+    def test_merge_fast_forward_success_cli(self, runner: CliRunner, cli_repo_for_ff_merge: Path):
+        os.chdir(cli_repo_for_ff_merge)
+        result = runner.invoke(cli, ["merge", "feature"])
+
+        assert result.exit_code == 0, f"CLI Error: {result.output}"
+        assert "Fast-forwarded 'main' to 'feature' (commit " in result.output
+
+        repo = pygit2.Repository(str(cli_repo_for_ff_merge))
+        assert repo.head.target == repo.branches.local['feature'].target
+
+    def test_merge_up_to_date_cli(self, runner: CliRunner, cli_repo_for_ff_merge: Path):
+        os.chdir(cli_repo_for_ff_merge)
+        runner.invoke(cli, ["merge", "feature"])
+
+        result = runner.invoke(cli, ["merge", "feature"])
+        assert result.exit_code == 0, f"CLI Error: {result.output}"
+        assert "'main' is already up-to-date with 'feature'." in result.output
+
+    def test_merge_conflict_cli(self, runner: CliRunner, cli_repo_for_conflict_merge: Path):
+        os.chdir(cli_repo_for_conflict_merge)
+        result = runner.invoke(cli, ["merge", "feature"])
+
+        assert result.exit_code == 0, f"CLI Error: {result.output}"
+        assert "Error: Automatic merge of 'feature' into 'main' failed due to conflicts." in result.output
+        assert "Conflicting files:" in result.output
+        assert "  conflict.txt" in result.output
+        assert "Please resolve conflicts and then use 'gitwrite save <message>' to commit the merge." in result.output
+
+        repo = pygit2.Repository(str(cli_repo_for_conflict_merge))
+        assert repo.lookup_reference("MERGE_HEAD") is not None
+
+    def test_merge_branch_not_found_cli(self, runner: CliRunner, cli_test_repo: Path):
+        os.chdir(cli_test_repo)
+        result = runner.invoke(cli, ["merge", "no-such-branch"])
+        assert result.exit_code == 0, f"CLI Error: {result.output}"
+        assert "Error: Branch 'no-such-branch' not found" in result.output
+
+    def test_merge_into_itself_cli(self, runner: CliRunner, cli_test_repo: Path):
+        os.chdir(cli_test_repo)
+        repo = pygit2.Repository(str(cli_test_repo))
+        current_branch = repo.head.shorthand
+        result = runner.invoke(cli, ["merge", current_branch])
+        assert result.exit_code == 0, f"CLI Error: {result.output}"
+        assert "Error: Cannot merge a branch into itself." in result.output
+
+    def test_merge_detached_head_cli(self, runner: CliRunner, cli_test_repo: Path):
+        os.chdir(cli_test_repo)
+        repo = pygit2.Repository(str(cli_test_repo))
+        repo.set_head(repo.head.target)
+        assert repo.head_is_detached
+
+        result = runner.invoke(cli, ["merge", "main"])
+        assert result.exit_code == 0, f"CLI Error: {result.output}"
+        assert "Error: HEAD is detached. Please switch to a branch to perform a merge." in result.output
+
+    def test_merge_empty_repo_cli(self, runner: CliRunner, tmp_path: Path):
+        empty_repo = tmp_path / "empty_for_merge_cli"
+        empty_repo.mkdir()
+        pygit2.init_repository(str(empty_repo))
+        os.chdir(empty_repo)
+
+        result = runner.invoke(cli, ["merge", "anybranch"])
+        assert result.exit_code == 0, f"CLI Error: {result.output}"
+        assert "Error: Repository is empty or HEAD is unborn. Cannot perform merge." in result.output
+
+    def test_merge_bare_repo_cli(self, runner: CliRunner, tmp_path: Path):
+        bare_repo_path = tmp_path / "bare_for_merge_cli.git"
+        pygit2.init_repository(str(bare_repo_path), bare=True)
+        os.chdir(bare_repo_path)
+
+        result = runner.invoke(cli, ["merge", "anybranch"])
+        assert result.exit_code == 0, f"CLI Error: {result.output}"
+        assert "Error: Cannot merge in a bare repository." in result.output
+
+    def test_merge_no_signature_cli(self, runner: CliRunner, tmp_path: Path):
+        repo_path_no_sig = tmp_path / "no_sig_repo_for_cli_merge"
+        repo_path_no_sig.mkdir()
+        repo = pygit2.init_repository(str(repo_path_no_sig))
+        # DO NOT configure user.name/user.email for this repo
+
+        make_commit(repo, "common.txt", "line0", "C0: Initial on main")
+        c0_oid = repo.head.target
+        make_commit(repo, "main_file.txt", "main content", "C1: Commit on main")
+        feature_branch = repo.branches.local.create("feature", repo.get(c0_oid))
+        repo.checkout(feature_branch.name)
+        make_commit(repo, "feature_file.txt", "feature content", "C2: Commit on feature")
+        repo.checkout(repo.branches.local['main'].name)
+
+        os.chdir(repo_path_no_sig)
+        result = runner.invoke(cli, ["merge", "feature"])
+        assert result.exit_code == 0, f"CLI Error: {result.output}"
+        assert "Error: User signature (user.name and user.email) not configured in Git." in result.output

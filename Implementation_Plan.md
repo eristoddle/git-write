@@ -81,7 +81,8 @@ Status: **Completed**
 
 ### Task 3.1 - Agent_CLI_Dev: Refactor `explore`, `switch`, `merge`, and `revert`
 Objective: Move the logic for commands that modify repository state and handle conflicts.
-Status: **Pending**
+Status: **Partially Completed**
+Note: `explore`, `switch`, and `merge` commands have been refactored. The `revert` command is pending.
 
 1.  Create appropriate functions in `gitwrite_core/branching.py` for `explore`, `switch`, and `merge`.
 2.  Create appropriate functions in `gitwrite_core/versioning.py` for `revert`.

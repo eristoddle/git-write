@@ -29,3 +29,15 @@ class TagAlreadyExistsError(GitWriteError):
 class NotEnoughHistoryError(GitWriteError):
     """Raised when an operation cannot be performed due to insufficient commit history."""
     pass
+
+class BranchAlreadyExistsError(GitWriteError):
+    """Raised when attempting to create a branch that already exists."""
+    pass
+
+class RepositoryEmptyError(GitWriteError):
+    """Raised when an operation cannot be performed on an empty repository."""
+    pass
+
+class OperationAbortedError(GitWriteError):
+    """Raised when an operation is aborted due to a condition that prevents completion (e.g., unsupported operation type)."""
+    pass
