@@ -1,0 +1,23 @@
+class GitWriteError(Exception):
+    """Base exception for all gitwrite-core errors."""
+    pass
+
+class RepositoryNotFoundError(GitWriteError):
+    """Raised when a Git repository is not found."""
+    pass
+
+class DirtyWorkingDirectoryError(GitWriteError):
+    """Raised when an operation cannot proceed due to uncommitted changes."""
+    pass
+
+class CommitNotFoundError(GitWriteError):
+    """Raised when a specified commit reference cannot be found."""
+    pass
+
+class BranchNotFoundError(GitWriteError):
+    """Raised when a specified branch cannot be found."""
+    pass
+
+class MergeConflictError(GitWriteError):
+    """Raised when a merge or revert results in conflicts."""
+    pass
