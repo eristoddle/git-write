@@ -315,3 +315,317 @@ def revert_commit(repo_path_str: str, commit_ish_to_revert: str) -> dict:
     except Exception as e: # Catch any other unexpected error during commit
         repo.reset(repo.head.target, pygit2.GIT_RESET_HARD)
         raise GitWriteError(f"An unexpected error occurred while creating the revert commit: {e}. Working directory reset.")
+
+
+def get_conflicting_files(conflicts_iterator):
+    """Helper function to extract path names from conflicts iterator."""
+    conflicting_paths = []
+    if conflicts_iterator:
+        for conflict_entry in conflicts_iterator:
+            # Each conflict_entry can have ancestor, our, their.
+            # We need to pick one path that represents the conflict.
+            # Usually, 'our' or 'their' path is sufficient.
+            if conflict_entry.our:
+                conflicting_paths.append(conflict_entry.our.path)
+            elif conflict_entry.their: # Fallback if 'our' is not present for some reason
+                conflicting_paths.append(conflict_entry.their.path)
+            elif conflict_entry.ancestor: # Fallback if both 'our' and 'their' are not present
+                conflicting_paths.append(conflict_entry.ancestor.path)
+    return conflicting_paths
+
+
+def save_changes(repo_path_str: str, message: str, include_paths: Optional[List[str]] = None) -> Dict:
+    """
+    Saves changes in the repository by creating a new commit.
+
+    Args:
+        repo_path_str: Path to the repository.
+        message: The commit message.
+        include_paths: Optional list of file/directory paths to stage.
+                       If None, all changes in the working directory are staged.
+
+    Returns:
+        A dictionary with commit details on success.
+        Example: {'status': 'success', 'oid': '...', 'short_oid': '...', ...}
+
+    Raises:
+        RepositoryNotFoundError: If the repository is not found.
+        RepositoryEmptyError: If trying to save in an empty repository without an initial commit
+                              (unless this is the initial commit itself).
+        NoChangesToSaveError: If no changes are detected to be staged (either overall or in
+                              specified `include_paths`).
+        MergeConflictError: If MERGE_HEAD exists and there are unresolved conflicts in the index.
+        RevertConflictError: If REVERT_HEAD exists and there are unresolved conflicts in the index.
+        GitWriteError: For other general Git-related errors during the save process.
+    """
+    import time # Import time for fallback signature
+    from .exceptions import NoChangesToSaveError, RevertConflictError, RepositoryEmptyError # Ensure these are available
+
+    try:
+        repo_discovered_path = pygit2.discover_repository(repo_path_str)
+        if repo_discovered_path is None:
+            raise RepositoryNotFoundError(f"Repository not found at or above '{repo_path_str}'.")
+        repo = pygit2.Repository(repo_discovered_path)
+    except pygit2.GitError as e:
+        # Catching generic GitError during discovery/init and re-raising
+        raise RepositoryNotFoundError(f"Error discovering or initializing repository at '{repo_path_str}': {e}")
+
+    if repo.is_bare:
+        raise GitWriteError("Cannot save changes in a bare repository.")
+
+    is_merge_commit = False
+    is_revert_commit = False
+    parents = []
+    final_message = message # Default to user-provided message
+
+    try:
+        author = repo.default_signature
+        committer = repo.default_signature
+    except pygit2.GitError: # Fallback if .gitconfig has no user.name/user.email
+        current_time = int(time.time())
+        # Offset is 0 for UTC, but pygit2.Signature expects it in minutes.
+        # Using local time offset might be better if available, but 0 (UTC) is a safe default.
+        offset = 0
+        try:
+            # Try to get local timezone offset
+            local_tz = datetime.now(timezone.utc).astimezone().tzinfo
+            if local_tz:
+                offset_delta = local_tz.utcoffset(datetime.now())
+                if offset_delta:
+                    offset = int(offset_delta.total_seconds() / 60)
+        except Exception: # pragma: no cover
+            pass # Stick to UTC if local timezone fails
+        author = pygit2.Signature("GitWrite User", "user@example.com", current_time, offset)
+        committer = pygit2.Signature("GitWrite User", "user@example.com", current_time, offset)
+
+
+    # 1. Handle special states: Merge/Revert
+    # These states mean an operation (merge or revert) was started and needs finalizing.
+    # In these cases, `include_paths` is usually ignored, and all changes related to
+    # resolving the merge/revert are committed.
+
+    try:
+        # Check for MERGE_HEAD
+        merge_head_ref = repo.lookup_reference("MERGE_HEAD")
+        if merge_head_ref and merge_head_ref.target:
+            if include_paths:
+                raise GitWriteError("Selective staging with --include is not allowed during an active merge operation.")
+
+            merge_head_oid = merge_head_ref.target
+            repo.index.read() # Ensure index is up-to-date before add_all
+            repo.index.add_all() # Stage all changes to finalize the merge
+            repo.index.write()   # Persist staged changes to the index file
+
+            if repo.index.conflicts:
+                conflicting_files = get_conflicting_files(repo.index.conflicts)
+                raise MergeConflictError(
+                    "Unresolved conflicts detected during merge. Please resolve them before saving.",
+                    conflicting_files=conflicting_files
+                )
+
+            if repo.head_is_unborn: # Should not happen during a merge
+                raise GitWriteError("Repository HEAD is unborn during a merge operation, which is unexpected.")
+            parents = [repo.head.target, merge_head_oid]
+            is_merge_commit = True
+            # `final_message` will be the user-provided message.
+            # Standard merge commits often have messages like "Merge branch 'X' into 'Y'".
+            # Users of this function are expected to provide such a message if desired.
+
+    except pygit2.KeyError: # MERGE_HEAD not found, so not a merge
+        pass
+    except pygit2.GitError as e: # Other git errors during merge head lookup
+        raise GitWriteError(f"Error checking for MERGE_HEAD: {e}")
+
+
+    if not is_merge_commit: # Only check for REVERT_HEAD if not already handling a merge
+        try:
+            revert_head_ref = repo.lookup_reference("REVERT_HEAD")
+            if revert_head_ref and revert_head_ref.target:
+                if include_paths:
+                    raise GitWriteError("Selective staging with --include is not allowed during an active revert operation.")
+
+                revert_head_oid = revert_head_ref.target
+                repo.index.read() # Ensure index is up-to-date
+                repo.index.add_all() # Stage all changes to finalize the revert
+                repo.index.write()   # Persist staged changes
+
+                if repo.index.conflicts:
+                    conflicting_files = get_conflicting_files(repo.index.conflicts)
+                    raise RevertConflictError(
+                        "Unresolved conflicts detected during revert. Please resolve them before saving.",
+                        conflicting_files=conflicting_files
+                    )
+
+                if repo.head_is_unborn: # Should not happen during a revert
+                     raise GitWriteError("Repository HEAD is unborn during a revert operation, which is unexpected.")
+                parents = [repo.head.target] # A revert commit typically has one parent (current HEAD)
+
+                # Construct standard revert message format
+                try:
+                    reverted_commit = repo.get(revert_head_oid)
+                    if reverted_commit and reverted_commit.message:
+                        first_line_of_reverted_msg = reverted_commit.message.splitlines()[0]
+                        final_message = f"Revert \"{first_line_of_reverted_msg}\"\n\nThis reverts commit {revert_head_oid}.\n\n{message}"
+                    else: # pragma: no cover
+                        final_message = f"Revert commit {revert_head_oid}.\n\n{message}" # Fallback if reverted commit message is weird
+                except Exception: # pragma: no cover
+                     final_message = f"Revert commit {revert_head_oid}.\n\n{message}" # General fallback
+
+                is_revert_commit = True
+
+        except pygit2.KeyError: # REVERT_HEAD not found
+            pass # Not a revert
+        except pygit2.GitError as e: # Other git errors
+            raise GitWriteError(f"Error checking for REVERT_HEAD: {e}")
+
+    # 2. Handle Normal Save (No Merge/Revert in Progress)
+    if not is_merge_commit and not is_revert_commit:
+        repo.index.read() # Load current index state
+
+        if repo.head_is_unborn: # This is going to be the initial commit
+            if not include_paths: # Stage all if no specific paths given
+                repo.index.add_all()
+            else: # Stage only specified paths
+                for path_str in include_paths:
+                    try:
+                        repo.index.add(path_str)
+                    except pygit2.GitError as e: # Pathspec error, etc.
+                        # Optionally, collect warnings about paths not added
+                        print(f"Warning: Could not add path '{path_str}': {e}") # Or use a logging framework
+                        pass
+            repo.index.write()
+            if not list(repo.index): # Check if anything was actually staged
+                raise NoChangesToSaveError(
+                    "Cannot create an initial commit: no files were staged. "
+                    "If include_paths were specified, they might be invalid or ignored."
+                )
+            parents = [] # Initial commit has no parents
+
+        else: # Not an initial commit, regular commit
+            if include_paths:
+                # Stage only specified paths
+                # We need to see if these paths actually result in a change to the index
+                # Get the tree of the current index *before* adding new paths
+                # This helps determine if the subsequent add operations actually changed anything.
+                # However, repo.index.write_tree() clears the index in memory (ステージングエリアをクリアする)
+                # So we should not use it here before `repo.index.add`.
+                # Instead, we can diff the index against HEAD *after* adding.
+
+                # Store current index state by writing to a temporary tree
+                # This is problematic as write_tree() clears the index if used directly on repo.index.
+                # A better way for `include_paths` is to check `repo.status()` for those paths,
+                # or simply add them and then check if the resulting index diff to HEAD is non-empty.
+
+                # Simpler approach: add specified paths, then check if index changed from HEAD.
+                for path_str in include_paths:
+                    try:
+                        repo.index.add(path_str)
+                    except pygit2.GitError as e:
+                        # Pathspec may not exist, or is gitignored and not forced.
+                        # Collect warnings if desired.
+                        print(f"Warning: Could not add path '{path_str}': {e}")
+                        pass
+                repo.index.write() # Persist the changes to the index from add() operations
+
+                # Now, check if the updated index has any changes compared to HEAD tree
+                # If there are no changes, it means the specified files either didn't exist,
+                # were ignored, or had no modifications to stage.
+                diff_to_head = repo.diff_to_tree(repo.head.peel(pygit2.Tree))
+                if not diff_to_head:
+                    raise NoChangesToSaveError(
+                        "No specified files had changes to stage relative to HEAD. "
+                        "Files might be unchanged, non-existent, or gitignored."
+                    )
+            else: # Stage all changes in the working directory
+                repo.index.add_all()
+                repo.index.write()
+
+                # Check repo status to see if there's anything to commit
+                status = repo.status()
+                if not status: # Empty status dict means no changes from HEAD
+                    # This applies if working dir is clean AND index matches HEAD.
+                    # If `add_all` was called, differences between working dir and index are now staged.
+                    # So, we need to check if the index (now written) differs from HEAD.
+                    if repo.head_is_unborn: # Should be caught by initial commit logic
+                        if not list(repo.index): # Double check for empty index
+                           raise NoChangesToSaveError("No changes to save for initial commit.")
+                    elif not repo.diff_to_tree(repo.head.peel(pygit2.Tree)):
+                        raise NoChangesToSaveError("No changes to save (working directory and index are clean or match HEAD).")
+
+            if repo.head_is_unborn: # Should be caught by initial commit logic already.
+                # This case indicates an issue if reached here, as 'initial commit' path should handle it.
+                 raise RepositoryEmptyError("Repository is empty and this is not an initial commit flow.")
+            parents = [repo.head.target]
+
+
+    # 3. Create Commit object
+    try:
+        # The index must have been written by this point by one of the branches above.
+        tree_oid = repo.index.write_tree()
+    except pygit2.GitError as e:
+        # This can happen if the index is empty (e.g., initial commit with no files)
+        # or somehow corrupted. The checks above should prevent an empty index here.
+        if repo.head_is_unborn and not list(repo.index): # list(repo.index) checks current in-memory index
+            raise NoChangesToSaveError("Cannot create an initial commit with no files staged. Index is empty before tree write.")
+        raise GitWriteError(f"Failed to write index tree: {e}")
+
+    # Ensure parents list is correctly set for non-initial commits
+    if not repo.head_is_unborn and not parents:
+        # This implies a non-initial commit is about to be made without parents.
+        # This shouldn't happen if logic above is correct (merge, revert, or normal commit paths).
+        # It might indicate HEAD is detached and points to a non-existent commit,
+        # or some other inconsistent repository state.
+        # For safety, re-fetch HEAD target if parents list is empty for a non-unborn HEAD.
+        # However, pygit2.Repository.create_commit will likely fail if parents are incorrect.
+        # The parent calculation logic in each branch (initial, merge, revert, normal)
+        # should correctly set `parents`. This is a safeguard or indicates a logic flaw if hit.
+        # Defaulting to current HEAD if it was missed:
+        parents = [repo.head.target]
+
+
+    try:
+        commit_oid = repo.create_commit(
+            "HEAD",          # Update HEAD to point to the new commit
+            author,
+            committer,
+            final_message,   # Use the potentially modified message (e.g., for reverts)
+            tree_oid,
+            parents
+        )
+    except pygit2.GitError as e:
+        # Example: empty message if git config disallows it, or bad parent OIDs.
+        raise GitWriteError(f"Failed to create commit object: {e}")
+    except ValueError as e: # E.g. if message is empty and not allowed
+        raise GitWriteError(f"Failed to create commit due to invalid value (e.g. empty message): {e}")
+
+
+    # 4. Post-Commit Actions
+    if is_merge_commit or is_revert_commit:
+        try:
+            repo.state_cleanup() # Remove MERGE_HEAD, REVERT_HEAD, etc.
+        except pygit2.GitError as e: # pragma: no cover
+            # This is not ideal, but the commit was made. Log or notify about cleanup failure.
+            print(f"Warning: Commit was successful, but failed to cleanup repository state (e.g., MERGE_HEAD/REVERT_HEAD): {e}")
+            pass # Continue to return success as commit is made.
+
+    # Determine current branch name
+    branch_name = None
+    if not repo.head_is_detached:
+        try:
+            branch_name = repo.head.shorthand
+        except pygit2.GitError: # pragma: no cover
+            branch_name = "UNKNOWN_BRANCH" # Should be rare if not detached
+    else: # head_is_detached is True
+        branch_name = "DETACHED_HEAD"
+        # Could try to find branches pointing to this commit_oid for more info if needed
+
+    # 5. Return Success
+    return {
+        'status': 'success',
+        'oid': str(commit_oid),
+        'short_oid': str(commit_oid)[:7],
+        'branch_name': branch_name,
+        'message': final_message,
+        'is_merge_commit': is_merge_commit,
+        'is_revert_commit': is_revert_commit,
+    }

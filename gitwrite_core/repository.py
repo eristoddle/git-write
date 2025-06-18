@@ -320,3 +320,272 @@ def list_gitignore_patterns(repo_path_str: str) -> Dict[str, Any]:
 
     except Exception as e: # Catch-all for unexpected issues
         return {'status': 'error', 'patterns': [], 'message': f"An unexpected error occurred: {e}"}
+
+
+def get_conflicting_files(conflicts_iterator) -> List[str]: # Copied from versioning.py for now
+    """Helper function to extract path names from conflicts iterator."""
+    conflicting_paths = []
+    if conflicts_iterator:
+        for conflict_entry in conflicts_iterator:
+            if conflict_entry.our:
+                conflicting_paths.append(conflict_entry.our.path)
+            elif conflict_entry.their:
+                conflicting_paths.append(conflict_entry.their.path)
+            elif conflict_entry.ancestor:
+                conflicting_paths.append(conflict_entry.ancestor.path)
+    return conflicting_paths
+
+
+def sync_repository(repo_path_str: str, remote_name: str = "origin", branch_name_opt: Optional[str] = None, push: bool = True, allow_no_push: bool = False) -> dict:
+    """
+    Synchronizes a local repository branch with its remote counterpart.
+    It fetches changes, integrates them (fast-forward or merge), and optionally pushes.
+    """
+    from .exceptions import ( # Local import to avoid issues if this file is imported elsewhere early
+        RepositoryNotFoundError, RepositoryEmptyError, DetachedHeadError,
+        RemoteNotFoundError, BranchNotFoundError, FetchError,
+        MergeConflictError, PushError, GitWriteError
+    )
+    import time # For fallback signature
+
+    # Initialize return dictionary structure
+    result_summary = {
+        "status": "pending",
+        "branch_synced": None,
+        "remote": remote_name,
+        "fetch_status": {"message": "Not performed"},
+        "local_update_status": {"type": "none", "message": "Not performed", "conflicting_files": []},
+        "push_status": {"pushed": False, "message": "Not performed"}
+    }
+
+    try:
+        repo_discovered_path = pygit2.discover_repository(repo_path_str)
+        if repo_discovered_path is None:
+            raise RepositoryNotFoundError(f"Repository not found at or above '{repo_path_str}'.")
+        repo = pygit2.Repository(repo_discovered_path)
+    except pygit2.GitError as e:
+        raise RepositoryNotFoundError(f"Error discovering repository at '{repo_path_str}': {e}")
+
+    if repo.is_bare:
+        raise GitWriteError("Cannot sync a bare repository.")
+    if repo.is_empty or repo.head_is_unborn:
+        raise RepositoryEmptyError("Repository is empty or HEAD is unborn. Cannot sync.")
+
+    # Determine target local branch and its reference
+    local_branch_name: str
+    local_branch_ref: pygit2.Reference
+    if branch_name_opt:
+        local_branch_name = branch_name_opt
+        try:
+            local_branch_ref = repo.branches.local[local_branch_name]
+        except KeyError:
+            raise BranchNotFoundError(f"Local branch '{local_branch_name}' not found.")
+    else:
+        if repo.head_is_detached:
+            raise DetachedHeadError("HEAD is detached. Please specify a branch to sync or checkout a branch.")
+        local_branch_name = repo.head.shorthand
+        local_branch_ref = repo.head
+
+    result_summary["branch_synced"] = local_branch_name
+
+    # Get remote
+    try:
+        remote = repo.remotes[remote_name]
+    except KeyError:
+        raise RemoteNotFoundError(f"Remote '{remote_name}' not found.")
+
+    # 1. Fetch
+    try:
+        stats = remote.fetch()
+        result_summary["fetch_status"] = {
+            "received_objects": stats.received_objects,
+            "total_objects": stats.total_objects,
+            "message": "Fetch complete."
+        }
+    except pygit2.GitError as e:
+        result_summary["fetch_status"] = {"message": f"Fetch failed: {e}"}
+        raise FetchError(f"Failed to fetch from remote '{remote_name}': {e}")
+
+    # 2. Integrate Remote Changes
+    local_commit_oid = local_branch_ref.target
+    remote_tracking_branch_name = f"refs/remotes/{remote_name}/{local_branch_name}"
+
+    try:
+        remote_branch_ref = repo.lookup_reference(remote_tracking_branch_name)
+        their_commit_oid = remote_branch_ref.target
+    except KeyError:
+        # Remote tracking branch doesn't exist. This means local branch is new or remote was deleted.
+        # We can only push if local branch has commits.
+        result_summary["local_update_status"]["type"] = "no_remote_branch"
+        result_summary["local_update_status"]["message"] = f"Remote tracking branch '{remote_tracking_branch_name}' not found. Assuming new local branch to be pushed."
+        # Proceed to push logic if applicable
+        pass
+    else: # Remote tracking branch exists, proceed with merge/ff logic
+        if local_commit_oid == their_commit_oid:
+            result_summary["local_update_status"]["type"] = "up_to_date"
+            result_summary["local_update_status"]["message"] = "Local branch is already up-to-date with remote."
+        else:
+            # Ensure HEAD is pointing to the local branch being synced
+            if repo.head.target != local_branch_ref.target :
+                 repo.checkout(local_branch_ref.name, strategy=pygit2.GIT_CHECKOUT_FORCE) # Switch to the branch
+                 repo.set_head(local_branch_ref.name) # Ensure HEAD reference is updated
+
+            ahead, behind = repo.ahead_behind(local_commit_oid, their_commit_oid)
+
+            if ahead > 0 and behind == 0: # Local is ahead
+                result_summary["local_update_status"]["type"] = "local_ahead"
+                result_summary["local_update_status"]["message"] = "Local branch is ahead of remote. Nothing to merge/ff."
+            elif behind > 0 : # Remote has changes, need to integrate
+                merge_analysis_result, _ = repo.merge_analysis(their_commit_oid, local_branch_ref.name)
+
+                if merge_analysis_result & pygit2.GIT_MERGE_ANALYSIS_FASTFORWARD:
+                    try:
+                        local_branch_ref.set_target(their_commit_oid)
+                        repo.checkout(local_branch_ref.name, strategy=pygit2.GIT_CHECKOUT_FORCE) # Update workdir
+                        repo.set_head(local_branch_ref.name) # Update HEAD ref
+                        result_summary["local_update_status"]["type"] = "fast_forwarded"
+                        result_summary["local_update_status"]["message"] = f"Fast-forwarded '{local_branch_name}' to remote commit {str(their_commit_oid)[:7]}."
+                        result_summary["local_update_status"]["commit_oid"] = str(their_commit_oid)
+                    except pygit2.GitError as e:
+                        result_summary["local_update_status"]["type"] = "error"
+                        result_summary["local_update_status"]["message"] = f"Error during fast-forward: {e}"
+                        raise GitWriteError(f"Failed to fast-forward branch '{local_branch_name}': {e}")
+
+                elif merge_analysis_result & pygit2.GIT_MERGE_ANALYSIS_NORMAL:
+                    repo.merge(their_commit_oid) # This updates the index
+
+                    if repo.index.conflicts:
+                        conflicting_files = get_conflicting_files(repo.index.conflicts)
+                        repo.state_cleanup() # Clean up MERGE_MSG etc., but leave conflicts
+                        result_summary["local_update_status"]["type"] = "conflicts_detected"
+                        result_summary["local_update_status"]["message"] = "Merge resulted in conflicts. Please resolve them."
+                        result_summary["local_update_status"]["conflicting_files"] = conflicting_files
+                        # Do not raise MergeConflictError here, let the summary carry the info.
+                        # The CLI can decide to raise or instruct based on this summary.
+                        # For direct core usage, caller should check summary.
+                        # However, the subtask asks for MergeConflictError to be raised.
+                        raise MergeConflictError(
+                            "Merge resulted in conflicts. Please resolve them.",
+                            conflicting_files=conflicting_files
+                        )
+                    else: # No conflicts, create merge commit
+                        try:
+                            repo.index.write() # Persist merged index
+                            tree_oid = repo.index.write_tree()
+
+                            try:
+                                author = repo.default_signature
+                                committer = repo.default_signature
+                            except pygit2.GitError:
+                                current_time = int(time.time())
+                                offset = 0 # UTC
+                                author = pygit2.Signature("GitWrite Sync", "sync@example.com", current_time, offset)
+                                committer = author
+
+                            merge_commit_message = f"Merge remote-tracking branch '{remote_tracking_branch_name}' into {local_branch_name}"
+                            new_merge_commit_oid = repo.create_commit(
+                                local_branch_ref.name, # Update the local branch ref
+                                author, committer, merge_commit_message, tree_oid,
+                                [local_commit_oid, their_commit_oid] # Parents
+                            )
+                            repo.state_cleanup()
+                            result_summary["local_update_status"]["type"] = "merged_ok"
+                            result_summary["local_update_status"]["message"] = f"Successfully merged remote changes into '{local_branch_name}'."
+                            result_summary["local_update_status"]["commit_oid"] = str(new_merge_commit_oid)
+                        except pygit2.GitError as e:
+                            result_summary["local_update_status"]["type"] = "error"
+                            result_summary["local_update_status"]["message"] = f"Error creating merge commit: {e}"
+                            raise GitWriteError(f"Failed to create merge commit for '{local_branch_name}': {e}")
+                elif merge_analysis_result & pygit2.GIT_MERGE_ANALYSIS_UP_TO_DATE: # Should have been caught by direct OID comparison
+                    result_summary["local_update_status"]["type"] = "up_to_date"
+                    result_summary["local_update_status"]["message"] = "Local branch is already up-to-date with remote."
+                else: # Unborn, or other non-actionable states
+                    result_summary["local_update_status"]["type"] = "error"
+                    result_summary["local_update_status"]["message"] = "Merge not possible. Histories may have diverged or remote branch is unborn."
+                    raise GitWriteError(result_summary["local_update_status"]["message"])
+            # If ahead > 0 and behind > 0 (diverged), merge_analysis_normal should handle it.
+            # If local is up to date (ahead == 0 and behind == 0), already handled.
+
+
+    # 3. Push (if enabled)
+    if push:
+        try:
+            # Check again if local is ahead of remote after potential merge/ff
+            # This is important because ff/merge updates local_commit_oid
+            current_local_head_oid = repo.branches.local[local_branch_name].target # Get updated local head
+
+            remote_tracking_exists_for_push = True
+            try:
+                remote_branch_ref_for_push = repo.lookup_reference(remote_tracking_branch_name)
+                their_commit_oid_for_push = remote_branch_ref_for_push.target
+            except KeyError:
+                remote_tracking_exists_for_push = False
+                their_commit_oid_for_push = None # No remote tracking branch
+
+            needs_push = False
+            if not remote_tracking_exists_for_push:
+                needs_push = True # New branch to push
+            else:
+                if current_local_head_oid != their_commit_oid_for_push:
+                    # This check is simplified; proper ahead_behind might be needed if remote could also change concurrently
+                    # For typical workflow, after merge/ff, local should be same or ahead.
+                    # If it's same, nothing to push. If ahead, push.
+                    push_ahead, push_behind = repo.ahead_behind(current_local_head_oid, their_commit_oid_for_push)
+                    if push_ahead > 0 : needs_push = True
+                    # If push_behind > 0 here, something is wrong (fetch/merge didn't work or concurrent remote change)
+
+            if needs_push:
+                refspec = f"refs/heads/{local_branch_name}:refs/heads/{local_branch_name}"
+                remote.push([refspec])
+                result_summary["push_status"]["pushed"] = True
+                result_summary["push_status"]["message"] = "Push successful."
+            else:
+                result_summary["push_status"]["pushed"] = False
+                result_summary["push_status"]["message"] = "Nothing to push. Local branch is not ahead of remote or is up-to-date."
+
+        except pygit2.GitError as e:
+            result_summary["push_status"]["pushed"] = False
+            result_summary["push_status"]["message"] = f"Push failed: {e}"
+            # Provide hints for common push errors
+            if "non-fast-forward" in str(e).lower():
+                hint = " (Hint: Remote has changes not present locally. Try syncing again.)"
+            elif "authentication required" in str(e).lower() or "credentials" in str(e).lower():
+                hint = " (Hint: Authentication failed. Check credentials/SSH keys.)"
+            else:
+                hint = ""
+            raise PushError(f"Failed to push branch '{local_branch_name}' to '{remote_name}': {e}{hint}")
+    elif not allow_no_push: # push is False but allow_no_push is also False
+        # This case implies an expectation that push should have happened.
+        # For core function, if caller explicitly sets push=False, we assume they know.
+        # So, this branch might not be strictly necessary for core, more for CLI logic.
+        # For now, just report that push was skipped.
+        result_summary["push_status"]["message"] = "Push explicitly disabled by caller."
+        result_summary["push_status"]["pushed"] = False
+    else: # push is False and allow_no_push is True
+         result_summary["push_status"]["message"] = "Push skipped as per 'allow_no_push'."
+         result_summary["push_status"]["pushed"] = False
+
+
+    # Determine overall status
+    if result_summary["local_update_status"]["type"] == "conflicts_detected":
+        result_summary["status"] = "success_conflicts"
+    elif result_summary["push_status"].get("pushed") or (not push and allow_no_push):
+        if result_summary["local_update_status"]["type"] == "up_to_date" and not result_summary["push_status"].get("pushed", False) and result_summary["push_status"]["message"] == "Nothing to push. Local branch is not ahead of remote or is up-to-date.":
+             result_summary["status"] = "success_up_to_date_nothing_to_push"
+        elif result_summary["local_update_status"]["type"] == "local_ahead" and result_summary["push_status"].get("pushed"):
+             result_summary["status"] = "success" # Pushed local changes
+        elif result_summary["local_update_status"]["type"] == "no_remote_branch" and result_summary["push_status"].get("pushed"):
+             result_summary["status"] = "success_pushed_new_branch"
+        else:
+            result_summary["status"] = "success"
+    elif result_summary["push_status"]["message"] == "Nothing to push. Local branch is not ahead of remote or is up-to-date.":
+        result_summary["status"] = "success_nothing_to_push"
+    else: # Default to success if no specific error/conflict status, but push might have failed if not caught by exception
+        if "failed" not in result_summary["fetch_status"]["message"].lower() and \
+           result_summary["local_update_status"]["type"] != "error" and \
+           "failed" not in result_summary["push_status"]["message"].lower():
+            result_summary["status"] = "success" # General success if no specific sub-errors
+        else:
+            result_summary["status"] = "error_in_sub_operation" # Some part failed but didn't raise fully
+
+    return result_summary

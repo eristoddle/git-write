@@ -41,3 +41,27 @@ class RepositoryEmptyError(GitWriteError):
 class OperationAbortedError(GitWriteError):
     """Raised when an operation is aborted due to a condition that prevents completion (e.g., unsupported operation type)."""
     pass
+
+class NoChangesToSaveError(GitWriteError):
+    """Raised when there are no changes to save."""
+    pass
+
+class RevertConflictError(MergeConflictError):
+    """Raised when a revert results in conflicts."""
+    pass
+
+class DetachedHeadError(GitWriteError):
+    """Raised when an operation requires a branch but HEAD is detached."""
+    pass
+
+class FetchError(GitWriteError):
+    """Raised when a fetch operation fails."""
+    pass
+
+class PushError(GitWriteError):
+    """Raised when a push operation fails."""
+    pass
+
+class RemoteNotFoundError(GitWriteError):
+    """Raised when a specified remote is not found."""
+    pass

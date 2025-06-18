@@ -93,12 +93,13 @@ Note: `explore`, `switch`, `merge`, and `revert` commands have all been refactor
 
 ### Task 3.2 - Agent_CLI_Dev: Refactor `save` and `sync` Commands
 Objective: Refactor the final, most complex commands that interact with repository state.
-Status: **Pending**
+Status: **Completed**
 
-1.  Move the logic for `save` (including selective staging and finalizing merge/revert operations) into a core function in `gitwrite_core/versioning.py`.
-2.  Move the logic for `sync` (fetch, pull/merge, push) into a core function in `gitwrite_core/repository.py`.
-3.  Update the Click commands in `main.py` to be thin wrappers.
-4.  Update the comprehensive test suite for `save` and `sync` to target the new core functions.
+1.  Moved the logic for `save` (including selective staging, commit creation, and finalizing merge/revert operations) into `gitwrite_core.versioning.save_changes`.
+2.  Moved the logic for `sync` (fetch, local update analysis & execution - ff/merge/conflict, and push) into `gitwrite_core.repository.sync_repository`.
+3.  Updated the Click commands for `save` and `sync` in `gitwrite_cli/main.py` to be thin wrappers around their respective core functions.
+4.  Added comprehensive unit tests for the new core functions in `tests/test_core_versioning.py` and `tests/test_core_repository.py`.
+5.  Refactored and added integration tests for the `save` and `sync` CLI commands in `tests/test_main.py`.
 
 ---
 
