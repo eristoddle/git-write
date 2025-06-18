@@ -70,3 +70,26 @@ Proceed with Phase 1, Task 1.2, which involves moving the first piece of logic (
 **Status:** Completed
 **Issues/Blockers:** None.
 **Next Steps (Optional):** Proceed with Phase 2, Task 2.1: Refactor `tag` Command.
+---
+**Agent:** Implementation Agent (Jules)
+**Task Reference:** Implementation Plan: Core Logic Refactoring, Phase 2, Task 2.1: Refactor `tag` Command
+**Summary:** Completed the refactoring of the `tag` command. Core logic for creating and listing tags was moved from `gitwrite_cli/main.py` to new functions in `gitwrite_core/tagging.py`. The CLI `tag add` and `tag list` commands were updated to be thin wrappers around these core functions. Tests were significantly refactored to include comprehensive unit tests for the new core logic and focused integration tests for the CLI.
+**Details:**
+ - **Core Logic (`gitwrite_core/tagging.py`):**
+   - Added `create_tag(repo_path_str, tag_name, target_commit_ish='HEAD', message=None, force=False)`: Handles creation of both lightweight and annotated tags, including force overwrite and error handling (e.g., `TagAlreadyExistsError`, `CommitNotFoundError`). Returns a dictionary with tag details.
+   - Added `list_tags(repo_path_str)`: Lists all tags in a repository, returning a list of dictionaries containing tag name, type (lightweight/annotated), target commit OID, and message (for annotated tags).
+   - Added `TagAlreadyExistsError` to `gitwrite_core/exceptions.py`.
+ - **CLI Updates (`gitwrite_cli/main.py`):**
+   - The `tag add` command now calls `gitwrite_core.tagging.create_tag` and handles its output and exceptions.
+   - The `tag list` command now calls `gitwrite_core.tagging.list_tags` and uses `rich.Table` to display the returned data.
+ - **Test Updates (`tests/test_main.py`):**
+   - Added `TestTaggingCore`: A new unit test class with comprehensive tests for `create_tag` and `list_tags`, covering various scenarios and error conditions.
+   - Added `TestTagCommandsCLI`: A new integration test class for the `gitwrite tag add` and `gitwrite tag list` CLI commands, ensuring correct interaction with the core library and proper CLI output/error handling.
+**Output/Result:**
+ - `gitwrite_core/tagging.py` now contains the `create_tag` and `list_tags` functions.
+ - `gitwrite_core/exceptions.py` includes the new `TagAlreadyExistsError`.
+ - `gitwrite_cli/main.py` `tag add` and `tag list` commands are now thin wrappers.
+ - `tests/test_main.py` has been updated with new test classes `TestTaggingCore` and `TestTagCommandsCLI` for improved testing of tag functionality.
+**Status:** Completed
+**Issues/Blockers:** None.
+**Next Steps (Optional):** Proceed with Phase 2, Task 2.2: Refactor `history` and `compare` Commands.

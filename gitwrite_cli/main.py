@@ -9,6 +9,8 @@ from pygit2 import Signature
 from rich.console import Console
 from rich.panel import Panel
 from gitwrite_core.repository import initialize_repository, add_pattern_to_gitignore, list_gitignore_patterns # Added import
+from gitwrite_core.tagging import create_tag
+from gitwrite_core.exceptions import RepositoryNotFoundError, CommitNotFoundError, TagAlreadyExistsError, GitWriteError
 
 @click.group()
 def cli():
@@ -1051,112 +1053,105 @@ def tag():
 
 
 @tag.command("add")
-@click.argument("tag_name")
-@click.argument("commit_ref", required=False, default="HEAD")
-@click.option("-m", "--message", "message_opt_tag", help="Annotation message for the tag.")
-def tag_add(tag_name, commit_ref, message_opt_tag):
+@click.pass_context # Add pass_context to access ctx.obj
+@click.argument("name") # Renamed from tag_name to name
+@click.option("-m", "--message", "message", default=None, help="Annotation message for the tag.") # Renamed message_opt_tag
+@click.option("--force", is_flag=True, help="Overwrite an existing tag.")
+@click.option("-c", "--commit", "commit_ish", default="HEAD", help="Commit to tag. Defaults to HEAD.") # Added commit option
+def add(ctx, name, message, force, commit_ish): # Function signature updated
     """Creates a new tag.
 
     If -m/--message is provided, an annotated tag is created.
     Otherwise, a lightweight tag is created.
-    The tag points to COMMIT_REF, which defaults to HEAD.
+    The tag points to COMMIT_ISH (commit reference), which defaults to HEAD.
     """
     try:
-        repo_path_str = pygit2.discover_repository(str(Path.cwd()))
-        if repo_path_str is None:
-            click.echo("Error: Not a Git repository (or any of the parent directories).", err=True)
-            return
-        repo = pygit2.Repository(repo_path_str)
+        # Assuming REPO_PATH is set up in a global context object, e.g., by the main cli group
+        # If not, discover it: repo_path = pygit2.discover_repository(str(Path.cwd()))
+        # For now, let's assume ctx.obj['REPO_PATH'] is available.
+        # If your CLI structure doesn't pass REPO_PATH this way, you'll need to adjust.
+        # A common pattern is to set ctx.obj['REPO_PATH'] = pygit2.discover_repository(str(Path.cwd()))
+        # in the main `cli` function or a callback.
+        # For robustness, let's try to discover if not present.
 
-        if repo.is_bare:
-            click.echo("Error: Cannot create tags in a bare repository.", err=True)
-            return
+        repo_path = None
+        if ctx.obj and 'REPO_PATH' in ctx.obj:
+            repo_path = ctx.obj['REPO_PATH']
 
-        if repo.is_empty or repo.head_is_unborn:
-            click.echo("Error: Repository is empty or HEAD is unborn. Cannot create tag.", err=True)
-            return
+        if repo_path is None:
+            # Fallback to discovering the repository if not in context
+            discovered_path = pygit2.discover_repository(str(Path.cwd()))
+            if discovered_path is None:
+                click.echo(click.style("Error: Not a git repository (or any of the parent directories).", fg='red'), err=True)
+                ctx.exit(1) # Exit with error code
+            repo_path = discovered_path
 
-        try:
-            target_commit_obj_tag = repo.revparse_single(commit_ref).peel(pygit2.Commit)
-        except (KeyError, pygit2.GitError):
-            click.echo(f"Error: Commit reference '{commit_ref}' not found or invalid.", err=True)
-            return
-
-        tag_ref_name_tag = f"refs/tags/{tag_name}"
-
-        if tag_ref_name_tag in repo.references:
-             click.echo(f"Error: Tag '{tag_name}' already exists.", err=True)
-             return
-        try:
-            repo.revparse_single(tag_name)
-            click.echo(f"Error: Tag '{tag_name}' already exists (possibly as an annotated tag object not listed directly in refs/tags/).", err=True)
-            return
-        except (pygit2.GitError, KeyError):
-            pass
+        # Store it back for potential future use in the same command chain (though not typical for simple commands)
+        if ctx.obj is None: ctx.obj = {}
+        ctx.obj['REPO_PATH'] = repo_path
 
 
-        if message_opt_tag:
-            try:
-                tagger_sig = repo.default_signature
-            except pygit2.GitError:
-                tagger_name_env = os.environ.get("GIT_TAGGER_NAME", "Unknown Tagger")
-                tagger_email_env = os.environ.get("GIT_TAGGER_EMAIL", "tagger@example.com")
-                tagger_sig = pygit2.Signature(tagger_name_env, tagger_email_env)
+        tag_details = create_tag(
+            repo_path_str=repo_path,
+            tag_name=name,
+            target_commit_ish=commit_ish,
+            message=message,
+            force=force
+        )
 
-            try:
-                repo.create_tag(
-                    tag_name,
-                    target_commit_obj_tag.id,
-                    pygit2.GIT_OBJECT_COMMIT,
-                    tagger_sig,
-                    message_opt_tag
-                )
-                click.echo(f"Annotated tag '{tag_name}' created successfully, pointing to {target_commit_obj_tag.short_id}.")
-            except pygit2.GitError as e:
-                if "exists" in str(e).lower() or "already exists" in str(e).lower():
-                     click.echo(f"Error: Tag '{tag_name}' already exists (detected by create_tag).", err=True)
-                else:
-                    click.echo(f"Error creating annotated tag '{tag_name}': {e}", err=True)
-                return
-        else:
-            try:
-                repo.references.create(tag_ref_name_tag, target_commit_obj_tag.id)
-                click.echo(f"Lightweight tag '{tag_name}' created successfully, pointing to {target_commit_obj_tag.short_id}.")
-            except pygit2.GitError as e:
-                if "exists" in str(e).lower() or "already exists" in str(e).lower():
-                     click.echo(f"Error: Tag '{tag_name}' already exists (detected by references.create).", err=True)
-                else:
-                    click.echo(f"Error creating lightweight tag '{tag_name}': {e}", err=True)
-                return
+        if tag_details['type'] == 'annotated':
+            click.echo(click.style(f"Created annotated tag '{tag_details['name']}' pointing to {tag_details['target'][:7]}.", fg='green'))
+        else: # lightweight
+            click.echo(click.style(f"Created lightweight tag '{tag_details['name']}' pointing to {tag_details['target'][:7]}.", fg='green'))
 
-    except pygit2.GitError as e:
-        click.echo(f"GitError during tag creation: {e}", err=True)
-    except Exception as e:
-        click.echo(f"An unexpected error occurred during tag creation: {e}", err=True)
+    except RepositoryNotFoundError:
+        click.echo(click.style("Error: Not a git repository.", fg='red'), err=True)
+        if ctx: ctx.exit(1)
+    except CommitNotFoundError:
+        click.echo(click.style(f"Error: Commit '{commit_ish}' not found.", fg='red'), err=True)
+        if ctx: ctx.exit(1)
+    except TagAlreadyExistsError:
+        click.echo(click.style(f"Error: Tag '{name}' already exists. Use --force to overwrite.", fg='red'), err=True)
+        if ctx: ctx.exit(1)
+    except GitWriteError as e: # Catching the base GitWriteError for other core errors
+        click.echo(click.style(f"Error creating tag: {e}", fg='red'), err=True)
+        if ctx: ctx.exit(1)
+    except Exception as e: # Catch-all for unexpected errors
+        click.echo(click.style(f"An unexpected error occurred: {e}", fg='red'), err=True)
+        if ctx: ctx.exit(1)
 
 
-@tag.command("list")
-def tag_list():
+@tag.command("list") # original name was tag_list, but Click uses function name, so it becomes 'list'
+@click.pass_context # To potentially access repo_path if needed, though list_tags handles it
+def list_cmd(ctx): # Renamed to avoid conflict if we had a variable named list
     """Lists all tags in the repository."""
+    # The list_tags function from core is intended to be used by the CLI's list command.
+    # It needs to be imported.
+    from gitwrite_core.tagging import list_tags as core_list_tags
+
+    repo_path = None
+    if ctx.obj and 'REPO_PATH' in ctx.obj:
+        repo_path = ctx.obj['REPO_PATH']
+
+    if repo_path is None:
+        discovered_path = pygit2.discover_repository(str(Path.cwd()))
+        if discovered_path is None:
+            click.echo(click.style("Error: Not a git repository (or any of the parent directories).", fg='red'), err=True)
+            ctx.exit(1)
+        repo_path = discovered_path
+
+    if ctx.obj is None: ctx.obj = {} # Ensure ctx.obj exists
+    ctx.obj['REPO_PATH'] = repo_path
+
     try:
-        repo_path_str = pygit2.discover_repository(str(Path.cwd()))
-        if repo_path_str is None:
-            click.echo("Error: Not a Git repository (or any of the parent directories).", err=True)
-            return
-        repo = pygit2.Repository(repo_path_str)
+        tags = core_list_tags(repo_path_str=repo_path)
 
-        if repo.is_bare:
-            click.echo("Error: Cannot list tags in a bare repository.", err=True)
-            return
-
-        tag_names_list = repo.listall_tags()
-
-        if not tag_names_list:
+        if not tags:
             click.echo("No tags found in the repository.")
             return
 
         from rich.table import Table
-        from rich.console import Console
+        from rich.console import Console # Ensure Console is imported if not already at top level
 
         table = Table(title="Repository Tags")
         table.add_column("Tag Name", style="cyan", no_wrap=True)
@@ -1164,79 +1159,34 @@ def tag_list():
         table.add_column("Target Commit", style="green")
         table.add_column("Message (Annotated Only)", style="white", overflow="ellipsis")
 
-        for tag_name_iter_list in sorted(tag_names_list):
-            tag_type_display = "Unknown"
-            target_commit_short_id_display = "N/A"
-            message_summary_display = "-"
-
-            try:
-                obj_tag = repo.revparse_single(tag_name_iter_list)
-
-                if obj_tag.type == pygit2.GIT_OBJECT_TAG:
-                    if hasattr(obj_tag, 'message') and hasattr(obj_tag, 'tagger') and hasattr(obj_tag, 'target'):
-                        tag_type_display = "Annotated"
-                        annotated_tag_object_item = obj_tag
-                        try:
-                            if annotated_tag_object_item.message:
-                                message_summary_display = annotated_tag_object_item.message.splitlines()[0]
-                            else:
-                                message_summary_display = "-"
-                        except Exception:
-                            message_summary_display = "ERR_MSG_PROCESSING"
-
-                        try:
-                            target_oid_tag = annotated_tag_object_item.target
-                            target_pointed_to_obj_tag = repo.get(target_oid_tag)
-                            if target_pointed_to_obj_tag:
-                               try:
-                                   commit_obj_tag_target = target_pointed_to_obj_tag.peel(pygit2.Commit)
-                                   target_commit_short_id_display = commit_obj_tag_target.short_id
-                               except (KeyError, TypeError, pygit2.GitError):
-                                   target_commit_short_id_display = f"ERR_PEEL:{str(target_oid_tag)[:7]}"
-                            else:
-                                target_commit_short_id_display = "ERR_TARGET_OBJ_NOT_FOUND"
-                        except Exception as e_target:
-                            target_commit_short_id_display = f"ERR_TARGET_PROCESSING:{type(e_target).__name__}"
-                            if hasattr(annotated_tag_object_item, 'target'):
-                                raw_target_val = getattr(annotated_tag_object_item, 'target', 'NO_TARGET_ATTR')
-                                target_commit_short_id_display += f" (target_val:{str(raw_target_val)[:7]})"
-                            if target_commit_short_id_display == "N/A":
-                                target_commit_short_id_display = f"ERR_TARGET_UNCAUGHT:{type(e_target).__name__}"
-                    else:
-                        tag_type_display = "Annotated (No Attrs)"
-                        message_summary_display = "Tag object lacks expected attrs."
-                elif obj_tag.type == pygit2.GIT_OBJECT_COMMIT:
-                    tag_type_display = "Lightweight"
-                    commit_obj_lw_tag = obj_tag.peel(pygit2.Commit)
-                    target_commit_short_id_display = commit_obj_lw_tag.short_id
-                else:
-                    tag_type_display = "Lightweight"
-                    target_commit_short_id_display = f"{obj_tag.short_id} ({obj_tag.type_name})"
-            except (KeyError, pygit2.GitError) as e:
-                message_summary_display = f"Error resolving: {e}"
-            except Exception as e:
-                message_summary_display = f"Unexpected error: {e}"
-
+        for tag_data in sorted(tags, key=lambda t: t['name']):
+            message_display = tag_data.get('message', '-') if tag_data['type'] == 'annotated' else '-'
             table.add_row(
-                str(tag_name_iter_list),
-                str(tag_type_display),
-                str(target_commit_short_id_display),
-                str(message_summary_display)
+                tag_data['name'],
+                tag_data['type'],
+                tag_data['target'][:7] if tag_data.get('target') else 'N/A', # Show short hash
+                message_display
             )
 
-        if not table.rows:
-            click.echo("No tags to display.")
-            return
+        if not table.rows: # Should be redundant if `if not tags:` check is done
+             click.echo("No tags to display.")
+             return
 
         console = Console()
         console.print(table)
 
-    except pygit2.GitError as e:
-        click.echo(f"GitError during tag listing: {e}", err=True)
-    except ImportError:
-        click.echo("Error: Rich library is not installed. Please ensure it is in pyproject.toml and installed.", err=True)
-    except Exception as e:
-        click.echo(f"An unexpected error occurred during tag listing: {e}", err=True)
+    except RepositoryNotFoundError:
+        click.echo(click.style("Error: Not a git repository.", fg='red'), err=True)
+        if ctx: ctx.exit(1)
+    except GitWriteError as e: # Catching base GitWriteError for other core errors
+        click.echo(click.style(f"Error listing tags: {e}", fg='red'), err=True)
+        if ctx: ctx.exit(1)
+    except ImportError: # For Rich
+        click.echo(click.style("Error: Rich library is not installed. Please ensure it is in pyproject.toml and installed.", fg='red'), err=True)
+        if ctx: ctx.exit(1)
+    except Exception as e: # Catch-all for unexpected errors
+        click.echo(click.style(f"An unexpected error occurred: {e}", fg='red'), err=True)
+        if ctx: ctx.exit(1)
 
 
 @cli.group()

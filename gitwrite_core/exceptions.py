@@ -21,3 +21,7 @@ class BranchNotFoundError(GitWriteError):
 class MergeConflictError(GitWriteError):
     """Raised when a merge or revert results in conflicts."""
     pass
+
+class TagAlreadyExistsError(GitWriteError):
+    """Raised when a tag with the given name already exists."""
+    pass

@@ -53,7 +53,7 @@ Status: **Completed**
 
 ### Task 2.1 - Agent_CLI_Dev: Refactor `tag` Command
 Objective: Move the logic for the `tag` command into the core library.
-Status: **Pending**
+Status: **Completed**
 
 1.  Create functions `create_tag(...)` and `list_tags()` in `gitwrite_core/tagging.py`.
 2.  Move all `pygit2` logic for creating lightweight and annotated tags, and for listing them, into these functions.

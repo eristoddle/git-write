@@ -2315,6 +2315,426 @@ class TestIgnoreCoreFunctions:
         assert result['patterns'] == []
         assert result['message'] == '.gitignore is empty.'
 
+
+#######################################
+# Core Tagging Function Tests
+#######################################
+from gitwrite_core.tagging import create_tag, list_tags
+from gitwrite_core.exceptions import RepositoryNotFoundError, CommitNotFoundError, TagAlreadyExistsError, GitWriteError
+# import tempfile # Pytest's tmp_path is generally preferred
+
+class TestTaggingCore:
+
+    def _get_repo_path_and_pygit2_repo(self, local_repo_fixture):
+        # local_repo_fixture is a pygit2.Repository instance
+        # The path can be obtained from its workdir attribute
+        return local_repo_fixture.workdir, local_repo_fixture
+
+    def test_create_lightweight_tag_on_head(self, local_repo):
+        repo_path_str, repo = self._get_repo_path_and_pygit2_repo(local_repo)
+        tag_name = "v0.1-lw"
+
+        result = create_tag(repo_path_str, tag_name)
+
+        assert result['name'] == tag_name
+        assert result['type'] == 'lightweight'
+        assert result['target'] == str(repo.head.target)
+
+        tag_ref = repo.references.get(f"refs/tags/{tag_name}")
+        assert tag_ref is not None
+        assert tag_ref.target == repo.head.target
+
+        # Verify it's not an annotated tag object by trying to peel it as a Tag object
+        # A direct reference to a commit will cause revparse_single(tag_name) to return a Commit object.
+        # Peeling a Commit object to a Tag object will raise a TypeError.
+        target_obj = repo.revparse_single(tag_name)
+        assert isinstance(target_obj, pygit2.Commit)
+        with pytest.raises(TypeError):
+            target_obj.peel(pygit2.Tag)
+
+
+    def test_create_annotated_tag_on_head(self, local_repo):
+        repo_path_str, repo = self._get_repo_path_and_pygit2_repo(local_repo)
+        tag_name = "v0.1-an"
+        message = "This is an annotated tag."
+
+        result = create_tag(repo_path_str, tag_name, message=message)
+
+        assert result['name'] == tag_name
+        assert result['type'] == 'annotated'
+        assert result['target'] == str(repo.head.target) # Target commit OID
+        assert result['message'] == message
+
+        # Verify the tag object in pygit2
+        # For an annotated tag, revparse_single(tag_name) gives the Tag object.
+        tag_object = repo.revparse_single(tag_name).peel(pygit2.Tag) # Peel to ensure it's a Tag object
+        assert isinstance(tag_object, pygit2.Tag)
+        assert tag_object.name == tag_name
+        # The core `create_tag` function stores the message exactly as given.
+        # pygit2's `tag_object.message` might have an extra newline if that's how git stores it.
+        # The core function returns the original message, so we check that.
+        # If checking pygit2 object directly: assert tag_object.message.strip() == message
+        assert tag_object.message == message # Assuming pygit2 stores it as is or create_tag ensures exact match for return
+        assert str(tag_object.target) == str(repo.head.target) # Target of the tag object is the commit OID
+        assert tag_object.tagger.name == "GitWrite Core" # Default tagger
+
+    def test_create_tag_on_specific_commit(self, local_repo):
+        repo_path_str, repo = self._get_repo_path_and_pygit2_repo(local_repo)
+
+        commit1_hash_str = str(repo.head.target) # Initial commit
+        make_commit(repo, "another_file.txt", "content", "Second commit")
+        commit2_hash_str = str(repo.head.target)
+        assert commit1_hash_str != commit2_hash_str
+
+        tag_name_lw = "tag-on-commit1-lw"
+        result_lw = create_tag(repo_path_str, tag_name_lw, target_commit_ish=commit1_hash_str)
+
+        assert result_lw['name'] == tag_name_lw
+        assert result_lw['type'] == 'lightweight'
+        assert result_lw['target'] == commit1_hash_str
+        assert str(repo.lookup_reference(f"refs/tags/{tag_name_lw}").target) == commit1_hash_str
+
+        tag_name_an = "tag-on-commit1-an"
+        message = "Annotated on first commit"
+        result_an = create_tag(repo_path_str, tag_name_an, target_commit_ish=commit1_hash_str, message=message)
+        assert result_an['type'] == 'annotated'
+        assert result_an['target'] == commit1_hash_str # Target commit OID
+
+        tag_object_an = repo.revparse_single(tag_name_an).peel(pygit2.Tag)
+        assert isinstance(tag_object_an, pygit2.Tag)
+        assert str(tag_object_an.target) == commit1_hash_str
+
+
+    def test_create_tag_force_overwrite(self, local_repo):
+        repo_path_str, repo = self._get_repo_path_and_pygit2_repo(local_repo)
+        tag_name = "test-force"
+
+        initial_target_oid_str = str(repo.head.target)
+        create_tag(repo_path_str, tag_name) # Create initial tag (lightweight)
+        assert str(repo.lookup_reference(f"refs/tags/{tag_name}").target) == initial_target_oid_str
+
+        new_commit_oid = make_commit(repo, "force_tag_file.txt", "data", "Commit for force tag")
+        new_commit_oid_str = str(new_commit_oid)
+        assert new_commit_oid_str != initial_target_oid_str
+
+        # Force create annotated tag on the new commit
+        new_message = "Forced annotated tag"
+        result = create_tag(repo_path_str, tag_name, target_commit_ish=new_commit_oid_str, message=new_message, force=True)
+
+        assert result['name'] == tag_name
+        assert result['type'] == 'annotated'
+        assert result['target'] == new_commit_oid_str
+        assert result['message'] == new_message
+
+        tag_object = repo.revparse_single(tag_name).peel(pygit2.Tag)
+        assert isinstance(tag_object, pygit2.Tag)
+        assert str(tag_object.target) == new_commit_oid_str
+        # Check message from pygit2 object (might have extra newline from git itself)
+        # For annotated tags, the message in repo might have an extra newline.
+        # The create_tag function returns the exact message passed.
+        assert tag_object.message.strip() == new_message.strip()
+
+
+    def test_create_tag_already_exists_no_force(self, local_repo):
+        repo_path_str, _ = self._get_repo_path_and_pygit2_repo(local_repo)
+        tag_name = "exists-no-force"
+        create_tag(repo_path_str, tag_name) # Create once
+
+        with pytest.raises(TagAlreadyExistsError) as excinfo:
+            create_tag(repo_path_str, tag_name) # Attempt to create again
+        assert f"Tag '{tag_name}' already exists" in str(excinfo.value)
+
+    def test_create_tag_target_non_existent_commit(self, local_repo):
+        repo_path_str, _ = self._get_repo_path_and_pygit2_repo(local_repo)
+        non_existent_commit_ish = "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
+        with pytest.raises(CommitNotFoundError) as excinfo:
+            create_tag(repo_path_str, "bad-target-tag", target_commit_ish=non_existent_commit_ish)
+        assert f"Commit-ish '{non_existent_commit_ish}' not found" in str(excinfo.value)
+
+    def test_create_tag_non_repository_path(self, tmp_path): # Use tmp_path directly
+        non_repo_path = tmp_path / "not_a_repo_for_tagging" # More specific name
+        non_repo_path.mkdir()
+        # Convert to string for the function call
+        non_repo_path_str = str(non_repo_path)
+        with pytest.raises(RepositoryNotFoundError) as excinfo:
+            create_tag(non_repo_path_str, "anytag")
+        assert f"Repository not found at '{non_repo_path_str}'" in str(excinfo.value)
+
+    # Placeholder for list_tags tests
+    def test_list_tags_empty_repo_no_tags(self, local_repo): # Example, will be detailed later
+        repo_path_str, _ = self._get_repo_path_and_pygit2_repo(local_repo)
+        # Remove any default tags if any were made by other tests on the shared fixture if not careful
+        # For now, assume local_repo is fresh or tags are uniquely named per test.
+        # Better: ensure no tags exist before this test or use a completely fresh repo.
+        # For now, let's rely on local_repo being relatively clean from the fixture.
+
+        # To be certain, let's use a sub-directory for this test's repo to avoid cross-test interference
+        # Or, ensure tags created in other tests are deleted if local_repo is shared and mutated.
+        # The current local_repo fixture reinitializes per test, so it should be fine.
+
+        tags = list_tags(repo_path_str)
+        assert tags == []
+
+    def test_list_tags_one_lightweight(self, local_repo):
+        repo_path_str, repo = self._get_repo_path_and_pygit2_repo(local_repo)
+        tag_name = "lw-tag"
+        create_tag(repo_path_str, tag_name)
+
+        tags = list_tags(repo_path_str)
+
+        assert len(tags) == 1
+        tag_info = tags[0]
+        assert tag_info['name'] == tag_name
+        assert tag_info['type'] == 'lightweight'
+        assert tag_info['target'] == str(repo.head.target)
+
+    def test_list_tags_one_annotated(self, local_repo):
+        repo_path_str, repo = self._get_repo_path_and_pygit2_repo(local_repo)
+        tag_name = "an-tag"
+        message = "Annotated message for list test"
+        create_tag(repo_path_str, tag_name, message=message)
+
+        tags = list_tags(repo_path_str)
+
+        assert len(tags) == 1
+        tag_info = tags[0]
+        assert tag_info['name'] == tag_name
+        assert tag_info['type'] == 'annotated'
+        assert tag_info['target'] == str(repo.head.target)
+        assert tag_info['message'] == message.strip() # list_tags strips message
+
+    def test_list_tags_multiple_mixed(self, local_repo):
+        repo_path_str, repo = self._get_repo_path_and_pygit2_repo(local_repo)
+
+        # Tag 1 (annotated on initial commit)
+        tag1_name = "v1.0"
+        tag1_message = "Version 1.0 release"
+        commit1_oid_str = str(repo.head.target)
+        create_tag(repo_path_str, tag1_name, target_commit_ish=commit1_oid_str, message=tag1_message)
+
+        # Make another commit
+        commit2_oid_str = str(make_commit(repo, "file_for_tag2.txt", "content", "Commit for tag2"))
+
+        # Tag 2 (lightweight on second commit)
+        tag2_name = "feature-x"
+        create_tag(repo_path_str, tag2_name, target_commit_ish=commit2_oid_str)
+
+        # Tag 3 (annotated on second commit)
+        tag3_name = "v1.1-alpha"
+        tag3_message = "Alpha release for v1.1"
+        create_tag(repo_path_str, tag3_name, target_commit_ish=commit2_oid_str, message=tag3_message)
+
+        tags = list_tags(repo_path_str)
+        assert len(tags) == 3
+
+        # Sort by name for consistent checking
+        tags_by_name = {t['name']: t for t in tags}
+
+        assert tag1_name in tags_by_name
+        tag1_info = tags_by_name[tag1_name]
+        assert tag1_info['type'] == 'annotated'
+        assert tag1_info['target'] == commit1_oid_str
+        assert tag1_info['message'] == tag1_message.strip()
+
+        assert tag2_name in tags_by_name
+        tag2_info = tags_by_name[tag2_name]
+        assert tag2_info['type'] == 'lightweight'
+        assert tag2_info['target'] == commit2_oid_str
+        assert 'message' not in tag2_info # Lightweight tags don't have messages
+
+        assert tag3_name in tags_by_name
+        tag3_info = tags_by_name[tag3_name]
+        assert tag3_info['type'] == 'annotated'
+        assert tag3_info['target'] == commit2_oid_str
+        assert tag3_info['message'] == tag3_message.strip()
+
+    def test_list_tags_non_repository_path(self, tmp_path):
+        non_repo_path = tmp_path / "not_a_repo_for_list_tags"
+        non_repo_path.mkdir()
+        non_repo_path_str = str(non_repo_path)
+        with pytest.raises(RepositoryNotFoundError) as excinfo:
+            list_tags(non_repo_path_str)
+        assert f"Repository not found at '{non_repo_path_str}'" in str(excinfo.value)
+
+
+#######################################
+# CLI Tagging Command Tests
+#######################################
+
+class TestTagCommandsCLI:
+
+    def test_cli_tag_add_lightweight(self, runner, local_repo):
+        repo = local_repo
+        os.chdir(repo.workdir)
+        tag_name = "cli-lw-v0.1"
+
+        result = runner.invoke(cli, ["tag", "add", tag_name])
+        assert result.exit_code == 0, f"CLI Error: {result.output}"
+        assert f"Created lightweight tag '{tag_name}' pointing to {repo.head.target.hex[:7]}" in result.output
+
+        # Verify with pygit2
+        tag_ref = repo.references.get(f"refs/tags/{tag_name}")
+        assert tag_ref is not None
+        assert tag_ref.target == repo.head.target
+        target_obj = repo.revparse_single(tag_name)
+        assert isinstance(target_obj, pygit2.Commit) # Lightweight points to commit
+
+    def test_cli_tag_add_annotated(self, runner, local_repo):
+        repo = local_repo
+        os.chdir(repo.workdir)
+        tag_name = "cli-an-v0.2"
+        message = "CLI annotated tag test"
+
+        result = runner.invoke(cli, ["tag", "add", tag_name, "-m", message])
+        assert result.exit_code == 0, f"CLI Error: {result.output}"
+        assert f"Created annotated tag '{tag_name}' pointing to {repo.head.target.hex[:7]}" in result.output
+
+        # Verify with pygit2
+        tag_obj = repo.revparse_single(tag_name).peel(pygit2.Tag) # Peel to Tag object
+        assert isinstance(tag_obj, pygit2.Tag)
+        assert tag_obj.name == tag_name
+        assert tag_obj.message.strip() == message
+        assert str(tag_obj.target) == str(repo.head.target)
+        assert tag_obj.tagger.name == "GitWrite Core" # Default tagger from core function
+
+    def test_cli_tag_add_on_specific_commit(self, runner, local_repo):
+        repo = local_repo
+        os.chdir(repo.workdir)
+
+        commit1_hash_str = str(repo.head.target)
+        make_commit(repo, "cli_tag_commit.txt", "content", "Commit for CLI tag")
+        # HEAD is now at commit2
+
+        tag_name = "cli-tag-on-commit1"
+        result = runner.invoke(cli, ["tag", "add", tag_name, "--commit", commit1_hash_str])
+        assert result.exit_code == 0, f"CLI Error: {result.output}"
+        assert f"Created lightweight tag '{tag_name}' pointing to {commit1_hash_str[:7]}" in result.output
+
+        # Verify
+        tag_ref = repo.references.get(f"refs/tags/{tag_name}")
+        assert tag_ref is not None
+        assert str(tag_ref.target) == commit1_hash_str
+
+    def test_cli_tag_add_force_overwrite(self, runner, local_repo):
+        repo = local_repo
+        os.chdir(repo.workdir)
+        tag_name = "cli-force-test"
+
+        # Initial tag (lightweight on commit1)
+        commit1_hash_str = str(repo.head.target)
+        runner.invoke(cli, ["tag", "add", tag_name, "--commit", commit1_hash_str])
+
+        # New commit
+        commit2_hash_str = str(make_commit(repo, "force_file.txt", "data", "Commit for force test"))
+
+        # Force create annotated tag on commit2
+        new_message = "Forced CLI tag"
+        result = runner.invoke(cli, ["tag", "add", tag_name, "--commit", commit2_hash_str, "-m", new_message, "--force"])
+        assert result.exit_code == 0, f"CLI Error: {result.output}"
+        assert f"Created annotated tag '{tag_name}' pointing to {commit2_hash_str[:7]}" in result.output
+
+        # Verify
+        tag_obj = repo.revparse_single(tag_name).peel(pygit2.Tag)
+        assert isinstance(tag_obj, pygit2.Tag)
+        assert str(tag_obj.target) == commit2_hash_str
+        assert tag_obj.message.strip() == new_message
+
+    def test_cli_tag_add_already_exists_no_force(self, runner, local_repo):
+        repo = local_repo
+        os.chdir(repo.workdir)
+        tag_name = "cli-exists-noforce"
+
+        runner.invoke(cli, ["tag", "add", tag_name]) # Create once
+
+        result = runner.invoke(cli, ["tag", "add", tag_name]) # Attempt again
+        assert result.exit_code == 1, f"Expected non-zero exit for existing tag: {result.output}"
+        assert f"Error: Tag '{tag_name}' already exists. Use --force to overwrite." in result.output
+
+    def test_cli_tag_add_target_non_existent_commit(self, runner, local_repo):
+        repo = local_repo
+        os.chdir(repo.workdir)
+        non_existent_commit = "deadbeef0000deadbeef0000deadbeef0000"
+        tag_name = "cli-bad-target"
+
+        result = runner.invoke(cli, ["tag", "add", tag_name, "--commit", non_existent_commit])
+        assert result.exit_code == 1, f"Expected non-zero exit for non-existent commit: {result.output}"
+        assert f"Error: Commit '{non_existent_commit}' not found." in result.output
+
+    def test_cli_tag_add_in_non_repo_dir(self, runner, tmp_path):
+        non_repo_dir = tmp_path / "cli_tag_non_repo"
+        non_repo_dir.mkdir()
+        os.chdir(non_repo_dir)
+
+        result = runner.invoke(cli, ["tag", "add", "anytag"])
+        assert result.exit_code == 1, f"Expected non-zero exit for non-repo: {result.output}"
+        assert "Error: Not a git repository" in result.output # Matches CLI output from discover_repository check
+
+    # Tests for `gitwrite tag list` CLI command will follow
+    def test_cli_tag_list_no_tags(self, runner, local_repo):
+        repo = local_repo
+        os.chdir(repo.workdir)
+
+        result = runner.invoke(cli, ["tag", "list"])
+        assert result.exit_code == 0, f"CLI Error: {result.output}"
+        assert "No tags found in the repository." in result.output
+
+    def test_cli_tag_list_with_tags(self, runner, local_repo):
+        repo = local_repo
+        os.chdir(repo.workdir)
+
+        # Create some tags using the core function for setup simplicity
+        # Tag 1 (annotated on initial commit)
+        tag1_name = "v1.0-cli"
+        tag1_message = "Version 1.0 release (CLI test)"
+        commit1_oid = repo.head.target
+        create_tag(repo.workdir, tag1_name, target_commit_ish=str(commit1_oid), message=tag1_message)
+
+        # Make another commit
+        commit2_oid = make_commit(repo, "file_for_tag_list_cli.txt", "content", "Commit for tag list CLI")
+
+        # Tag 2 (lightweight on second commit)
+        tag2_name = "feature-xyz-cli"
+        create_tag(repo.workdir, tag2_name, target_commit_ish=str(commit2_oid))
+
+        result = runner.invoke(cli, ["tag", "list"])
+        assert result.exit_code == 0, f"CLI Error: {result.output}"
+
+        # Verify table headers (basic check for Rich table output)
+        assert "Tag Name" in result.output
+        assert "Type" in result.output
+        assert "Target Commit" in result.output
+        assert "Message (Annotated Only)" in result.output
+
+        # Verify tag1 details
+        assert tag1_name in result.output
+        assert "annotated" in result.output # Assuming type is printed
+        assert str(commit1_oid)[:7] in result.output
+        assert tag1_message.splitlines()[0] in result.output # Check first line of message
+
+        # Verify tag2 details
+        assert tag2_name in result.output
+        assert "lightweight" in result.output # Assuming type is printed
+        assert str(commit2_oid)[:7] in result.output
+        # For lightweight, message column usually has a placeholder like '-'
+        # This depends on the exact formatting in cli's list_cmd
+        # A simple check: ensure tag2_name is there, and its commit hash.
+        # More robust: parse lines. For now, string presence is a good indicator.
+
+        # Example of a more specific check if output format is stable:
+        # Find line containing tag1_name and check other cells in that conceptual row.
+        lines = result.output.splitlines()
+        tag1_line = next((line for line in lines if tag1_name in line), None)
+        assert tag1_line is not None, f"Tag '{tag1_name}' not found in output"
+        assert "annotated" in tag1_line
+        assert str(commit1_oid)[:7] in tag1_line
+        assert tag1_message.splitlines()[0] in tag1_line
+
+        tag2_line = next((line for line in lines if tag2_name in line), None)
+        assert tag2_line is not None, f"Tag '{tag2_name}' not found in output"
+        assert "lightweight" in tag2_line
+        assert str(commit2_oid)[:7] in tag2_line
+
+
     def test_list_gitignore_with_only_whitespace_core(self, tmp_path: Path):
         """Core: List patterns from .gitignore with only whitespace/blank lines."""
         repo_dir = tmp_path / "repo_for_list_whitespace"
