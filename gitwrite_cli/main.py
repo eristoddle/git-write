@@ -174,16 +174,12 @@ def save(message, include_paths):
             click.echo("Error: Cannot save in a bare repository.", err=True)
             return
 
-        # Determine if we are in a merge or revert state FIRST
-        # These details need to be captured *before* any index manipulation by add_all
-        # as index changes (like resolving conflicts by add_all) might clear these refs.
         initial_is_completing_operation = None
         initial_merge_head_target_oid = None
         initial_revert_head_details = None
 
         click.echo("DEBUG: Save command started.")
 
-        # Check for MERGE_HEAD or REVERT_HEAD early, especially if --include is used.
         merge_head_exists = False
         revert_head_exists = False
         try:
@@ -213,19 +209,18 @@ def save(message, include_paths):
                     "Please resolve the operation first or use 'gitwrite save' without --include.",
                     err=True
                 )
-                return # Or ctx.fail() if in a context that supports it
+                return
 
             click.echo(f"DEBUG: Selective staging requested for: {include_paths}")
             staged_files_actually_changed = []
             warnings = []
 
             for path_str in include_paths:
-                path_obj = Path(path_str) # Convert to Path object for easier manipulation if needed
-                # repo.status_file() expects relative paths from repo root
-                # Assuming path_str is already relative to repo root or is absolute
-                # If absolute, pygit2 handles it. If relative to subdir, user must ensure it's correct
-                # For simplicity, we'll assume path_str is usable by status_file directly.
+                if not path_str.strip():
+                    warnings.append("Warning: An empty path was provided and will be ignored.")
+                    continue
 
+                path_obj = Path(path_str)
                 try:
                     status_flags = repo.status_file(path_str)
                     click.echo(f"DEBUG: Status for '{path_str}': {status_flags}")
@@ -236,29 +231,23 @@ def save(message, include_paths):
                     elif status_flags & pygit2.GIT_STATUS_IGNORED:
                         warnings.append(f"Warning: Path '{path_str}' is ignored.")
                         continue
-                    elif status_flags == 0: # Should be caught by GIT_STATUS_CURRENT, but as a safeguard
+                    elif status_flags == 0:
                         warnings.append(f"Warning: Path '{path_str}' has no changes to stage (status is 0).")
                         continue
 
-                    # Check for untracked files explicitly if not covered by other WT flags for addition
                     is_worktree_new = status_flags & pygit2.GIT_STATUS_WT_NEW
                     is_worktree_modified = status_flags & pygit2.GIT_STATUS_WT_MODIFIED
                     is_worktree_deleted = status_flags & pygit2.GIT_STATUS_WT_DELETED
                     is_worktree_renamed = status_flags & pygit2.GIT_STATUS_WT_RENAMED
                     is_worktree_typechange = status_flags & pygit2.GIT_STATUS_WT_TYPECHANGE
 
-                    # Any relevant change in the working tree that can be staged
                     if is_worktree_new or is_worktree_modified or is_worktree_deleted or is_worktree_renamed or is_worktree_typechange:
                         click.echo(f"DEBUG: Staging '{path_str}'...")
                         repo.index.add(path_str)
                         staged_files_actually_changed.append(path_str)
                     else:
-                        # This case might indicate a file that is in a state not typically "staged" directly by add,
-                        # e.g. GIT_STATUS_INDEX_NEW, GIT_STATUS_INDEX_MODIFIED etc. if user includes something already staged.
-                        # Or a more complex status. For now, we focus on WT changes.
                         warnings.append(f"Warning: Path '{path_str}' has status {status_flags} which was not explicitly handled for staging new changes.")
                         continue
-
                 except KeyError:
                     warnings.append(f"Warning: Path '{path_str}' is not tracked by Git or does not exist.")
                     continue
@@ -276,19 +265,17 @@ def save(message, include_paths):
             else:
                 repo.index.write()
                 click.echo(f"Staged specified files: {', '.join(staged_files_actually_changed)}")
-                # Proceed to commit logic
+                # Fall through to commit logic
 
         else: # Default (stage all) logic
-            click.echo("DEBUG: No --include paths provided, proceeding with default staging logic.")
-            # The original logic for determining merge/revert state for 'stage all'
+            click.echo("DEBUG: DEFAULT STAGING BLOCK.")
             if merge_head_exists:
                 initial_is_completing_operation = 'merge'
                 initial_merge_head_target_oid = repo.lookup_reference("MERGE_HEAD").target
                 click.echo(f"DEBUG: MERGE_HEAD confirmed. Target OID: {initial_merge_head_target_oid}")
                 click.echo("Repository is in a merge state (MERGE_HEAD found).")
-
-            if not initial_is_completing_operation and revert_head_exists:
-                reverted_commit_oid = repo.lookup_reference("REVERT_HEAD").target # We know it's a commit from above
+            elif revert_head_exists:
+                reverted_commit_oid = repo.lookup_reference("REVERT_HEAD").target
                 reverted_commit = repo.get(reverted_commit_oid)
                 initial_is_completing_operation = 'revert'
                 initial_revert_head_details = {
@@ -302,108 +289,89 @@ def save(message, include_paths):
             click.echo(f"DEBUG: Initial is_completing_operation (captured for stage-all): {initial_is_completing_operation}")
 
             if initial_is_completing_operation == 'revert':
-            # Check for conflicts *before* staging for revert operations
-            has_initial_revert_conflicts = False
-            if repo.index.conflicts is not None:
-                try:
-                    next(iter(repo.index.conflicts))
-                    has_initial_revert_conflicts = True
-                except StopIteration:
-                    pass # No conflicts
-
-            if has_initial_revert_conflicts:
-                click.echo("Error: Unresolved conflicts detected during revert.", err=True)
-                click.echo("Please resolve them before saving.", err=True)
-                conflicting_files_display = []
-                if repo.index.conflicts is not None: # Re-check for safety, though it should be same as above
-                    for conflict_item_tuple in repo.index.conflicts:
-                        path_to_display = next((entry.path for entry in conflict_item_tuple if entry and entry.path), "unknown_path")
-                        if path_to_display not in conflicting_files_display:
-                            conflicting_files_display.append(path_to_display)
-                if conflicting_files_display:
-                    click.echo("Conflicting files: " + ", ".join(sorted(conflicting_files_display)), err=True)
-                return # Abort save
-        elif initial_is_completing_operation == 'merge':
-            # Check for conflicts *before* staging, as staging might auto-resolve them from pygit2's perspective
-            has_initial_conflicts = False
-            if repo.index.conflicts is not None:
-                try:
-                    next(iter(repo.index.conflicts))
-                    has_initial_conflicts = True
-                except StopIteration:
-                    pass # No conflicts
-
-            if has_initial_conflicts:
-                click.echo("Error: Unresolved conflicts detected during merge.", err=True)
-                click.echo("Please resolve them before saving.", err=True)
-                conflicting_files_display = []
-                # This re-check of repo.index.conflicts is okay, it's cheap
+                has_initial_revert_conflicts = False
                 if repo.index.conflicts is not None:
-                    for conflict_item_tuple in repo.index.conflicts:
-                        path_to_display = next((entry.path for entry in conflict_item_tuple if entry and entry.path), "unknown_path")
-                        if path_to_display not in conflicting_files_display:
-                            conflicting_files_display.append(path_to_display)
-                if conflicting_files_display:
-                    click.echo("Conflicting files: " + ", ".join(sorted(conflicting_files_display)), err=True)
-                return # Abort save
-
-        # If in a merge or revert state, first try to stage everything.
-        # This ensures user's manual resolutions in working dir are staged.
-        if initial_is_completing_operation:
-            click.echo(f"DEBUG: Actively staging changes from working directory to finalize {initial_is_completing_operation} operation...")
-            repo.index.add_all()  # Stage all tracked/modified/new files
-            repo.index.write()    # Write updated index to disk
-            repo.index.read()     # Re-read index from disk for current repo instance
-
-            # Check for conflicts AFTER staging resolutions
-            has_index_conflicts_after_staging = False
-            if repo.index.conflicts is not None:
-                try:
-                    next(iter(repo.index.conflicts))
-                    has_index_conflicts_after_staging = True
-                except StopIteration:
-                    pass # No conflicts
-            click.echo(f"DEBUG: Index re-read. Conflicts after staging: {list(repo.index.conflicts) if repo.index.conflicts and has_index_conflicts_after_staging else 'None'}")
-
-            if has_index_conflicts_after_staging:
-                if initial_is_completing_operation == 'merge':
-                    click.echo("Error: Unresolved conflicts detected during merge.", err=True)
-                elif initial_is_completing_operation == 'revert':
+                    try:
+                        next(iter(repo.index.conflicts))
+                        has_initial_revert_conflicts = True
+                    except StopIteration:
+                        pass
+                if has_initial_revert_conflicts:
                     click.echo("Error: Unresolved conflicts detected during revert.", err=True)
-                else:
-                    # Fallback, though initial_is_completing_operation should be 'merge' or 'revert' here
-                    click.echo(f"Error: Unresolved conflicts detected during {initial_is_completing_operation} operation.", err=True)
-                click.echo("Please resolve them before saving.", err=True)
-                conflicting_files_display = []
+                    click.echo("Please resolve them before saving.", err=True)
+                    conflicting_files_display = []
+                    if repo.index.conflicts is not None:
+                        for conflict_item_tuple in repo.index.conflicts:
+                            path_to_display = next((entry.path for entry in conflict_item_tuple if entry and entry.path), "unknown_path")
+                            if path_to_display not in conflicting_files_display:
+                                conflicting_files_display.append(path_to_display)
+                    if conflicting_files_display:
+                        click.echo("Conflicting files: " + ", ".join(sorted(conflicting_files_display)), err=True)
+                    return
+            elif initial_is_completing_operation == 'merge':
+                has_initial_conflicts = False
                 if repo.index.conflicts is not None:
-                    for conflict_item_tuple in repo.index.conflicts:
-                        path_to_display = next((entry.path for entry in conflict_item_tuple if entry and entry.path), "unknown_path")
-                        if path_to_display not in conflicting_files_display:
-                            conflicting_files_display.append(path_to_display)
-                if conflicting_files_display:
-                    click.echo("Conflicting files: " + ", ".join(sorted(conflicting_files_display)), err=True)
-                return # Abort save
+                    try:
+                        next(iter(repo.index.conflicts))
+                        has_initial_conflicts = True
+                    except StopIteration:
+                        pass
+                if has_initial_conflicts:
+                    click.echo("Error: Unresolved conflicts detected during merge.", err=True)
+                    click.echo("Please resolve them before saving.", err=True)
+                    conflicting_files_display = []
+                    if repo.index.conflicts is not None:
+                        for conflict_item_tuple in repo.index.conflicts:
+                            path_to_display = next((entry.path for entry in conflict_item_tuple if entry and entry.path), "unknown_path")
+                            if path_to_display not in conflicting_files_display:
+                                conflicting_files_display.append(path_to_display)
+                    if conflicting_files_display:
+                        click.echo("Conflicting files: " + ", ".join(sorted(conflicting_files_display)), err=True)
+                    return
 
-        # Check overall repository status for any changes (working dir or staged)
-        # This block is now part of the 'else' for 'not include_paths'
-        if not include_paths:
+            if initial_is_completing_operation:
+                click.echo(f"DEBUG: Actively staging changes from working directory to finalize {initial_is_completing_operation} operation...")
+                repo.index.add_all()
+                repo.index.write()
+                repo.index.read()
+
+                has_index_conflicts_after_staging = False
+                if repo.index.conflicts is not None:
+                    try:
+                        next(iter(repo.index.conflicts))
+                        has_index_conflicts_after_staging = True
+                    except StopIteration:
+                        pass
+                click.echo(f"DEBUG: Index re-read. Conflicts after staging: {list(repo.index.conflicts) if repo.index.conflicts and has_index_conflicts_after_staging else 'None'}")
+                if has_index_conflicts_after_staging:
+                    operation_desc = initial_is_completing_operation if initial_is_completing_operation else "operation"
+                    click.echo(f"Error: Unresolved conflicts detected during {operation_desc}.", err=True)
+                    click.echo("Please resolve them before saving.", err=True)
+                    conflicting_files_display = []
+                    if repo.index.conflicts is not None:
+                        for conflict_item_tuple in repo.index.conflicts:
+                            path_to_display = next((entry.path for entry in conflict_item_tuple if entry and entry.path), "unknown_path")
+                            if path_to_display not in conflicting_files_display:
+                                conflicting_files_display.append(path_to_display)
+                    if conflicting_files_display:
+                        click.echo("Conflicting files: " + ", ".join(sorted(conflicting_files_display)), err=True)
+                    return
+
             status = repo.status()
             if not initial_is_completing_operation and not status:
                 click.echo("No changes to save (working directory and index are clean).")
                 return
 
-            # If not already staged by the block above (for merge/revert)
             if status and not initial_is_completing_operation:
                 repo.index.add_all()
                 repo.index.write()
                 click.echo("Staged all changes.")
-            elif initial_is_completing_operation and not status: # Merge/revert was resolved, no other changes
-                 click.echo("No further working directory changes to stage. Proceeding with finalization of operation.")
-            elif not status and not initial_is_completing_operation: # Should be caught by earlier check
+            elif initial_is_completing_operation and not status:
+                click.echo("No further working directory changes to stage. Proceeding with finalization of operation.")
+            elif not status and not initial_is_completing_operation :
                  click.echo("No changes to save.")
                  return
-
-        # Commit logic (common for both selective and full staging, once index is prepared)
+        # click.echo("DEBUG: Reached common commit logic.") # Intentionally removed this debug line too
         try:
             author = repo.default_signature
         except pygit2.GitError:
@@ -423,7 +391,7 @@ def save(message, include_paths):
              click.echo(f"DEBUG: initial_revert_head_details='{initial_revert_head_details}'")
 
         if initial_is_completing_operation == 'merge':
-            parents = [repo.head.target, initial_merge_head_target_oid] # Use stored OID
+            parents = [repo.head.target, initial_merge_head_target_oid]
             click.echo(f"DEBUG: Setting up MERGE commit. Parents: [{repo.head.target}, {initial_merge_head_target_oid}]")
         elif initial_is_completing_operation == 'revert' and initial_revert_head_details:
             click.echo(f"DEBUG: Setting up REVERT commit. Details: {initial_revert_head_details}")
@@ -466,6 +434,7 @@ def save(message, include_paths):
     except Exception as e:
         click.echo(f"An unexpected error occurred during save: {e}", err=True)
 
+# ... (rest of the file remains unchanged) ...
 @cli.command()
 @click.option("-n", "--number", "count", type=int, default=None, help="Number of commits to show.")
 def history(count):

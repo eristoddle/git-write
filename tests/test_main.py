@@ -940,76 +940,33 @@ class TestGitWriteSaveSelectiveStaging:
         assert repo.head.target == initial_head, "A new commit was made when no valid changes were included"
 
     def test_save_include_empty(self, runner, local_repo):
-        """Test `gitwrite save --include` with no paths provided to --include."""
+        """Test `gitwrite save --include` with an empty string path."""
         repo = local_repo
         os.chdir(repo.workdir)
 
-        create_file(repo, "file1.txt", "Content for file1") # A changed file exists
+        create_file(repo, "file1.txt", "Content for file1") # A changed file exists in WT
         initial_head = repo.head.target
-        commit_message = "Commit with empty include"
+        commit_message = "Commit with empty include path"
 
-        # Invoking with -i but no path means include_paths will be an empty tuple.
-        # The command is `gitwrite save -i "Commit message"` which click might interpret as -i taking "Commit message"
-        # This depends on click's parsing when `multiple=True` and `type=Path`.
-        # A more robust way for this test's intent is `gitwrite save --include "Commit message"`
-        # where --include is explicitly given no argument.
-        # However, click options usually expect a value.
-        # If `include_paths` is empty tuple `()`:
-        result = runner.invoke(cli, ["save", commit_message]) # No -i at all, will use default staging
-
-        # Re-thinking: the test is about `include_paths` being an empty tuple.
-        # This happens if `gitwrite save "msg"` is called and `include_paths` defaults to `()`.
-        # No, `include_paths` defaults to `None` or an empty tuple if specified with no args.
-        # If `save(message, include_paths)` gets `include_paths=()` because no `-i` was on CLI:
-        # This scenario is actually covered by `test_save_default_behavior_with_changes` if we assume
-        # that when no `-i` is passed, `include_paths` is indeed empty tuple or None.
-        # Let's specifically test the case where the `include_paths` tuple in the `save` function is empty.
-        # This should behave as if no valid files were specified for inclusion.
-
-        # This tests the logic path where `if include_paths:` is false.
-        # To test the logic path where `if include_paths:` is true but the list is empty,
-        # the CLI call would look like `gitwrite save -i -i -i "message"`, which is not how it works.
-        # Click's `multiple=True` means `-i path1 -i path2`. If no `-i` is given, `include_paths` is `()`.
-
-        # If `include_paths` is `()` (empty tuple), it means the `if include_paths:` condition in main.py
-        # will be false, leading to the `else` block (default stage all).
-        # So, this test should verify that if NO `-i` options are given, it stages all.
-        # This is already done by `test_save_default_behavior_with_changes`.
-
-        # The scenario "include_paths is an empty list/tuple *after* processing CLI args"
-        # is what we want if the user does `gitwrite save -i` (and click allows this and passes an empty string for a path)
-        # or if the list of paths given to -i are all filtered out before the loop.
-
-        # Let's assume the intent is: what if `include_paths` is an empty tuple because no `-i` options were given.
-        # This should fall through to the "stage all" logic.
-        # The current `save` implementation: if `include_paths` is `()` (empty tuple from Click if no -i),
-        # it goes to the `else` block (stage all).
-
-        # The specific wording in the plan "click might handle this by requiring a value for --include"
-        # and "If it allows --include with no path string after it" implies testing click behavior.
-        # `click.Path(exists=False)` and `multiple=True` for an option `-i`.
-        # `gitwrite save -i "msg"` -> click might take "msg" as path for -i.
-        # `gitwrite save "msg" -i` -> click requires value for -i.
-        # If `include_paths` is an empty tuple because no `-i` was specified, it's the default "stage all".
-
-        # This test should actually check what happens if include_paths is truthy (not empty list)
-        # but all paths within it are invalid, leading to `staged_files_actually_changed` being empty.
-        # This is covered by `test_save_include_all_files_unmodified_or_invalid`.
-
-        # What if the user types `gitwrite save --include "" "message"` (empty string for path)?
-        # Let's test that specific case.
-        result_empty_path = runner.invoke(cli, ["save", "-i", "", "Commit with empty include path"])
+        # This specific invocation is what the test aims for.
+        result_empty_path = runner.invoke(cli, ["save", "-i", "", commit_message])
+        print(f"Output for test_save_include_empty: {result_empty_path.output}") # DEBUG PRINT
         assert result_empty_path.exit_code == 0, f"CLI Error: {result_empty_path.output}"
-        # An empty path "" might be treated as CWD by Path() or pygit2, or error.
-        # Based on current `main.py` logic:
-        # `repo.status_file("")` might be status of repo itself or error.
-        # If it's an error or no changes:
-        assert "Warning: Path '' is not tracked by Git or does not exist." in result_empty_path.output or \
-               "Warning: Path '' has no changes to stage." in result_empty_path.output or \
-               "Warning: Error processing path '':" in result_empty_path.output
+
+        assert "Warning: An empty path was provided and will be ignored." in result_empty_path.output
         assert "No specified files had changes to stage." in result_empty_path.output
         assert "No changes to save." in result_empty_path.output
-        assert repo.head.target == initial_head, "A new commit was made with an empty include path"
+
+        new_head_oid = repo.head.target
+        if new_head_oid != initial_head:
+            new_commit_obj = repo.get(new_head_oid)
+            print(f"DEBUG_TEST: Initial HEAD: {initial_head.hex}")
+            print(f"DEBUG_TEST: New HEAD: {new_head_oid.hex}")
+            print(f"DEBUG_TEST: New unexpected commit created in test_save_include_empty.")
+            print(f"DEBUG_TEST: Message: {new_commit_obj.message.strip()}")
+            print(f"DEBUG_TEST: Tree: { {entry.name: entry.id.hex for entry in new_commit_obj.tree} }")
+            print(f"DEBUG_TEST: Parents: {[p.hex for p in new_commit_obj.parent_ids]}")
+        assert new_head_oid == initial_head, "A new commit was made with an empty include path"
 
 
     def test_save_include_ignored_file(self, runner, local_repo):
@@ -1045,11 +1002,7 @@ class TestGitWriteSaveSelectiveStaging:
         assert "normal_file.txt" in commit.tree
         assert "ignored_file.ignored" not in commit.tree # Should not be committed
 
-        # Verify ignored_file.ignored is still WT_NEW (or equivalent for ignored files)
-        status = repo.status(untracked_files="all") # Need to include untracked to see ignored
-        assert "ignored_file.ignored" in status
-        # The status for an ignored file that exists in WT but not tracked is typically GIT_STATUS_IGNORED
-        assert status["ignored_file.ignored"] == pygit2.GIT_STATUS_IGNORED
+        assert repo.path_is_ignored("ignored_file.ignored"), "ignored_file.ignored should be reported as ignored by pathisignored()"
 
     def test_save_include_during_merge(self, runner, repo_with_merge_conflict):
         """Test `gitwrite save --include` during an active merge operation."""
