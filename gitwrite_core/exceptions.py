@@ -25,3 +25,7 @@ class MergeConflictError(GitWriteError):
 class TagAlreadyExistsError(GitWriteError):
     """Raised when a tag with the given name already exists."""
     pass
+
+class NotEnoughHistoryError(GitWriteError):
+    """Raised when an operation cannot be performed due to insufficient commit history."""
+    pass

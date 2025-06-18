@@ -93,3 +93,28 @@ Proceed with Phase 1, Task 1.2, which involves moving the first piece of logic (
 **Status:** Completed
 **Issues/Blockers:** None.
 **Next Steps (Optional):** Proceed with Phase 2, Task 2.2: Refactor `history` and `compare` Commands.
+---
+**Agent:** Implementation Agent (Jules)
+**Task Reference:** Implementation Plan: Core Logic Refactoring, Phase 2, Task 2.2: Refactor `history` and `compare` Commands
+**Summary:** Completed the refactoring of the `history` and `compare` commands. Core logic was moved from `gitwrite_cli/main.py` to new functions in `gitwrite_core/versioning.py`. CLI commands were updated to be thin wrappers. Unit tests for new core functions and integration tests for CLI commands were added.
+**Details:**
+    *   **`history` command:**
+        *   Logic moved to `gitwrite_core.versioning.get_commit_history(repo_path_str, count=None)`. This function returns a list of dictionaries containing detailed commit information.
+        *   CLI `history` command now calls this core function and uses `rich.Table` to display the results.
+        *   Added unit tests for `get_commit_history` in `tests/test_core_versioning.py` (class `TestGetCommitHistoryCore`).
+        *   Added integration tests for the `history` CLI command in `tests/test_main.py` (class `TestHistoryCommandCLI`).
+    *   **`compare` command:**
+        *   Logic moved to `gitwrite_core.versioning.get_diff(repo_path_str, ref1_str=None, ref2_str=None)`. This function returns a dictionary with resolved OIDs, display names, and the raw patch text.
+        *   Added `NotEnoughHistoryError` to `gitwrite_core/exceptions.py`.
+        *   CLI `compare` command calls this core function and remains responsible for word-level diff analysis and `rich` presentation using the returned patch text. A new helper `process_hunk_lines_for_word_diff` was added to `gitwrite_cli/main.py` for this.
+        *   Added unit tests for `get_diff` in `tests/test_core_versioning.py` (class `TestGetDiffCore`).
+        *   Added integration tests for the `compare` CLI command in `tests/test_main.py` (class `TestCompareCommandCLI`).
+**Output/Result:**
+    *   `gitwrite_core/versioning.py` now contains `get_commit_history` and `get_diff`.
+    *   `gitwrite_core/exceptions.py` now includes `NotEnoughHistoryError`.
+    *   `gitwrite_cli/main.py` `history` and `compare` commands are now thin wrappers using the core functions. The `compare` command includes a new internal helper `process_hunk_lines_for_word_diff` for Rich output generation from patch text.
+    *   `tests/test_core_versioning.py` created with unit tests for the new core versioning functions.
+    *   `tests/test_main.py` updated with integration tests for the refactored CLI commands.
+**Status:** Completed
+**Issues/Blockers:** None.
+**Next Steps (Optional):** Determine the next task from `Implementation_Plan.md`.

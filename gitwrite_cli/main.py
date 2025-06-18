@@ -10,7 +10,8 @@ from rich.console import Console
 from rich.panel import Panel
 from gitwrite_core.repository import initialize_repository, add_pattern_to_gitignore, list_gitignore_patterns # Added import
 from gitwrite_core.tagging import create_tag
-from gitwrite_core.exceptions import RepositoryNotFoundError, CommitNotFoundError, TagAlreadyExistsError, GitWriteError
+from gitwrite_core.versioning import get_commit_history, get_diff # Added for history and compare commands
+from gitwrite_core.exceptions import RepositoryNotFoundError, CommitNotFoundError, TagAlreadyExistsError, GitWriteError, NotEnoughHistoryError # Added NotEnoughHistoryError
 
 @click.group()
 def cli():
@@ -326,25 +327,23 @@ def save(message, include_paths):
 def history(count):
     """Shows the commit history of the project."""
     try:
+        # Discover repository path first
         repo_path_str = pygit2.discover_repository(str(Path.cwd()))
         if repo_path_str is None:
             click.echo("Error: Not a Git repository (or any of the parent directories).", err=True)
             return
 
-        repo = pygit2.Repository(repo_path_str)
+        # Call the core function
+        commits = get_commit_history(repo_path_str, count)
 
-        if repo.is_bare:
-            click.echo("Error: Cannot show history for a bare repository.", err=True)
-            return
-
-        if repo.is_empty or repo.head_is_unborn:
-            click.echo("No history yet.")
+        if not commits:
+            click.echo("No history yet.") # Covers bare, empty, unborn HEAD, or no commits found by core function
             return
 
         from rich.table import Table
         from rich.text import Text
         from rich.console import Console
-        from datetime import datetime, timezone, timedelta
+        # datetime, timezone, timedelta are no longer needed here as date is pre-formatted
 
         table = Table(title="Commit History")
         table.add_column("Commit", style="cyan", no_wrap=True)
@@ -352,31 +351,25 @@ def history(count):
         table.add_column("Date", style="green")
         table.add_column("Message", style="white")
 
-        walker = repo.walk(repo.head.target, pygit2.GIT_SORT_TIME)
+        for commit_data in commits:
+            # Extract data directly from the dictionary
+            short_hash = commit_data["short_hash"]
+            author_name = commit_data["author_name"]
+            date_str = commit_data["date"] # Already formatted
+            message_short = commit_data["message_short"] # Already the first line
 
-        for i, commit_obj in enumerate(walker):
-            if count is not None and i >= count:
-                break
+            table.add_row(short_hash, author_name, date_str, Text(message_short, overflow="ellipsis"))
 
-            short_hash = str(commit_obj.id)[:7]
-            author_name = commit_obj.author.name
-
-            tzinfo = timezone(timedelta(minutes=commit_obj.author.offset))
-            commit_time_dt = datetime.fromtimestamp(commit_obj.author.time, tzinfo)
-            date_str = commit_time_dt.strftime("%Y-%m-%d %H:%M:%S %z")
-
-            message_first_line = commit_obj.message.splitlines()[0] if commit_obj.message else ""
-
-            table.add_row(short_hash, author_name, date_str, Text(message_first_line, overflow="ellipsis"))
-
-        if not table.rows:
+        if not table.rows: # Should ideally be caught by `if not commits:` but good as a failsafe
              click.echo("No commits found to display.")
              return
 
         console = Console()
         console.print(table)
 
-    except pygit2.GitError as e:
+    except RepositoryNotFoundError: # Raised by get_commit_history
+        click.echo("Error: Not a Git repository (or any of the parent directories).", err=True)
+    except pygit2.GitError as e: # For discover_repository or other unexpected pygit2 errors
         click.echo(f"GitError during history: {e}", err=True)
     except ImportError:
         click.echo("Error: Rich library is not installed. Please ensure it is in pyproject.toml and installed.", err=True)
@@ -599,142 +592,138 @@ def compare(ref1_str, ref2_str):
     """Compares two references (commits, branches, tags) or shows changes in working directory."""
     from rich.console import Console
     from rich.text import Text
-    import difflib
+    import difflib # difflib is still needed for word-level diff
+    import re # For parsing patch text
 
     try:
         repo_path_str = pygit2.discover_repository(str(Path.cwd()))
         if repo_path_str is None:
             click.echo("Error: Not a Git repository.", err=True)
             return
-        repo = pygit2.Repository(repo_path_str)
 
-        if repo.is_bare:
-            click.echo("Error: Cannot compare in a bare repository.", err=True)
-            return
-        if repo.is_empty or repo.head_is_unborn:
-             if ref1_str or ref2_str:
-                click.echo("Error: Repository is empty or HEAD is unborn. Cannot compare specific references.", err=True)
-                return
+        # The explicit bare check can be removed as get_diff handles repository states.
+        # repo_obj_for_bare_check = pygit2.Repository(repo_path_str)
+        # if repo_obj_for_bare_check.is_bare:
+        #     click.echo("Error: Cannot compare in a bare repository.", err=True)
+        #     return
 
-        commit1_obj = None
-        commit2_obj = None
+        diff_data = get_diff(repo_path_str, ref1_str, ref2_str)
 
-        if ref1_str is None and ref2_str is None:
-            if repo.is_empty or repo.head_is_unborn:
-                 click.echo("Error: Repository is empty or HEAD is unborn. Cannot perform default comparison (HEAD vs HEAD~1).", err=True)
-                 return
-            try:
-                commit2_obj = repo.head.peel(pygit2.Commit)
-                if not commit2_obj.parents:
-                    click.echo("Error: HEAD has no parents to compare with (it's the initial commit).", err=True)
-                    return
-                commit1_obj = commit2_obj.parents[0]
-            except pygit2.GitError as e:
-                click.echo(f"Error resolving default comparison (HEAD vs HEAD~1): {e}", err=True)
-                return
-            except IndexError:
-                click.echo("Error: HEAD has no parents to compare with (it's the initial commit).", err=True)
-                return
-            ref1_str, ref2_str = "HEAD~1", "HEAD"
+        patch_text = diff_data["patch_text"]
+        display_ref1 = diff_data["ref1_display_name"]
+        display_ref2 = diff_data["ref2_display_name"]
 
-        elif ref1_str is not None and ref2_str is None:
-            if repo.is_empty or repo.head_is_unborn:
-                 click.echo("Error: Repository is empty or HEAD is unborn. Cannot compare with HEAD.", err=True)
-                 return
-            try:
-                commit2_obj = repo.head.peel(pygit2.Commit)
-                commit1_obj = repo.revparse_single(ref1_str).peel(pygit2.Commit)
-            except (pygit2.GitError, KeyError, TypeError) as e:
-                click.echo(f"Error: Could not resolve reference '{ref1_str}': {e}", err=True)
-                return
-            ref2_str = "HEAD"
-
-        elif ref1_str is not None and ref2_str is not None:
-            try:
-                commit1_obj = repo.revparse_single(ref1_str).peel(pygit2.Commit)
-                commit2_obj = repo.revparse_single(ref2_str).peel(pygit2.Commit)
-            except (pygit2.GitError, KeyError, TypeError) as e:
-                click.echo(f"Error: Could not resolve references ('{ref1_str}', '{ref2_str}'): {e}", err=True)
-                return
-        else:
-            click.echo("Error: Invalid combination of references for comparison.", err=True)
-            return
-
-        if not commit1_obj or not commit2_obj:
-            click.echo("Error: Could not resolve one or both references to commits.", err=True)
-            return
-
-        tree1 = commit1_obj.tree
-        tree2 = commit2_obj.tree
-
-        diff_obj = repo.diff(tree1, tree2, context_lines=3, interhunk_lines=1)
-
-        if not diff_obj:
-            click.echo(f"No differences found between {ref1_str} and {ref2_str}.")
+        if not patch_text:
+            click.echo(f"No differences found between {display_ref1} and {display_ref2}.")
             return
 
         console = Console()
-        console.print(f"Diff between {ref1_str} (a) and {ref2_str} (b):")
+        console.print(f"Diff between {display_ref1} (a) and {display_ref2} (b):")
 
-        for patch_obj in diff_obj:
-            console.print(f"--- a/{patch_obj.delta.old_file.path}\n+++ b/{patch_obj.delta.new_file.path}", style="bold yellow")
-            for hunk_obj in patch_obj.hunks:
-                console.print(hunk_obj.header.strip(), style="cyan")
-                lines_in_hunk = list(hunk_obj.lines)
-                i = 0
-                while i < len(lines_in_hunk):
-                    line_obj = lines_in_hunk[i]
-                    content = line_obj.content.rstrip('\r\n')
+        # Parse the patch text for display
+        file_patches = re.split(r'(?=^diff --git )', patch_text, flags=re.MULTILINE)
 
-                    if line_obj.origin == '-' and (i + 1 < len(lines_in_hunk)) and lines_in_hunk[i+1].origin == '+':
-                        old_content = content
-                        new_content = lines_in_hunk[i+1].content.rstrip('\r\n')
+        for file_patch in file_patches:
+            if not file_patch.strip():
+                continue
 
-                        sm = difflib.SequenceMatcher(None, old_content.split(), new_content.split())
-                        text_old = Text("-", style="red")
-                        text_new = Text("+", style="green")
-                        has_word_diff = any(tag != 'equal' for tag, _, _, _, _ in sm.get_opcodes())
+            lines = file_patch.splitlines()
 
-                        if not has_word_diff:
-                             console.print(Text(f"-{old_content}", style="red"))
-                             console.print(Text(f"+{new_content}", style="green"))
-                        else:
-                            for tag_op, i1, i2, j1, j2 in sm.get_opcodes():
-                                old_words_segment = old_content.split()[i1:i2]
-                                new_words_segment = new_content.split()[j1:j2]
-                                old_chunk = " ".join(old_words_segment)
-                                new_chunk = " ".join(new_words_segment)
-                                old_space = " " if old_chunk and i2 < len(old_content.split()) else ""
-                                new_space = " " if new_chunk and j2 < len(new_content.split()) else ""
+            old_file_path_in_patch = "unknown_old"
+            new_file_path_in_patch = "unknown_new"
+            hunk_lines_for_processing = []
 
-                                if tag_op == 'replace':
-                                    text_old.append(old_chunk + old_space, style="black on red")
-                                    text_new.append(new_chunk + new_space, style="black on green")
-                                elif tag_op == 'delete':
-                                    text_old.append(old_chunk + old_space, style="black on red")
-                                elif tag_op == 'insert':
-                                    text_new.append(new_chunk + new_space, style="black on green")
-                                elif tag_op == 'equal':
-                                    text_old.append(old_chunk + old_space)
-                                    text_new.append(new_chunk + new_space)
-                            console.print(text_old)
-                            console.print(text_new)
-                        i += 2
-                        continue
-                    if line_obj.origin == '-':
-                        console.print(Text(f"-{content}", style="red"))
-                    elif line_obj.origin == '+':
-                        console.print(Text(f"+{content}", style="green"))
-                    elif line_obj.origin == ' ':
-                        console.print(f" {content}")
-                    i += 1
-    except IndexError:
-         click.echo("Error: Not enough history to perform comparison (e.g., initial commit has no parent).", err=True)
+            for line_idx, line_content in enumerate(lines):
+                if line_content.startswith("--- a/"):
+                    old_file_path_in_patch = line_content[len("--- a/"):].strip()
+                    if new_file_path_in_patch == "unknown_new": new_file_path_in_patch = old_file_path_in_patch
+                elif line_content.startswith("+++ b/"):
+                    new_file_path_in_patch = line_content[len("+++ b/"):].strip()
+                    console.print(f"--- a/{old_file_path_in_patch}\n+++ b/{new_file_path_in_patch}", style="bold yellow")
+                elif line_content.startswith("@@"):
+                    if hunk_lines_for_processing:
+                        process_hunk_lines_for_word_diff(hunk_lines_for_processing, console)
+                        hunk_lines_for_processing = []
+                    console.print(line_content, style="cyan")
+                elif line_content.startswith("-") or line_content.startswith("+") or line_content.startswith(" "):
+                    hunk_lines_for_processing.append((line_content[0], line_content[1:]))
+                elif line_content.startswith("\\ No newline at end of file"):
+                    # Process any pending hunk lines before printing this message
+                    if hunk_lines_for_processing:
+                        process_hunk_lines_for_word_diff(hunk_lines_for_processing, console)
+                        hunk_lines_for_processing = []
+                    console.print(line_content, style="dim")
+
+            if hunk_lines_for_processing:
+                process_hunk_lines_for_word_diff(hunk_lines_for_processing, console)
+
+    except RepositoryNotFoundError:
+        click.echo("Error: Not a Git repository.", err=True)
+    except CommitNotFoundError as e:
+        click.echo(f"Error: Could not resolve reference: {e}", err=True)
+    except NotEnoughHistoryError as e:
+        click.echo(f"Error: Not enough history to perform comparison: {e}", err=True)
+    except ValueError as e:
+        click.echo(f"Error: Invalid reference combination: {e}", err=True)
+    except pygit2.GitError as e:
+        click.echo(f"GitError during compare: {e}", err=True)
     except ImportError:
         click.echo("Error: Rich library is not installed. Please ensure it is in pyproject.toml and installed.", err=True)
     except Exception as e:
         click.echo(f"An unexpected error occurred during compare: {e}", err=True)
 
+# Helper function for word-level diff processing, adapted from original logic
+def process_hunk_lines_for_word_diff(hunk_lines: list, console: Console):
+    import difflib
+    from rich.text import Text
+
+    i = 0
+    while i < len(hunk_lines):
+        origin, content = hunk_lines[i]
+
+        if origin == '-' and (i + 1 < len(hunk_lines)) and hunk_lines[i+1][0] == '+':
+            old_content = content
+            new_content = hunk_lines[i+1][1]
+
+            sm = difflib.SequenceMatcher(None, old_content.split(), new_content.split())
+            text_old = Text("-", style="red")
+            text_new = Text("+", style="green")
+            has_word_diff = any(tag != 'equal' for tag, _, _, _, _ in sm.get_opcodes())
+
+            if not has_word_diff:
+                console.print(Text(f"-{old_content}", style="red"))
+                console.print(Text(f"+{new_content}", style="green"))
+            else:
+                for tag_op, i1, i2, j1, j2 in sm.get_opcodes():
+                    old_words_segment = old_content.split()[i1:i2]
+                    new_words_segment = new_content.split()[j1:j2]
+                    old_chunk = " ".join(old_words_segment)
+                    new_chunk = " ".join(new_words_segment)
+                    old_space = " " if old_chunk and i2 < len(old_content.split()) else ""
+                    new_space = " " if new_chunk and j2 < len(new_content.split()) else ""
+
+                    if tag_op == 'replace':
+                        text_old.append(old_chunk + old_space, style="black on red")
+                        text_new.append(new_chunk + new_space, style="black on green")
+                    elif tag_op == 'delete':
+                        text_old.append(old_chunk + old_space, style="black on red")
+                    elif tag_op == 'insert':
+                        text_new.append(new_chunk + new_space, style="black on green")
+                    elif tag_op == 'equal':
+                        text_old.append(old_chunk + old_space)
+                        text_new.append(new_chunk + new_space)
+                console.print(text_old)
+                console.print(text_new)
+            i += 2
+            continue
+
+        if origin == '-':
+            console.print(Text(f"-{content}", style="red"))
+        elif origin == '+':
+            console.print(Text(f"+{content}", style="green"))
+        elif origin == ' ':
+            console.print(f" {content}")
+        i += 1
 
 @cli.command()
 @click.option("--remote", "remote_name", default="origin", help="The remote to sync with.")

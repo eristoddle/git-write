@@ -63,7 +63,7 @@ Status: **Completed**
 
 ### Task 2.2 - Agent_CLI_Dev: Refactor `history` and `compare` Commands
 Objective: Move the logic for read-only history and comparison commands.
-Status: **Pending**
+Status: **Completed**
 
 1.  **`history` command:**
     - Create a function `get_history(count)` in `gitwrite_core/versioning.py`.
