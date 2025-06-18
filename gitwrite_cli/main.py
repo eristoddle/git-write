@@ -93,21 +93,42 @@ def init(project_name):
             # Check if file exists before trying to add it
             full_item_path = target_dir / item_path_str
             if not full_item_path.exists():
-                click.echo(f"Warning: File {full_item_path} not found for staging.", err=True)
+                # This case should ideally not be hit for .gitkeep files as they are touched just before.
+                # metadata.yml is also touched. .gitignore is handled by open().
+                click.echo(f"Warning: File {full_item_path} (relative: {item_path_str}) was expected but not found for staging.", err=True)
                 continue
 
             try:
-                # For new repos, or if file is untracked, or modified
-                status_flags = repo.status_file(item_path_str)
-                if status_flags == pygit2.GIT_STATUS_WT_NEW or \
-                   status_flags & pygit2.GIT_STATUS_WT_MODIFIED or \
-                   status_flags & pygit2.GIT_STATUS_INDEX_NEW or \
-                   is_existing_repo :
+                status_flags = repo.status_file(item_path_str) # Get status relative to repo
+                needs_staging = False
+
+                if not is_existing_repo: # If it's a brand new repository
+                    # All structural files are considered new and should be staged.
+                    # status_flags might be GIT_STATUS_WT_NEW or pygit2 might not even list them if queried too early.
+                    # Direct add is safest for a new repo's structural files.
+                    needs_staging = True
+                else: # Existing repository, check status carefully
+                    if status_flags & pygit2.GIT_STATUS_WT_NEW or \
+                       status_flags & pygit2.GIT_STATUS_WT_MODIFIED or \
+                       status_flags & pygit2.GIT_STATUS_INDEX_NEW or \
+                       status_flags & pygit2.GIT_STATUS_INDEX_MODIFIED:
+                        needs_staging = True
+                    # No 'else' needed here; if not meeting these, needs_staging remains False for existing repo.
+
+                if needs_staging:
                     repo.index.add(item_path_str)
                     staged_anything = True
+
             except KeyError:
-                repo.index.add(item_path_str)
-                staged_anything = True
+                # This means the file is not in the index and not in the working tree according to status_file.
+                # However, we've just created these files (e.g., .gitkeep, metadata.yml).
+                # So, if full_item_path.exists(), we should add it. This is effectively treating it as a new file.
+                if full_item_path.exists(): # Double check it exists on disk
+                    repo.index.add(item_path_str)
+                    staged_anything = True
+                else:
+                    # This would be unusual given the .touch() calls earlier.
+                    click.echo(f"Warning: File {item_path_str} was not found by status_file and also not on disk for staging.", err=True)
             except Exception as e:
                  click.echo(f"Warning: Could not stage {item_path_str}: {e}", err=True)
 
@@ -225,14 +246,11 @@ def save(message, include_paths):
                     status_flags = repo.status_file(path_str)
                     click.echo(f"DEBUG: Status for '{path_str}': {status_flags}")
 
-                    if status_flags == pygit2.GIT_STATUS_CURRENT:
+                    if status_flags == pygit2.GIT_STATUS_CURRENT: # GIT_STATUS_CURRENT is 0
                         warnings.append(f"Warning: Path '{path_str}' has no changes to stage.")
                         continue
                     elif status_flags & pygit2.GIT_STATUS_IGNORED:
                         warnings.append(f"Warning: Path '{path_str}' is ignored.")
-                        continue
-                    elif status_flags == 0:
-                        warnings.append(f"Warning: Path '{path_str}' has no changes to stage (status is 0).")
                         continue
 
                     is_worktree_new = status_flags & pygit2.GIT_STATUS_WT_NEW
@@ -1421,15 +1439,18 @@ def list_patterns():
         with open(gitignore_file_path_list, "r") as f:
             content_data_list = f.read()
 
-        if not content_data_list.strip():
-            click.echo(".gitignore is empty.")
+        if not content_data_list.strip(): # Key check for empty or whitespace-only
+            click.echo(".gitignore is empty.") # This message correctly covers both empty and whitespace-only files
             return
 
+        # If we reach here, content_data_list.strip() is True, meaning there are non-whitespace lines.
+        # So, patterns_list_ignore will not be empty.
         patterns_list_ignore = [line.strip() for line in content_data_list.splitlines() if line.strip()]
 
-        if not patterns_list_ignore:
-            click.echo(".gitignore is effectively empty (contains only whitespace).")
-            return
+        # The following check is now redundant and can be removed:
+        # if not patterns_list_ignore:
+        #     click.echo(".gitignore is effectively empty (contains only whitespace).")
+        #     return
 
         panel_content_data = "\n".join(patterns_list_ignore)
         console.print(Panel(panel_content_data, title="[bold green].gitignore Contents[/bold green]", expand=False))
