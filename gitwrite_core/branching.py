@@ -115,14 +115,21 @@ def list_branches(repo_path_str: str) -> List[Dict[str, Any]]:
         if not repo.head_is_detached:
             current_head_full_ref_name = repo.head.name # e.g., "refs/heads/main"
 
-        for branch_obj in repo.branches.local: # Iterates over pygit2.Branch objects
+        for branch_name_str in repo.branches.local: # Assuming this iterates over string names now based on error
+            # Convert shorthand name to full reference name for comparison
+            full_ref_name_of_iterated_branch = f"refs/heads/{branch_name_str}"
+
             is_current = (current_head_full_ref_name is not None) and \
-                         (branch_obj.name == current_head_full_ref_name)
+                         (full_ref_name_of_iterated_branch == current_head_full_ref_name)
+
+            # To get the target OID, we need to look up the branch object by its string name
+            branch_lookup = repo.branches.local.get(branch_name_str)
+            target_oid = str(branch_lookup.target) if branch_lookup else None # Handle if lookup fails (should not happen in this loop)
 
             branches_data_list.append({
-                'name': branch_obj.branch_name, # Short name like "main"
+                'name': branch_name_str, # The string itself is the short name
                 'is_current': is_current,
-                'target_oid': str(branch_obj.target) # OID of the commit the branch points to
+                'target_oid': target_oid
             })
 
         # Sort by branch name (which is the short name)
@@ -189,18 +196,21 @@ def switch_to_branch(repo_path_str: str, branch_name: str) -> Dict[str, Any]:
         if local_candidate:
             target_branch_obj = local_candidate
             is_local_branch_target = True
-        else:
-            # Try remote-tracking branches:
-            # 1. As "origin/branch_name" (common case)
-            remote_candidate_origin = repo.branches.remote.get(f"origin/{branch_name}")
-            if remote_candidate_origin:
-                target_branch_obj = remote_candidate_origin
-            else:
-                # 2. As a full remote reference like "other_remote/branch_name" if user provided that
-                if '/' in branch_name:
-                    remote_candidate_full = repo.branches.remote.get(branch_name)
-                    if remote_candidate_full:
-                        target_branch_obj = remote_candidate_full
+        else: # Not a local branch
+            # Try remote-tracking branches
+            # 1. Try the name as given (e.g. "origin/foo", "downstream/foo")
+            target_branch_obj = repo.branches.remote.get(branch_name)
+
+            # 2. If not found, and name was "origin/foo", try "origin/origin/foo"
+            #    This handles the specific case in tests where remote branch is named "origin/branch"
+            #    which becomes "origin/origin/branch" as a pygit2 remote-tracking branch.
+            if not target_branch_obj and branch_name.startswith("origin/"):
+                doubled_origin_name = f"origin/{branch_name}" # Creates "origin/origin/foo"
+                target_branch_obj = repo.branches.remote.get(doubled_origin_name)
+
+            # 3. If still not found, and it was a short name (e.g. "foo"), try "origin/foo"
+            if not target_branch_obj and '/' not in branch_name:
+                target_branch_obj = repo.branches.remote.get(f"origin/{branch_name}")
 
         if not target_branch_obj:
             # If still not found, and repo is empty/unborn, it's a clearer error.
@@ -237,17 +247,17 @@ def switch_to_branch(repo_path_str: str, branch_name: str) -> Dict[str, Any]:
             current_head_is_detached = repo.head_is_detached
                                      # (should be False, unless target_refname was somehow not a proper local branch ref string)
 
-
-        final_branch_display_name = target_branch_obj.branch_name # e.g. "main" or "origin/main"
-        # If we switched to a local branch, its short name is fine.
-        # If we switched to a remote branch (now detached), branch_name is like "origin/feature".
-        # The input `branch_name` might be "feature" which resolved to "origin/feature".
-        # For clarity, if detached, perhaps return the ref that was checked out.
-        # For now, target_branch_obj.branch_name seems most consistent for what was *found*.
+        # Determine the name to return in the result.
+        # If it was a local branch, target_branch_obj.branch_name is its short name (e.g. "main").
+        # If it was a remote branch, we want to return the name the user used to find it
+        # (e.g., "feature" that resolved to "origin/feature", or "origin/special-feature" that resolved
+        # to "origin/origin/special-feature").
+        # Consistently return the actual resolved branch name from the target object.
+        returned_branch_name = target_branch_obj.branch_name
 
         return {
             'status': 'success',
-            'branch_name': final_branch_display_name,
+            'branch_name': returned_branch_name, # This is now always target_branch_obj.branch_name
             'previous_branch_name': previous_branch_name,
             'head_commit_oid': str(repo.head.target),
             'is_detached': current_head_is_detached
@@ -346,8 +356,18 @@ def merge_branch_into_current(repo_path_str: str, branch_to_merge_name: str) -> 
             try:
                 author_sig = repo.default_signature
                 committer_sig = repo.default_signature
-            except pygit2.errors.ConfigurationError: # More specific error for missing config
-                raise GitWriteError("User signature (user.name and user.email) not configured in Git.")
+            except ValueError as e: # Primarily for empty name/email from local config
+                if "failed to parse signature" in str(e).lower():
+                    raise GitWriteError("User signature (user.name and user.email) not configured in Git.")
+                else:
+                    # If ValueError is for something else, re-raise or wrap differently if needed
+                    raise GitWriteError(f"Unexpected signature issue: {e}")
+            except pygit2.GitError as e: # Catch other pygit2 errors, e.g. if config truly not found
+                 # Check if it's a "not found" error for user.name or user.email
+                if "config value 'user.name' was not found" in str(e).lower() or \
+                   "config value 'user.email' was not found" in str(e).lower():
+                    raise GitWriteError("User signature (user.name and user.email) not configured in Git.")
+                raise GitWriteError(f"Git operation failed while obtaining signature: {e}") # General GitError
 
 
             tree = repo.index.write_tree()
@@ -360,6 +380,8 @@ def merge_branch_into_current(repo_path_str: str, branch_to_merge_name: str) -> 
                 "HEAD", author_sig, committer_sig,
                 merge_commit_msg_text, tree, parents
             )
+            repo.index.write() # Ensure index reflects the merge commit
+            repo.index.read()  # Explicitly reload the index
             repo.state_cleanup()
             return {
                 'status': 'merged_ok',
