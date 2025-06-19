@@ -239,3 +239,22 @@ This refactoring of the test helpers and the subsequent updates to the test meth
 
 **Status:** Mostly Completed (16/17 tests fixed).
 ---
+
+## Test Suite Refactoring - 2024-10-27
+
+- Major refactoring of the test suite was performed.
+- The monolithic `tests/test_main.py` file was split into multiple smaller, focused test files under the `tests/` directory:
+    - `test_cli_init_ignore.py`
+    - `test_cli_save_revert.py`
+    - `test_cli_sync_merge.py`
+    - `test_cli_history_compare.py`
+    - `test_cli_explore_switch.py`
+    - `test_cli_tag.py`
+- Obsolete test classes (`TestGitWriteSaveSelectiveStaging`, `TestInitializeRepositoryCore`, `TestIgnoreCoreFunctions`, `TestTaggingCore`) were removed from `tests/test_main.py`.
+- Relevant CLI test classes were moved from `tests/test_main.py` and `tests/test_tag_command.py` to the new files.
+- Tests were updated to align with the new core logic:
+    - Revert command tests now expect errors for direct merge reverts (instead of using `--mainline`).
+    - Save command tests now assert the cleanup of `MERGE_HEAD` and `REVERT_HEAD` after successful operations.
+    - Sync/Merge conflict tests now verify CLI messages and conflict markers, expecting a clean repository state post-operation.
+- The original `tests/test_main.py` and `tests/test_tag_command.py` files were deleted.
+- **Note:** Execution of `poetry run pytest tests/` failed due to an environment/tooling issue ('Failed to compute affected file count and total size after command execution'), so complete test verification was not possible during this refactoring process.
