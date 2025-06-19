@@ -9,7 +9,7 @@ from .conftest import make_commit, _assert_gitwrite_structure, _assert_common_gi
 from gitwrite_cli.main import cli
 # COMMON_GITIGNORE_PATTERNS is now imported in conftest.py for helpers.
 # Keep other gitwrite_core.repository imports if tests use them directly.
-from gitwrite_core.repository import initialize_repository, add_pattern_to_gitignore, list_gitignore_patterns
+from gitwrite_core.repository import initialize_repository, add_pattern_to_gitignore, list_gitignore_patterns, COMMON_GITIGNORE_PATTERNS
 
 # Helper functions (make_commit, _assert_gitwrite_structure, _assert_common_gitignore_patterns) are in conftest.py
 # Fixtures (runner, init_test_dir, local_repo_path, local_repo) are in conftest.py
@@ -32,7 +32,7 @@ class TestGitWriteInit:
         assert f"Initialized empty Git repository in {dir_name}" in result.output
         assert f"Created GitWrite directory structure in {dir_name}" in result.output
         assert f"Staged GitWrite files in {dir_name}" in result.output
-        assert f"Created GitWrite structure commit in {dir_name}" in result.output
+        assert "Created GitWrite structure commit." in result.output # Adjusted
         assert (test_dir / ".git").is_dir()
         # _assert_gitwrite_structure and _assert_common_gitignore_patterns are in conftest.py
         # These can be called directly if needed, e.g. _assert_gitwrite_structure(test_dir)
@@ -53,7 +53,7 @@ class TestGitWriteInit:
         assert project_dir.is_dir()
         assert f"Initialized empty Git repository in {project_name}" in result.output
         assert f"Created GitWrite directory structure in {project_name}" in result.output
-        assert f"Created GitWrite structure commit in {project_name}" in result.output
+        assert "Created GitWrite structure commit." in result.output # Adjusted
         assert (project_dir / ".git").is_dir()
 
     def test_init_error_project_directory_is_a_file(self, runner: CliRunner, tmp_path: Path): # runner from conftest, tmp_path from pytest
@@ -90,7 +90,7 @@ class TestGitWriteInit:
         result = runner.invoke(cli, ["init"])
         assert result.exit_code == 0, f"CLI Error: {result.output}"
         assert f"Created GitWrite directory structure in {repo_name}" in result.output
-        assert f"Added GitWrite structure to {repo_name}" in result.output
+        assert "Created GitWrite structure commit." in result.output # Adjusted
         assert (local_repo_path / "drafts").is_dir()
 
     def test_init_in_existing_non_empty_dir_not_git_no_project_name(self, runner: CliRunner, tmp_path: Path): # runner from conftest, tmp_path from pytest

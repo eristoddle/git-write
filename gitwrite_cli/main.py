@@ -341,20 +341,68 @@ def compare(ref1_str, ref2_str):
                 continue
 
             lines = file_patch.splitlines()
+            if not lines:
+                continue
 
-            old_file_path_in_patch = "unknown_old"
-            new_file_path_in_patch = "unknown_new"
+            # Attempt to parse file paths from the "diff --git a/path1 b/path2" line
+            # Default file paths
+            parsed_old_path_from_diff_line = "unknown_from_diff_a"
+            parsed_new_path_from_diff_line = "unknown_from_diff_b"
+            if lines[0].startswith("diff --git a/"):
+                parts = lines[0].split(' ')
+                if len(parts) >= 4: # Should be: diff --git a/path1 b/path2
+                    parsed_old_path_from_diff_line = parts[2][2:] # Remove "a/"
+                    parsed_new_path_from_diff_line = parts[3][2:] # Remove "b/"
+
+            old_file_path_in_patch = parsed_old_path_from_diff_line
+            new_file_path_in_patch = parsed_new_path_from_diff_line
             hunk_lines_for_processing = []
 
-            for line_idx, line_content in enumerate(lines):
+            # Process subsequent lines for ---, +++, @@, and hunk data
+            for line_idx, line_content in enumerate(lines[1:]): # Start from second line
                 if line_content.startswith("--- a/"):
                     old_file_path_in_patch = line_content[len("--- a/"):].strip()
-                    if new_file_path_in_patch == "unknown_new": new_file_path_in_patch = old_file_path_in_patch
+                    # If new_file_path_in_patch was "unknown_new" or from diff --git,
+                    # and old_file_path_in_patch is not /dev/null, it's likely the same file (modified/renamed from)
+                    if old_file_path_in_patch != "/dev/null" and \
+                       (new_file_path_in_patch == parsed_new_path_from_diff_line or new_file_path_in_patch == "unknown_new"):
+                       new_file_path_in_patch = old_file_path_in_patch # Assume modification of same file unless +++ says otherwise
                 elif line_content.startswith("+++ b/"):
                     new_file_path_in_patch = line_content[len("+++ b/"):].strip()
-                    console.print(f"--- a/{old_file_path_in_patch}\n+++ b/{new_file_path_in_patch}", style="bold yellow")
+                    # If old_file_path_in_patch was "unknown_old" or from diff --git,
+                    # and new_file_path_in_patch is not /dev/null, it's likely the same file (modified/renamed to)
+                    if new_file_path_in_patch != "/dev/null" and \
+                       (old_file_path_in_patch == parsed_old_path_from_diff_line or old_file_path_in_patch == "unknown_old"):
+                        old_file_path_in_patch = new_file_path_in_patch
+
+
+                    # Print file header once all path info is gathered for this delta
+                    # This print should happen just before the first hunk (@@ line) or after +++ line if no --- line.
+                    # We need to ensure it's printed only once per file_patch.
+                    # Let's move the print to just before processing hunks or at end of file info lines.
+                    # For now, this placement is problematic if --- a/ appears after +++ b/ (not typical)
+                    # A better approach: collect all header info (---, +++) then print, then process hunks.
+                    # This simplified loop assumes typical order.
+                    # The actual printing of this header is done just before the first @@ line now.
                 elif line_content.startswith("@@"):
-                    if hunk_lines_for_processing:
+                    # This is the first hunk header, print the file paths now.
+                    if line_idx == 0 or not lines[line_idx-1].startswith("@@"): # Print only for the first hunk or if not already printed
+                         # Ensure correct paths for add/delete cases
+                        if old_file_path_in_patch == parsed_old_path_from_diff_line and new_file_path_in_patch == "/dev/null": # Deletion
+                            pass # old_file_path_in_patch is already correct from diff --git
+                        elif new_file_path_in_patch == parsed_new_path_from_diff_line and old_file_path_in_patch == "/dev/null": # Addition
+                            pass # new_file_path_in_patch is already correct from diff --git
+
+                        # If --- a/ was /dev/null, use the path from diff --git b/
+                        if old_file_path_in_patch == "/dev/null" and new_file_path_in_patch != parsed_new_path_from_diff_line and parsed_new_path_from_diff_line != "unknown_from_diff_b":
+                           pass # old_file_path_in_patch is /dev/null, new_file_path_in_patch is set from +++ b/
+                        # If +++ b/ was /dev/null, use the path from diff --git a/
+                        elif new_file_path_in_patch == "/dev/null" and old_file_path_in_patch != parsed_old_path_from_diff_line and parsed_old_path_from_diff_line != "unknown_from_diff_a":
+                           pass # new_file_path_in_patch is /dev/null, old_file_path_in_patch is set from --- a/
+
+                        console.print(f"--- a/{old_file_path_in_patch}\n+++ b/{new_file_path_in_patch}", style="bold yellow")
+
+                    if hunk_lines_for_processing: # Process previous hunk's lines
                         process_hunk_lines_for_word_diff(hunk_lines_for_processing, console)
                         hunk_lines_for_processing = []
                     console.print(line_content, style="cyan")

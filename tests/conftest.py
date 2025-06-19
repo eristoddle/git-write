@@ -134,7 +134,7 @@ def local_repo(local_repo_path: Path): # Adapted from test_main.py
     local_repo_path.mkdir()
     repo = pygit2.init_repository(str(local_repo_path), bare=False)
     # Use the make_commit from conftest.py
-    make_commit(repo, "initial.txt", "Initial content", "Initial commit")
+    make_commit(repo, "initial.txt", "Initial content", "Initial version") # Changed message
     config = repo.config
     config["user.name"] = "Test Author"
     config["user.email"] = "test@example.com"

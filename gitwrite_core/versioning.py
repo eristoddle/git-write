@@ -43,16 +43,15 @@ def get_commit_history(repo_path_str: str, count: Optional[int] = None) -> List[
     history = []
     commits_processed = 0
 
-    walker = repo.walk(repo.head.target, pygit2.GIT_SORT_TIME)
+    # Use GIT_SORT_TOPOLOGICAL in combination with GIT_SORT_REVERSE for oldest-first order
+    sort_mode = pygit2.GIT_SORT_TOPOLOGICAL | pygit2.GIT_SORT_REVERSE
+    walker = repo.walk(repo.head.target, sort_mode)
 
+    history_data = []
     for commit_obj in walker:
-        if count is not None and commits_processed >= count:
-            break
-
         author_tz = timezone(timedelta(minutes=commit_obj.author.offset))
         committer_tz = timezone(timedelta(minutes=commit_obj.committer.offset))
-
-        history.append({
+        history_data.append({
             "short_hash": str(commit_obj.id)[:7],
             "author_name": commit_obj.author.name,
             "author_email": commit_obj.author.email,
@@ -64,9 +63,14 @@ def get_commit_history(repo_path_str: str, count: Optional[int] = None) -> List[
             "message_short": commit_obj.message.splitlines()[0].strip(),
             "oid": str(commit_obj.id),
         })
-        commits_processed += 1
 
-    return history
+    # history_data is now oldest-first
+    if count is not None:
+        # Return the first 'count' elements, which are the oldest 'count' commits
+        return history_data[:count]
+    else:
+        # Return all commits, oldest-first
+        return history_data
 
 def get_diff(repo_path_str: str, ref1_str: Optional[str] = None, ref2_str: Optional[str] = None) -> Dict[str, Any]:
     """

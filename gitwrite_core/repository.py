@@ -56,12 +56,12 @@ def initialize_repository(path_str: str, project_name: Optional[str] = None) -> 
         if is_existing_repo:
             try:
                 repo = pygit2.Repository(str(target_dir))
-            except pygit2.Pygit2Error as e:
+            except pygit2.GitError as e:
                 return {'status': 'error', 'message': f"Error: Could not open existing Git repository at '{target_dir}'. {e}", 'path': str(target_dir.resolve())}
         else:
             try:
                 repo = pygit2.init_repository(str(target_dir))
-            except pygit2.Pygit2Error as e:
+            except pygit2.GitError as e:
                 return {'status': 'error', 'message': f"Error: Could not initialize Git repository at '{target_dir}'. {e}", 'path': str(target_dir.resolve())}
 
         # 3. GitWrite Structure Creation
@@ -136,7 +136,7 @@ def initialize_repository(path_str: str, project_name: Optional[str] = None) -> 
             except KeyError: # File is not in index and not in working dir (e.g. after a clean)
                  if gitignore_file.exists(): # if it exists on disk, it's new
                     items_to_stage_relative.append(gitignore_rel_path_str)
-            except pygit2.Pygit2Error as e:
+            except pygit2.GitError as e:
                 # Could fail if target_dir is not a repo, but we checked this
                 pass # Best effort to check status
 
@@ -159,7 +159,7 @@ def initialize_repository(path_str: str, project_name: Optional[str] = None) -> 
                     status = repo.status_file(item_rel_path_str)
                 except KeyError: # File is not in index and not in working dir (but we know it exists)
                     status = pygit2.GIT_STATUS_WT_NEW # Treat as new if status_file errors due to not being tracked
-                except pygit2.Pygit2Error: # Other potential errors with status_file
+                except pygit2.GitError: # Other potential errors with status_file
                     status = pygit2.GIT_STATUS_WT_NEW # Default to staging if status check fails
 
 
@@ -173,16 +173,17 @@ def initialize_repository(path_str: str, project_name: Optional[str] = None) -> 
                     repo.index.add(item_rel_path_str)
                     staged_anything = True
                 elif item_rel_path_str in [str(drafts_gitkeep_rel), str(notes_gitkeep_rel), str(metadata_yml_rel)] and \
-                     (status == pygit2.GIT_STATUS_WT_NEW or not repo.lookup_path(item_rel_path_str, flags=pygit2.GIT_LOOKUP_PATH_SKIP_WORKDIR)):
-                     # The lookup_path is a more direct way to see if it's in the current commit's tree
-                     # If it's WT_NEW or not in current HEAD tree, add it.
+                     (status == pygit2.GIT_STATUS_WT_NEW or \
+                      (not repo.head_is_unborn and item_rel_path_str not in repo.head.peel(pygit2.Commit).tree) or \
+                      repo.head_is_unborn): # If unborn, any new file should be added
+                     # If it's WT_NEW or not in current HEAD tree (and HEAD exists), or if repo is unborn, add it.
                      repo.index.add(item_rel_path_str)
                      staged_anything = True
 
 
             if staged_anything:
                 repo.index.write()
-        except pygit2.Pygit2Error as e:
+        except pygit2.GitError as e:
             return {'status': 'error', 'message': f"Error: Could not stage files in Git repository at '{target_dir}'. {e}", 'path': str(target_dir.resolve())}
 
         # 6. Commit Creation
@@ -225,7 +226,7 @@ def initialize_repository(path_str: str, project_name: Optional[str] = None) -> 
                     if not is_existing_repo : action_summary = "Initialized empty Git repository.\n" + action_summary
                     return {'status': 'success', 'message': action_summary.replace(".\n", f" in {target_dir.name}.\n").strip(), 'path': str(target_dir.resolve())}
 
-            except pygit2.Pygit2Error as e:
+            except pygit2.GitError as e:
                 return {'status': 'error', 'message': f"Error: Could not create commit in Git repository at '{target_dir}'. {e}", 'path': str(target_dir.resolve())}
         else:
             # No files were staged, means structure likely already exists and is tracked.
