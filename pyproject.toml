@@ -15,9 +15,9 @@ dependencies = [
 ]
 
 [tool.poetry]
-# Tell poetry that both directories are packages for this project
 packages = [
-    { include = "gitwrite_core", from = ".." },
+    { include = "gitwrite_cli" },
+    { include = "gitwrite_core" },
 ]
 
 [tool.poetry.group.dev.dependencies]

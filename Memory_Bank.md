@@ -267,3 +267,43 @@ This refactoring of the test helpers and the subsequent updates to the test meth
 
 **Note:** Test execution to confirm the resolution of "fixture not found" errors was blocked by a persistent `ModuleNotFoundError: No module named 'pygit2'` in the testing environment.
 ---
+## Project Structure Refactoring - Pyproject and Poetry Configuration
+
+**Agent:** Jules (via Manager instruction)
+**Task Reference:** Monorepo Restructuring - `pyproject.toml` and `poetry.toml` relocation.
+
+**Summary:**
+Refactored the project structure by moving `pyproject.toml` and `poetry.toml` from the `gitwrite_cli` subdirectory to the project root. The root `pyproject.toml` configuration was then updated to correctly define both `gitwrite_cli` and `gitwrite_core` as distinct packages within the Poetry project. This change standardizes the project layout, making it a more conventional monorepo structure managed by Poetry, and resolves previous issues related to package discovery, installation, and module resolution that arose from the nested configuration. `poetry install` was run successfully after these changes, confirming the new setup.
+
+**Details:**
+- `gitwrite_cli/pyproject.toml` was moved to `./pyproject.toml`.
+- `gitwrite_cli/poetry.toml` was moved to `./poetry.toml`.
+- The `[tool.poetry.packages]` section in the root `./pyproject.toml` was updated to:
+  ```toml
+  [tool.poetry]
+  packages = [
+      { include = "gitwrite_cli" },
+      { include = "gitwrite_core" },
+  ]
+  ```
+- `poetry install` was executed in the project root, which successfully created a virtual environment (`.venv/`) and installed all dependencies, including the `gitwrite_cli` and `gitwrite_core` packages in editable mode.
+
+**Output/Result:**
+- Project now has a root `pyproject.toml` and `poetry.toml`.
+- Poetry correctly recognizes and manages `gitwrite_cli` and `gitwrite_core` as packages.
+- Development environment is correctly set up for further work on both packages.
+
+**Status:** Completed
+
+**Issues/Blockers:**
+Encountered significant difficulties with file modification tools (`overwrite_file_with_block`, `replace_with_git_merge_diff`, `delete_file`) when attempting to modify or delete files in the root directory, particularly `./pyproject.toml`, after they had been moved there. These tools often reported files as not existing when `ls` confirmed they did, or patches failed to apply.
+Workaround:
+  1. Resetting the repository (`reset_all()`).
+  2. Modifying `pyproject.toml` *within* the `gitwrite_cli` directory to its final desired content.
+  3. Using `run_in_bash_session` with `rm` to delete any conflicting file at the root if `rename_file` reported a conflict.
+  4. Moving the pre-modified `pyproject.toml` from `gitwrite_cli/` to the root.
+This sequence of operations proved more reliable.
+
+**Next Steps (Optional):**
+Proceed with any further development tasks, now that the project structure and Poetry configuration are stable.
+---
