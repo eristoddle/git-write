@@ -1,7 +1,7 @@
 import pygit2
 from gitwrite_core.exceptions import RepositoryNotFoundError, CommitNotFoundError, TagAlreadyExistsError, GitWriteError
 
-def create_tag(repo_path_str: str, tag_name: str, target_commit_ish: str = 'HEAD', message: str = None, force: bool = False):
+def create_tag(repo_path_str: str, tag_name: str, target_commit_ish: str = 'HEAD', message: str = None, force: bool = False, tagger: pygit2.Signature = None):
     """
     Creates a new tag in the repository.
 
@@ -41,7 +41,7 @@ def create_tag(repo_path_str: str, tag_name: str, target_commit_ish: str = 'HEAD
 
     if message:
         # Create an annotated tag
-        tagger_signature = pygit2.Signature('GitWrite Core', 'core@gitwrite.com')
+        tagger_signature = tagger if tagger else pygit2.Signature('GitWrite Core', 'core@gitwrite.com')
         try:
             repo.create_tag(tag_name, target_oid, pygit2.GIT_OBJ_COMMIT, tagger_signature, message)
             return {'name': tag_name, 'type': 'annotated', 'target': str(target_oid), 'message': message}

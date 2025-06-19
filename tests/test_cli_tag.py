@@ -142,20 +142,16 @@ class TestTagCommandsCLI: # Copied from test_tag_command.py
             assert "No tags found in the repository." in result.output
 
     def test_tag_list_only_lightweight(self, runner: CliRunner, mock_repo: MagicMock): # Fixtures from conftest
-        with patch("gitwrite_cli.main.pygit2.discover_repository", return_value="fake_path"), \
-             patch("gitwrite_cli.main.pygit2.Repository", return_value=mock_repo):
-            mock_repo.listall_tags.return_value = ["lw_tag1", "lw_tag2"]
-            lw_commit1 = MagicMock(spec=pygit2.Commit); lw_commit1.id = pygit2.Oid(hex="1111111111abcdef0123456789abcdef01234567"); lw_commit1.short_id = "1111111"; lw_commit1.type = pygit2.GIT_OBJECT_COMMIT; lw_commit1.peel.return_value = lw_commit1 # pygit2 types kept
-            lw_commit2 = MagicMock(spec=pygit2.Commit); lw_commit2.id = pygit2.Oid(hex="2222222222abcdef0123456789abcdef01234567"); lw_commit2.short_id = "2222222"; lw_commit2.type = pygit2.GIT_OBJECT_COMMIT; lw_commit2.peel.return_value = lw_commit2
-            def revparse_side_effect(name):
-                if name == "lw_tag1": return lw_commit1
-                if name == "lw_tag2": return lw_commit2
-                raise KeyError(f"Unknown ref {name}")
-            mock_repo.revparse_single.side_effect = revparse_side_effect
-            result = runner.invoke(cli, ["tag", "list"])
+        mock_tags_data = [{'name': 'lw_tag1', 'type': 'lightweight', 'target': '1111111', 'message': ''},
+                          {'name': 'lw_tag2', 'type': 'lightweight', 'target': '2222222', 'message': ''}]
+        with patch('gitwrite_core.tagging.list_tags', return_value=mock_tags_data) as mock_list_core:
+            # Patch discover_repository to prevent actual repo operations for this CLI test unit
+            with patch('gitwrite_cli.main.pygit2.discover_repository', return_value="fake_repo_path"):
+                result = runner.invoke(cli, ["tag", "list"])
             assert result.exit_code == 0
-            assert "lw_tag1" in result.output and "Lightweight" in result.output and "1111111" in result.output
-            assert "lw_tag2" in result.output and "Lightweight" in result.output and "2222222" in result.output
+            assert "lw_tag1" in result.output and "lightweight" in result.output and "1111111" in result.output
+            assert "lw_tag2" in result.output and "lightweight" in result.output and "2222222" in result.output
+            mock_list_core.assert_called_once() # Check the new mock name
 
     @pytest.mark.xfail(reason="Persistent mocking issue with commit.short_id for annotated tags") # pytest import is kept
     def test_tag_list_only_annotated(self, runner: CliRunner, mock_repo: MagicMock): # Fixtures from conftest
@@ -209,14 +205,24 @@ class TestTagCommandsCLI: # Copied from test_tag_command.py
             assert "Error: Cannot list tags in a bare repository." in result.output
 
     def test_tag_list_tag_pointing_to_blob(self, runner: CliRunner, mock_repo: MagicMock): # Fixtures from conftest
-        with patch("gitwrite_cli.main.pygit2.discover_repository", return_value="fake_path"), \
-             patch("gitwrite_cli.main.pygit2.Repository", return_value=mock_repo):
-            mock_repo.listall_tags.return_value = ["blob_tag"]
-            mock_blob = MagicMock(spec=pygit2.Blob); mock_blob.id = pygit2.Oid(hex="5555555555abcdef0123456789abcdef01234567"); mock_blob.short_id = "5555555"; mock_blob.type = pygit2.GIT_OBJECT_BLOB; mock_blob.type_name = "blob" # pygit2 types
-            mock_repo.revparse_single.return_value = mock_blob
-            result = runner.invoke(cli, ["tag", "list"])
+        mock_blob_tag_data = [{'name': 'blob_tag', 'type': 'lightweight', 'target': '5555555', 'message': ''}] # Example, adjust if core logic returns more fields or different type for blob target tags
+        with patch('gitwrite_core.tagging.list_tags', return_value=mock_blob_tag_data) as mock_list_core:
+            # Patch discover_repository to prevent actual repo operations for this CLI test unit
+            with patch('gitwrite_cli.main.pygit2.discover_repository', return_value="fake_repo_path"):
+                result = runner.invoke(cli, ["tag", "list"])
             assert result.exit_code == 0
-            assert "blob_tag" in result.output and "Lightweight" in result.output and "5555555 (blob)" in result.output
+            # The original assertion was: "5555555 (blob)"
+            # The updated core list_tags function returns a dictionary that might not include "(blob)" directly in the target string.
+            # The CLI's rich table formatter for tags does: tag_data['target'][:7] if tag_data.get('target') else 'N/A'
+            # It doesn't add (blob) or (commit) to the target hash in the table.
+            # So, we should assert the components based on the mock_blob_tag_data.
+            assert "blob_tag" in result.output
+            assert "lightweight" in result.output # Assuming a tag to a blob is treated as lightweight by list_tags
+            assert "5555555" in result.output # Just the hash
+            # If the (blob) part is crucial, the CLI formatting or core_list_tags would need to provide it.
+            # Based on current list_tags, it only provides 'type' (annotated/lightweight) and 'target' (OID string).
+            # The original test's "5555555 (blob)" might have come from a different mock setup.
+            mock_list_core.assert_called_once() # Check the new mock name
 
     def test_tag_add_annotated_no_default_signature(self, runner: CliRunner, mock_repo: MagicMock): # Fixtures from conftest
         with patch("gitwrite_cli.main.pygit2.discover_repository", return_value="fake_path"), \

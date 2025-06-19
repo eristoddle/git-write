@@ -1,7 +1,7 @@
 # Test comment to check write access.
 import click
 import pygit2 # pygit2 is still used by other commands
-# import os # os seems to be no longer used by CLI commands directly
+import os # os seems to be no longer used by CLI commands directly
 from pathlib import Path
 # from pygit2 import Signature # Signature might not be needed if init was the only user. Let's check.
 # Signature is used in 'save' and 'tag_add', so it should remain.
@@ -621,58 +621,37 @@ def add(ctx, name, message, force, commit_ish): # Function signature updated
     The tag points to COMMIT_ISH (commit reference), which defaults to HEAD.
     """
     try:
-        # Assuming REPO_PATH is set up in a global context object, e.g., by the main cli group
-        # If not, discover it: repo_path = pygit2.discover_repository(str(Path.cwd()))
-        # For now, let's assume ctx.obj['REPO_PATH'] is available.
-        # If your CLI structure doesn't pass REPO_PATH this way, you'll need to adjust.
-        # A common pattern is to set ctx.obj['REPO_PATH'] = pygit2.discover_repository(str(Path.cwd()))
-        # in the main `cli` function or a callback.
-        # For robustness, let's try to discover if not present.
-
-        repo_path = None
-        if ctx.obj and 'REPO_PATH' in ctx.obj:
-            repo_path = ctx.obj['REPO_PATH']
-
+        repo_path = pygit2.discover_repository(str(Path.cwd()))
         if repo_path is None:
-            # Fallback to discovering the repository if not in context
-            discovered_path = pygit2.discover_repository(str(Path.cwd()))
-            if discovered_path is None:
-                click.echo(click.style("Error: Not a git repository (or any of the parent directories).", fg='red'), err=True)
-                ctx.exit(1) # Exit with error code
-            repo_path = discovered_path
+            raise RepositoryNotFoundError("Not a git repository (or any of the parent directories).")
 
-        # Store it back for potential future use in the same command chain (though not typical for simple commands)
-        if ctx.obj is None: ctx.obj = {}
-        ctx.obj['REPO_PATH'] = repo_path
-
+        # Set up a fallback signature from environment variables if repo default is missing
+        tagger = None
+        if message: # Annotated tags require a signature
+            try:
+                repo = pygit2.Repository(repo_path)
+                tagger = repo.default_signature
+            except (pygit2.GitError, KeyError):
+                name_env = os.environ.get("GIT_TAGGER_NAME", "GitWrite User") # Renamed to avoid conflict with 'name' argument
+                email_env = os.environ.get("GIT_TAGGER_EMAIL", "user@gitwrite.com") # Renamed to avoid conflict
+                tagger = pygit2.Signature(name_env, email_env)
 
         tag_details = create_tag(
             repo_path_str=repo_path,
             tag_name=name,
             target_commit_ish=commit_ish,
             message=message,
-            force=force
+            force=force,
+            tagger=tagger  # Pass the signature to the core function
         )
 
-        if tag_details['type'] == 'annotated':
-            click.echo(click.style(f"Created annotated tag '{tag_details['name']}' pointing to {tag_details['target'][:7]}.", fg='green'))
-        else: # lightweight
-            click.echo(click.style(f"Created lightweight tag '{tag_details['name']}' pointing to {tag_details['target'][:7]}.", fg='green'))
+        click.echo(f"Successfully created {tag_details['type']} tag '{tag_details['name']}' pointing to {tag_details['target'][:7]}.")
 
-    except RepositoryNotFoundError:
-        click.echo(click.style("Error: Not a git repository.", fg='red'), err=True)
+    except (RepositoryNotFoundError, CommitNotFoundError, TagAlreadyExistsError, GitWriteError) as e:
+        click.echo(f"Error: {e}", err=True)
         if ctx: ctx.exit(1)
-    except CommitNotFoundError:
-        click.echo(click.style(f"Error: Commit '{commit_ish}' not found.", fg='red'), err=True)
-        if ctx: ctx.exit(1)
-    except TagAlreadyExistsError:
-        click.echo(click.style(f"Error: Tag '{name}' already exists. Use --force to overwrite.", fg='red'), err=True)
-        if ctx: ctx.exit(1)
-    except GitWriteError as e: # Catching the base GitWriteError for other core errors
-        click.echo(click.style(f"Error creating tag: {e}", fg='red'), err=True)
-        if ctx: ctx.exit(1)
-    except Exception as e: # Catch-all for unexpected errors
-        click.echo(click.style(f"An unexpected error occurred: {e}", fg='red'), err=True)
+    except Exception as e:
+        click.echo(f"An unexpected error occurred: {e}", err=True)
         if ctx: ctx.exit(1)
 
 
@@ -682,7 +661,7 @@ def list_cmd(ctx): # Renamed to avoid conflict if we had a variable named list
     """Lists all tags in the repository."""
     # The list_tags function from core is intended to be used by the CLI's list command.
     # It needs to be imported.
-    from gitwrite_core.tagging import list_tags as core_list_tags
+    from gitwrite_core.tagging import list_tags as core_list_tags # This line is correct as per instructions
 
     repo_path = None
     if ctx.obj and 'REPO_PATH' in ctx.obj:
