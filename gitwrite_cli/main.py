@@ -441,7 +441,8 @@ def process_hunk_lines_for_word_diff(hunk_lines: list, console: Console):
 @cli.command()
 @click.option("--remote", "remote_name", default="origin", help="The remote to sync with.")
 @click.option("--branch", "branch_name_opt", default=None, help="The branch to sync. Defaults to the current branch.")
-def sync(remote_name, branch_name_opt):
+@click.option("--no-push", "no_push_flag", is_flag=True, default=False, help="Do not push changes to the remote.")
+def sync(remote_name, branch_name_opt, no_push_flag):
     """Fetches changes from a remote, integrates them, and pushes local changes."""
     try:
         repo_path_str = pygit2.discover_repository(str(Path.cwd()))
@@ -449,159 +450,53 @@ def sync(remote_name, branch_name_opt):
             click.echo("Error: Not a Git repository (or any of the parent directories).", err=True)
             return
 
-        repo = pygit2.Repository(repo_path_str)
+        # Call the core sync_repository function
+        # The core function's `push` parameter means "do a push"
+        # The CLI flag `--no-push` means "do NOT do a push"
+        # So, push_action = not no_push_flag
+        # The core function's `allow_no_push` parameter should be True if CLI's --no-push is used.
+        sync_result = sync_repository(
+            repo_path_str,
+            remote_name=remote_name,
+            branch_name_opt=branch_name_opt,
+            push=not no_push_flag,
+            allow_no_push=no_push_flag # If --no-push is specified, allow it.
+        )
 
-        if repo.is_bare:
-            click.echo("Error: Cannot sync in a bare repository.", err=True)
-            return
+        # Report based on sync_result dictionary
+        fetch_status_message = sync_result.get("fetch_status", {}).get("message", "Fetch status unknown.")
+        is_fetch_error = "failed" in fetch_status_message.lower() or "error" in fetch_status_message.lower()
+        click.echo(fetch_status_message, err=is_fetch_error)
 
-        if repo.is_empty or repo.head_is_unborn:
-            click.echo("Error: Repository is empty or HEAD is unborn. Please make some commits first.", err=True)
-            return
-
-        current_branch_obj_sync = None
-        if branch_name_opt:
-            current_branch_full_ref_name_sync = f"refs/heads/{branch_name_opt}"
-            try:
-                current_branch_obj_sync = repo.lookup_reference(current_branch_full_ref_name_sync)
-            except KeyError:
-                click.echo(f"Error: Branch '{branch_name_opt}' not found.", err=True)
-                return
-            if not current_branch_obj_sync.is_branch():
-                click.echo(f"Error: '{branch_name_opt}' is not a local branch.", err=True)
-                return
+        local_update_msg = sync_result.get("local_update_status", {}).get("message", "Local update status unknown.")
+        if sync_result.get("local_update_status", {}).get("type") == "error" or \
+           sync_result.get("local_update_status", {}).get("type") == "conflicts_detected":
+            click.echo(local_update_msg, err=True)
+            if sync_result.get("local_update_status", {}).get("conflicting_files"):
+                click.echo("Conflicting files: " + ", ".join(sync_result["local_update_status"]["conflicting_files"]), err=True)
+                click.echo("Please resolve conflicts and then use 'gitwrite save <message>' to commit the merge.", err=True)
         else:
-            if repo.head_is_detached:
-                click.echo("Error: HEAD is detached. Please switch to a branch to sync.", err=True)
-                return
-            current_branch_obj_sync = repo.head
-            branch_name_opt = current_branch_obj_sync.shorthand
-            # current_branch_full_ref_name_sync = current_branch_obj_sync.name # Already have this
+            click.echo(local_update_msg)
 
-        click.echo(f"Syncing branch '{branch_name_opt}' with remote '{remote_name}'...")
-        try:
-            remote_obj = repo.remotes[remote_name]
-        except KeyError:
-            click.echo(f"Error: Remote '{remote_name}' not found.", err=True)
-            return
-        except Exception as e:
-            click.echo(f"Error accessing remote '{remote_name}': {e}", err=True)
-            return
 
-        click.echo(f"Fetching from remote '{remote_name}'...")
-        try:
-            stats = remote_obj.fetch()
-            if hasattr(stats, 'received_objects') and hasattr(stats, 'total_objects'):
-                 click.echo(f"Fetch complete. Received {stats.received_objects}/{stats.total_objects} objects.")
-            else:
-                 click.echo("Fetch complete. (No detailed stats available from fetch operation)")
-        except pygit2.GitError as e:
-            click.echo(f"Error during fetch: {e}", err=True)
-            if "authentication required" in str(e).lower():
-                click.echo("Hint: Ensure your SSH keys or credential manager are configured correctly.", err=True)
-            return
-        except Exception as e:
-            click.echo(f"An unexpected error occurred during fetch: {e}", err=True)
-            return
+        push_msg = sync_result.get("push_status", {}).get("message", "Push status unknown.")
+        push_failed = "failed" in push_msg.lower() or \
+                      ("pushed" in sync_result.get("push_status", {}) and not sync_result["push_status"]["pushed"] and not no_push_flag)
 
-        click.echo("Attempting to integrate remote changes...")
-        local_commit_oid_sync = current_branch_obj_sync.target
-        remote_tracking_branch_full_name_sync = f"refs/remotes/{remote_name}/{branch_name_opt}"
-        try:
-            remote_branch_ref_sync = repo.lookup_reference(remote_tracking_branch_full_name_sync)
-            their_commit_oid_sync = remote_branch_ref_sync.target
-        except KeyError:
-            click.echo(f"Error: Remote tracking branch '{remote_tracking_branch_full_name_sync}' not found. Has it been fetched?", err=True)
-            return
-        except Exception as e:
-            click.echo(f"Error looking up remote tracking branch '{remote_tracking_branch_full_name_sync}': {e}", err=True)
-            return
-
-        if local_commit_oid_sync == their_commit_oid_sync:
-            click.echo("Local branch is already up-to-date with remote.")
+        if no_push_flag:
+            click.echo("Push skipped (--no-push specified).")
+        elif push_failed:
+            click.echo(push_msg, err=True)
         else:
-            if repo.head.target != local_commit_oid_sync:
-                 repo.set_head(current_branch_obj_sync.name)
+            click.echo(push_msg)
 
-            merge_result_analysis_sync, _ = repo.merge_analysis(their_commit_oid_sync)
+        if sync_result.get("status", "").startswith("success"):
+            click.echo(f"Sync process for branch '{sync_result.get('branch_synced', branch_name_opt)}' with remote '{remote_name}' completed.")
+        elif sync_result.get("status") == "error_in_sub_operation":
+             click.echo(f"Sync process for branch '{sync_result.get('branch_synced', branch_name_opt)}' with remote '{remote_name}' completed with errors in some steps.", err=True)
+        # Other error cases are typically raised as exceptions by the core function
 
-            if merge_result_analysis_sync & pygit2.GIT_MERGE_ANALYSIS_UP_TO_DATE:
-                click.echo(f"Branch '{branch_name_opt}' is already up-to-date with '{remote_tracking_branch_full_name_sync}'.")
-            elif merge_result_analysis_sync & pygit2.GIT_MERGE_ANALYSIS_FASTFORWARD:
-                click.echo(f"Attempting Fast-forward for branch '{branch_name_opt}'...")
-                try:
-                    current_branch_obj_sync.set_target(their_commit_oid_sync)
-                    repo.checkout(current_branch_obj_sync.name, strategy=pygit2.GIT_CHECKOUT_FORCE)
-                    click.echo(f"Fast-forwarded '{branch_name_opt}' to match '{remote_tracking_branch_full_name_sync}'.")
-                except pygit2.GitError as e:
-                    click.echo(f"Error during fast-forward: {e}. Your branch may be in an inconsistent state.", err=True)
-                    return
-            elif merge_result_analysis_sync & pygit2.GIT_MERGE_ANALYSIS_NORMAL:
-                click.echo(f"Attempting Normal merge of '{remote_tracking_branch_full_name_sync}' into '{branch_name_opt}'...")
-                try:
-                    repo.merge(their_commit_oid_sync)
-                    repo.index.write()
-
-                    has_actual_conflicts_sync = False
-                    if repo.index.conflicts is not None:
-                        for _conflict_entry_sync in repo.index.conflicts:
-                            has_actual_conflicts_sync = True
-                            break
-                    if has_actual_conflicts_sync:
-                        click.echo("Conflicts detected. Please resolve them manually and then run 'gitwrite save'.", err=True)
-                        conflicting_files_display = []
-                        if repo.index.conflicts:
-                            for conflict_item_tuple_sync in repo.index.conflicts:
-                                path_to_display = next((entry.path for entry in conflict_item_tuple_sync if entry and entry.path), "unknown_path")
-                                if path_to_display not in conflicting_files_display:
-                                     conflicting_files_display.append(path_to_display)
-                        if conflicting_files_display:
-                             click.echo("Conflicting files: " + ", ".join(sorted(conflicting_files_display)), err=True)
-                        return
-                    else:
-                        click.echo("No conflicts. Creating merge commit...")
-                        try:
-                            author_sig_sync = repo.default_signature
-                            committer_sig_sync = repo.default_signature
-                        except pygit2.GitError:
-                            author_name_env_sync = os.environ.get("GIT_AUTHOR_NAME", "GitWrite User")
-                            author_email_env_sync = os.environ.get("GIT_AUTHOR_EMAIL", "user@gitwrite.io")
-                            author_sig_sync = pygit2.Signature(author_name_env_sync, author_email_env_sync)
-                            committer_sig_sync = author_sig_sync
-                        tree_sync = repo.index.write_tree()
-                        parents_sync = [local_commit_oid_sync, their_commit_oid_sync]
-                        merge_commit_message_text_sync = f"Merge remote-tracking branch '{remote_tracking_branch_full_name_sync}' into {branch_name_opt}"
-                        repo.create_commit(current_branch_obj_sync.name, author_sig_sync, committer_sig_sync, merge_commit_message_text_sync, tree_sync, parents_sync)
-                        repo.state_cleanup()
-                        click.echo("Successfully merged remote changes.")
-                except pygit2.GitError as e:
-                    click.echo(f"Error during merge process: {e}", err=True)
-                    repo.state_cleanup()
-                    return
-            elif merge_result_analysis_sync & pygit2.GIT_MERGE_ANALYSIS_UNBORN:
-                 click.echo(f"Merge not possible: '{branch_name_opt}' or '{remote_tracking_branch_full_name_sync}' is an unborn branch.", err=True)
-                 return
-            else:
-                click.echo(f"Merge not possible. Analysis result: {merge_result_analysis_sync}. Local and remote histories may have diverged significantly.", err=True)
-                return
-
-        click.echo(f"Attempting to push local changes from '{branch_name_opt}' to '{remote_name}/{branch_name_opt}'...")
-        try:
-            refspec_sync = f"refs/heads/{branch_name_opt}:refs/heads/{branch_name_opt}"
-            remote_obj.push([refspec_sync])
-            click.echo("Push successful.")
-        except pygit2.GitError as e:
-            click.echo(f"Error during push: {e}", err=True)
-            if "non-fast-forward" in str(e).lower():
-                click.echo("Hint: The remote has changes that were not integrated locally. Try running sync again or manually resolving.", err=True)
-            elif "authentication required" in str(e).lower():
-                click.echo("Hint: Ensure your SSH keys or credential manager are configured for push access.", err=True)
-        except Exception as e:
-            click.echo(f"An unexpected error occurred during push: {e}", err=True)
-
-        click.echo(f"Sync process for branch '{branch_name_opt}' with remote '{remote_name}' completed.")
-
-    except pygit2.GitError as e:
+    except pygit2.GitError as e: # Should be caught by more specific exceptions from core
         click.echo(f"GitError during sync: {e}", err=True)
     except KeyError as e: # Should be caught by specific exceptions like RemoteNotFoundError now
         click.echo(f"Error during sync setup (KeyError): {e}", err=True)

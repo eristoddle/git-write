@@ -166,9 +166,17 @@ class TestSwitchCommandCLI:
         make_commit(repo, "conflict_file.txt", "Version on develop", "Commit on develop")
         main_branch_name = "main"
         if not repo.branches.local.get(main_branch_name):
-            main_branch_name = repo.branches.local[0].branch_name
-        repo.checkout(repo.branches.local[main_branch_name].name)
-        repo.set_head(repo.branches.local[main_branch_name].name)
+            # Get the first available local branch if 'main' is not found
+            local_branches = list(repo.branches.local)
+            if not local_branches:
+                pytest.fail("Test setup error: No local branches found in repository.")
+            main_branch_name = local_branches[0] # This will be the branch name string
+
+        # Ensure we are on the main_branch_name before dirtying the file
+        if repo.head.shorthand != main_branch_name:
+            repo.checkout(repo.branches.local[main_branch_name].name)
+            repo.set_head(repo.branches.local[main_branch_name].name)
+
         (Path(str(cli_test_repo)) / "conflict_file.txt").write_text("Dirty version on main")
         result = runner.invoke(cli, ["switch", "develop"]) # runner from conftest
         assert result.exit_code == 0, f"CLI Error: {result.output}"

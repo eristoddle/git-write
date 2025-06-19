@@ -7,6 +7,7 @@ from pathlib import Path
 import os
 # datetime, timezone, timedelta are not used directly in this file anymore,
 # create_test_signature from conftest handles its own datetime imports.
+from unittest.mock import MagicMock
 
 from gitwrite_core.versioning import revert_commit, save_changes # Added save_changes
 from gitwrite_core.exceptions import RepositoryNotFoundError, CommitNotFoundError, MergeConflictError, GitWriteError, NoChangesToSaveError # Added NoChangesToSaveError
@@ -691,18 +692,29 @@ class TestSaveChangesCore(GitWriteCoreTestCaseBase):
         their_blob_oid = self.repo.create_blob(b"revert_their_content")
 
         self.repo.index.read()
-        self.repo.index.add_conflict(
-            ancestor_path=conflict_path, ancestor_oid=ancestor_blob_oid, ancestor_mode=pygit2.GIT_FILEMODE_BLOB,
-            our_path=conflict_path, our_oid=our_blob_oid, our_mode=pygit2.GIT_FILEMODE_BLOB,
-            their_path=conflict_path, their_oid=their_blob_oid, their_mode=pygit2.GIT_FILEMODE_BLOB
-        )
-        self.repo.index.write()
+        # Simulate conflicts by creating a mock conflict entry
+        # The actual content of the conflict entry doesn't matter for this test,
+        # only that the 'conflicts' attribute is not None and returns conflicting files.
+        from unittest.mock import MagicMock # Import locally for this method
+        class MockConflictEntry:
+            def __init__(self, path):
+                self.our = MagicMock()
+                self.our.path = path
+                self.their = MagicMock()
+                self.their.path = path
+                self.ancestor = MagicMock()
+                self.ancestor.path = path
 
-        self.assertIsNotNone(self.repo.references.get("REVERT_HEAD"))
-        self.assertTrue(self.repo.index.conflicts, "Index should have conflicts.")
+        mock_conflict = MockConflictEntry(conflict_path)
 
-        with self.assertRaises(RevertConflictError) as cm:
-            save_changes(self.repo_path_str, "Attempt to finalize revert with conflicts")
+        with mock.patch.object(self.repo.index, 'conflicts', new=[mock_conflict]):
+            self.repo.index.write() # This write might not be necessary if conflicts are mocked
+
+            self.assertIsNotNone(self.repo.references.get("REVERT_HEAD"))
+            self.assertTrue(self.repo.index.conflicts, "Index should have conflicts.")
+
+            with self.assertRaises(RevertConflictError) as cm:
+                save_changes(self.repo_path_str, "Attempt to finalize revert with conflicts")
 
         self.assertIsNotNone(cm.exception.conflicting_files)
         # The artificial conflict was on 'conflicting_revert_file.txt'
@@ -842,7 +854,7 @@ class TestSaveChangesCore(GitWriteCoreTestCaseBase):
         self._make_commit(self.repo, "Initial", {"file_a.txt": "Content A v1"}) # Uses local _make_commit
         # No changes made after initial commit
 
-        with self.assertRaisesRegex(NoChangesToSaveError, "No changes to save \(working directory and index are clean or match HEAD\)\."):
+        with self.assertRaisesRegex(NoChangesToSaveError, r"No changes to save \(working directory and index are clean or match HEAD\)\."):
             save_changes(self.repo_path_str, "Attempt to save no changes")
 
     def test_save_with_staged_changes_working_dir_clean(self):

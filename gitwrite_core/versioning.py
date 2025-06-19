@@ -530,7 +530,7 @@ def save_changes(repo_path_str: str, message: str, include_paths: Optional[List[
                 # Now, check if the updated index has any changes compared to HEAD tree
                 # If there are no changes, it means the specified files either didn't exist,
                 # were ignored, or had no modifications to stage.
-                diff_to_head = repo.diff_to_tree(repo.head.peel(pygit2.Tree))
+                diff_to_head = repo.index.diff_to_tree(repo.head.peel(pygit2.Tree))
                 if not diff_to_head:
                     raise NoChangesToSaveError(
                         "No specified files had changes to stage relative to HEAD. "
@@ -549,7 +549,7 @@ def save_changes(repo_path_str: str, message: str, include_paths: Optional[List[
                     if repo.head_is_unborn: # Should be caught by initial commit logic
                         if not list(repo.index): # Double check for empty index
                            raise NoChangesToSaveError("No changes to save for initial commit.")
-                    elif not repo.diff_to_tree(repo.head.peel(pygit2.Tree)):
+                    elif not repo.index.diff_to_tree(repo.head.peel(pygit2.Tree)):
                         raise NoChangesToSaveError("No changes to save (working directory and index are clean or match HEAD).")
 
             if repo.head_is_unborn: # Should be caught by initial commit logic already.

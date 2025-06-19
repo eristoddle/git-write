@@ -12,7 +12,6 @@ from gitwrite_cli.main import cli
 from gitwrite_core.exceptions import FetchError, PushError # Used by test methods directly
 
 # Helper function make_commit is in conftest.py (enhanced version)
-from conftest import make_commit # Import the helper function
 # Fixtures runner, local_repo (generic one from conftest), cli_test_repo,
 # configure_git_user_for_cli, cli_repo_for_merge, cli_repo_for_ff_merge,
 # cli_repo_for_conflict_merge, synctest_repos are all in conftest.py.
@@ -312,7 +311,7 @@ class TestSyncCommandCLI:
         result = runner.invoke(cli, ["sync", "--no-push"])
         assert result.exit_code == 0, f"CLI Error: {result.output}"
         assert "Fetch complete." in result.output
-        assert "Local branch 'main' is ahead of remote." in result.output
+        assert "Local branch is ahead of remote. Nothing to merge/ff." in result.output
         assert "Push skipped (--no-push specified)." in result.output
         remote_main_ref = synctest_repos["remote_bare_repo"].lookup_reference("refs/heads/main")
         assert remote_main_ref.target != local_repo.head.target

@@ -386,7 +386,10 @@ def cli_repo_for_conflict_merge(tmp_path: Path, configure_git_user_for_cli) -> P
     make_commit(repo, conflict_file, "Line1\nCommon Line\nLine3", "C0: Common ancestor", branch_name="main")
     c0_oid = repo.head.target
     make_commit(repo, conflict_file, "Line1\nChange on Main\nLine3", "C1: Change on main", branch_name="main")
-    repo.branches.local.create("feature", repo.get(c0_oid))
+    feature_branch = repo.branches.local.create("feature", repo.get(c0_oid))
+    repo.checkout(feature_branch.name) # Checkout feature branch
+    # Reset feature branch's working dir to match C0 to avoid conflict during next make_commit's checkout
+    repo.reset(c0_oid, pygit2.GIT_RESET_HARD)
     make_commit(repo, conflict_file, "Line1\nChange on Feature\nLine3", "C2: Change on feature", branch_name="feature")
     repo.checkout(repo.branches.local['main'].name)
     return repo_path

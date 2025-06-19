@@ -4,7 +4,7 @@ import os # Used by tests for environment variables
 # shutil was for local_repo fixture, now in conftest
 from pathlib import Path # Path might still be used if tests directly manipulate paths, otherwise remove
 from click.testing import CliRunner # For type hinting runner from conftest
-from unittest.mock import patch, ANY, MagicMock # Keep patch, ANY, MagicMock if used by tests directly
+from unittest.mock import patch, ANY, MagicMock, PropertyMock # Keep patch, ANY, MagicMock if used by tests directly
 # PropertyMock was for mock_repo, now in conftest
 
 from gitwrite_cli.main import cli

@@ -9,7 +9,6 @@ from gitwrite_cli.main import cli
 # Helper functions (make_commit, create_file, stage_file, resolve_conflict) are in conftest.py
 # Fixtures (repo_with_unstaged_changes, repo_with_staged_changes, repo_with_merge_conflict, repo_with_revert_conflict) are in conftest.py
 # Also runner, local_repo, bare_remote_repo_obj are in conftest.py
-from conftest import make_commit, create_file, stage_file, resolve_conflict
 
 
 class TestRevertCommandCLI:

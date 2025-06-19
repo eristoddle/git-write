@@ -12,7 +12,6 @@ from gitwrite_core.repository import initialize_repository, add_pattern_to_gitig
 
 # Helper functions (make_commit, _assert_gitwrite_structure, _assert_common_gitignore_patterns) are in conftest.py
 # Fixtures (runner, init_test_dir, local_repo_path, local_repo) are in conftest.py
-from conftest import make_commit, _assert_gitwrite_structure, _assert_common_gitignore_patterns
 
 
 #######################
