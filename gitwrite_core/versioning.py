@@ -1,5 +1,6 @@
 import pygit2
 # import pygit2.ops # No longer attempting to use pygit2.ops
+from pathlib import Path
 from datetime import datetime, timezone, timedelta
 from typing import Optional, List, Dict, Any
 
@@ -324,13 +325,14 @@ def get_conflicting_files(conflicts_iterator):
         for conflict_entry in conflicts_iterator:
             # Each conflict_entry can have ancestor, our, their.
             # We need to pick one path that represents the conflict.
-            # Usually, 'our' or 'their' path is sufficient.
-            if conflict_entry.our:
-                conflicting_paths.append(conflict_entry.our.path)
-            elif conflict_entry.their: # Fallback if 'our' is not present for some reason
-                conflicting_paths.append(conflict_entry.their.path)
-            elif conflict_entry.ancestor: # Fallback if both 'our' and 'their' are not present
-                conflicting_paths.append(conflict_entry.ancestor.path)
+            # The iterator yields (ancestor_meta, our_meta, their_meta) tuples.
+            ancestor_meta, our_meta, their_meta = conflict_entry
+            if our_meta:
+                conflicting_paths.append(our_meta.path)
+            elif their_meta:
+                conflicting_paths.append(their_meta.path)
+            elif ancestor_meta: # Fallback if both 'our' and 'their' are not present
+                conflicting_paths.append(ancestor_meta.path)
     return conflicting_paths
 
 
@@ -412,16 +414,23 @@ def save_changes(repo_path_str: str, message: str, include_paths: Optional[List[
                 raise GitWriteError("Selective staging with --include is not allowed during an active merge operation.")
 
             merge_head_oid = merge_head_ref.target
-            repo.index.read() # Ensure index is up-to-date before add_all
-            repo.index.add_all() # Stage all changes to finalize the merge
-            repo.index.write()   # Persist staged changes to the index file
+            repo.index.read() # Ensure index is up-to-date
 
+            # Check for conflicts *before* attempting to stage all
             if repo.index.conflicts:
                 conflicting_files = get_conflicting_files(repo.index.conflicts)
                 raise MergeConflictError(
                     "Unresolved conflicts detected during merge. Please resolve them before saving.",
                     conflicting_files=conflicting_files
                 )
+
+            # If no conflicts, then proceed to stage and write
+            repo.index.add_all() # Stage all changes to finalize the merge
+            repo.index.write()   # Persist staged changes to the index file
+            # Re-check for conflicts just in case add_all introduced any (should not happen if WD is clean)
+            # This second check might be redundant if the first one is robust.
+            # However, keeping it for safety or removing it if deemed unnecessary.
+            # For now, let's assume the first check is the critical one for this bug.
 
             if repo.head_is_unborn: # Should not happen during a merge
                 raise GitWriteError("Repository HEAD is unborn during a merge operation, which is unexpected.")
@@ -487,12 +496,44 @@ def save_changes(repo_path_str: str, message: str, include_paths: Optional[List[
                 repo.index.add_all()
             else: # Stage only specified paths
                 for path_str in include_paths:
-                    try:
-                        repo.index.add(path_str)
-                    except pygit2.GitError as e: # Pathspec error, etc.
-                        # Optionally, collect warnings about paths not added
-                        print(f"Warning: Could not add path '{path_str}': {e}") # Or use a logging framework
-                        pass
+                    path_obj = Path(repo.workdir) / path_str
+                    if not path_obj.exists():
+                        print(f"Warning: Path '{path_str}' (in initial commit) does not exist and was not added.")
+                        continue
+                    if path_obj.is_dir():
+                        # Add all files under the directory
+                        # Convert to relative path for add_all's pathspec
+                        relative_dir_path = path_obj.relative_to(repo.workdir)
+                        # Using add_all with a pathspec like "dir_a/*" might be an option,
+                        # but pygit2's add_all pathspecs can be tricky.
+                        # A more robust way for directories is to walk them and add files.
+                        # However, index.add() itself should handle pathspecs correctly if they are files.
+                        # The issue is that index.add("somedir") fails.
+                        # Let's iterate and add files explicitly.
+                        for item in path_obj.rglob('*'):
+                            if item.is_file():
+                                try:
+                                    # Need path relative to repo.workdir for index.add
+                                    file_rel_path = item.relative_to(repo.workdir)
+                                    status_flags = repo.status_file(str(file_rel_path))
+                                    if status_flags & pygit2.GIT_STATUS_IGNORED:
+                                        print(f"Warning: File '{file_rel_path}' in directory '{path_str}' is ignored and was not added (in initial commit).")
+                                    else:
+                                        repo.index.add(file_rel_path)
+                                except pygit2.GitError as e:
+                                    print(f"Warning: Could not add file '{item}' from directory '{path_str}' (in initial commit): {e}")
+                    elif path_obj.is_file():
+                        try:
+                            # path_str is already relative to repo root for include_paths
+                            status_flags = repo.status_file(path_str)
+                            if status_flags & pygit2.GIT_STATUS_IGNORED:
+                                print(f"Warning: File '{path_str}' is ignored and was not added (in initial commit).")
+                            else:
+                                repo.index.add(path_str)
+                        except pygit2.GitError as e:
+                            print(f"Warning: Could not add file '{path_str}' (in initial commit): {e}")
+                    else:
+                        print(f"Warning: Path '{path_str}' (in initial commit) is not a file or directory and was not added.")
             repo.index.write()
             if not list(repo.index): # Check if anything was actually staged
                 raise NoChangesToSaveError(
@@ -502,55 +543,62 @@ def save_changes(repo_path_str: str, message: str, include_paths: Optional[List[
             parents = [] # Initial commit has no parents
 
         else: # Not an initial commit, regular commit
+            # ---- NEW LOGIC FOR include_paths AND add_all ----
             if include_paths:
-                # Stage only specified paths
-                # We need to see if these paths actually result in a change to the index
-                # Get the tree of the current index *before* adding new paths
-                # This helps determine if the subsequent add operations actually changed anything.
-                # However, repo.index.write_tree() clears the index in memory (ステージングエリアをクリアする)
-                # So we should not use it here before `repo.index.add`.
-                # Instead, we can diff the index against HEAD *after* adding.
-
-                # Store current index state by writing to a temporary tree
-                # This is problematic as write_tree() clears the index if used directly on repo.index.
-                # A better way for `include_paths` is to check `repo.status()` for those paths,
-                # or simply add them and then check if the resulting index diff to HEAD is non-empty.
-
-                # Simpler approach: add specified paths, then check if index changed from HEAD.
                 for path_str in include_paths:
-                    try:
-                        repo.index.add(path_str)
-                    except pygit2.GitError as e:
-                        # Pathspec may not exist, or is gitignored and not forced.
-                        # Collect warnings if desired.
-                        print(f"Warning: Could not add path '{path_str}': {e}")
-                        pass
+                    path_obj = Path(repo.workdir) / path_str
+                    if not path_obj.exists():
+                        print(f"Warning: Path '{path_str}' does not exist and was not added.")
+                        continue
+                    if path_obj.is_dir():
+                        for item in path_obj.rglob('*'):
+                            if item.is_file():
+                                try:
+                                    file_rel_path = item.relative_to(repo.workdir)
+                                    status_flags = repo.status_file(str(file_rel_path))
+                                    if status_flags & pygit2.GIT_STATUS_IGNORED:
+                                        print(f"Warning: File '{file_rel_path}' in directory '{path_str}' is ignored and was not added.")
+                                    else:
+                                        repo.index.add(file_rel_path)
+                                except pygit2.GitError as e:
+                                    print(f"Warning: Could not add file '{item}' from directory '{path_str}': {e}")
+                    elif path_obj.is_file():
+                        try:
+                            # path_str is already relative to repo root for include_paths
+                            status_flags = repo.status_file(path_str)
+                            if status_flags & pygit2.GIT_STATUS_IGNORED:
+                                print(f"Warning: File '{path_str}' is ignored and was not added.")
+                            else:
+                                repo.index.add(path_str)
+                        except pygit2.GitError as e:
+                            print(f"Warning: Could not add file '{path_str}': {e}")
+                    else:
+                        print(f"Warning: Path '{path_str}' is not a file or directory and was not added.")
                 repo.index.write() # Persist the changes to the index from add() operations
 
                 # Now, check if the updated index has any changes compared to HEAD tree
-                # If there are no changes, it means the specified files either didn't exist,
-                # were ignored, or had no modifications to stage.
                 diff_to_head = repo.index.diff_to_tree(repo.head.peel(pygit2.Tree))
                 if not diff_to_head:
                     raise NoChangesToSaveError(
                         "No specified files had changes to stage relative to HEAD. "
                         "Files might be unchanged, non-existent, or gitignored."
                     )
-            else: # Stage all changes in the working directory
+            else: # include_paths is None, stage all
                 repo.index.add_all()
-                repo.index.write()
+                repo.index.write() # Persist add_all changes
 
-                # Check repo status to see if there's anything to commit
-                status = repo.status()
-                if not status: # Empty status dict means no changes from HEAD
-                    # This applies if working dir is clean AND index matches HEAD.
-                    # If `add_all` was called, differences between working dir and index are now staged.
-                    # So, we need to check if the index (now written) differs from HEAD.
-                    if repo.head_is_unborn: # Should be caught by initial commit logic
-                        if not list(repo.index): # Double check for empty index
-                           raise NoChangesToSaveError("No changes to save for initial commit.")
-                    elif not repo.index.diff_to_tree(repo.head.peel(pygit2.Tree)):
-                        raise NoChangesToSaveError("No changes to save (working directory and index are clean or match HEAD).")
+                # This check is specifically for the case where include_paths is None (staging all)
+                # and it's not an initial commit.
+                # It should come after repo.index.add_all() and repo.index.write()
+                if not repo.head_is_unborn and not repo.index.diff_to_tree(repo.head.peel(pygit2.Tree)):
+                    raise NoChangesToSaveError("No changes to save (working directory and index are clean or match HEAD).")
+                # The initial commit case for include_paths=None is handled by the general initial commit logic
+                # that checks `if not list(repo.index):` before this `else` block for regular commits.
+                # However, if it's an initial commit and include_paths is None, add_all() runs.
+                # We still need to ensure that *something* was staged for an initial commit.
+                elif repo.head_is_unborn and not list(repo.index): # Check if anything was staged for initial commit
+                    raise NoChangesToSaveError("No changes to save for initial commit after add_all.")
+            # ---- END OF NEW LOGIC ----
 
             if repo.head_is_unborn: # Should be caught by initial commit logic already.
                 # This case indicates an issue if reached here, as 'initial commit' path should handle it.

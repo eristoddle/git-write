@@ -10,7 +10,7 @@ import os
 from unittest.mock import MagicMock
 
 from gitwrite_core.versioning import revert_commit, save_changes # Added save_changes
-from gitwrite_core.exceptions import RepositoryNotFoundError, CommitNotFoundError, MergeConflictError, GitWriteError, NoChangesToSaveError # Added NoChangesToSaveError
+from gitwrite_core.exceptions import RepositoryNotFoundError, CommitNotFoundError, MergeConflictError, GitWriteError, NoChangesToSaveError, RevertConflictError # Added RevertConflictError
 
 # Constants TEST_USER_NAME and TEST_USER_EMAIL are in conftest.py
 # The create_test_signature function is now in conftest.py
@@ -168,6 +168,18 @@ class TestRevertCommitCore(GitWriteCoreTestCaseBase):
 
         # C1 on main
         c1_main_oid = self._make_commit(self.repo, "C1 on main", {"file_main.txt": "Main C1", "shared.txt": "Shared C1"})
+        # Ensure 'main' branch exists after initial commit
+        if self.repo.head.shorthand != "main":
+            # If the default branch is 'master', rename it to 'main'
+            if self.repo.head.shorthand == "master":
+                master_branch = self.repo.lookup_branch("master")
+                master_branch.rename("main")
+            # If default is something else, just create 'main' from the commit
+            else:
+                self.repo.branches.local.create("main", self.repo.head.peel(pygit2.Commit))
+        # Ensure we are on 'main'
+        main_branch_ref = self.repo.lookup_branch("main")
+        self.repo.checkout(main_branch_ref)
         c1_main_commit = self.repo.get(c1_main_oid)
 
         # Ensure 'main' branch exists and HEAD points to it (or default branch if not 'main')
@@ -249,6 +261,18 @@ class TestRevertCommitCore(GitWriteCoreTestCaseBase):
     def test_revert_merge_commit_with_conflict(self):
         # C1 on main
         c1_main_oid = self._make_commit(self.repo, "C1: main", {"file.txt": "line1\nline2 from main C1\nline3"})
+        # Ensure 'main' branch exists after initial commit
+        if self.repo.head.shorthand != "main":
+            # If the default branch is 'master', rename it to 'main'
+            if self.repo.head.shorthand == "master":
+                master_branch = self.repo.lookup_branch("master")
+                master_branch.rename("main")
+            # If default is something else, just create 'main' from the commit
+            else:
+                self.repo.branches.local.create("main", self.repo.head.peel(pygit2.Commit))
+        # Ensure we are on 'main'
+        main_branch_ref = self.repo.lookup_branch("main")
+        self.repo.checkout(main_branch_ref)
         c1_main_commit = self.repo.get(c1_main_oid)
 
         # Ensure 'main' branch exists and HEAD points to it
@@ -537,6 +561,18 @@ class TestSaveChangesCore(GitWriteCoreTestCaseBase):
         #              \ -> C1_F1(feature)
         # Merge C1_F1 into C2 (main) = C3_Merge(main)
         c1_main_oid = self._make_commit(self.repo, "C1 main", {"file.txt": "Content from C1 main\nshared_line\n"}) # Uses local _make_commit
+        # Ensure 'main' branch exists after initial commit
+        if self.repo.head.shorthand != "main":
+            # If the default branch is 'master', rename it to 'main'
+            if self.repo.head.shorthand == "master":
+                master_branch = self.repo.lookup_branch("master")
+                master_branch.rename("main")
+            # If default is something else, just create 'main' from the commit
+            else:
+                self.repo.branches.local.create("main", self.repo.head.peel(pygit2.Commit))
+        # Ensure we are on 'main'
+        main_branch_ref = self.repo.lookup_branch("main")
+        self.repo.checkout(main_branch_ref)
         c1_main_commit = self.repo.get(c1_main_oid)
 
         # Feature branch from C1
@@ -585,6 +621,18 @@ class TestSaveChangesCore(GitWriteCoreTestCaseBase):
 
     def test_save_merge_completion_with_unresolved_conflicts(self):
         c1_main_oid = self._make_commit(self.repo, "C1 main", {"file.txt": "Content from C1 main\nshared_line\n"}) # Uses local _make_commit
+        # Ensure 'main' branch exists after initial commit
+        if self.repo.head.shorthand != "main":
+            # If the default branch is 'master', rename it to 'main'
+            if self.repo.head.shorthand == "master":
+                master_branch = self.repo.lookup_branch("master")
+                master_branch.rename("main")
+            # If default is something else, just create 'main' from the commit
+            else:
+                self.repo.branches.local.create("main", self.repo.head.peel(pygit2.Commit))
+        # Ensure we are on 'main'
+        main_branch_ref = self.repo.lookup_branch("main")
+        self.repo.checkout(main_branch_ref)
         c1_main_commit = self.repo.get(c1_main_oid)
         _create_and_checkout_branch(self.repo, "feature/merge_test", c1_main_commit) # Uses local _create_and_checkout_branch
         c1_feature_oid = self._make_commit(self.repo, "C1 feature", {"file.txt": "Content from C1 main\nfeature_line\n"}) # Uses local _make_commit
@@ -611,6 +659,18 @@ class TestSaveChangesCore(GitWriteCoreTestCaseBase):
 
     def test_save_merge_completion_with_include_paths_error(self):
         c1_main_oid = self._make_commit(self.repo, "C1 main", {"file.txt": "shared"}) # Uses local _make_commit
+        # Ensure 'main' branch exists after initial commit
+        if self.repo.head.shorthand != "main":
+            # If the default branch is 'master', rename it to 'main'
+            if self.repo.head.shorthand == "master":
+                master_branch = self.repo.lookup_branch("master")
+                master_branch.rename("main")
+            # If default is something else, just create 'main' from the commit
+            else:
+                self.repo.branches.local.create("main", self.repo.head.peel(pygit2.Commit))
+        # Ensure we are on 'main'
+        main_branch_ref = self.repo.lookup_branch("main")
+        self.repo.checkout(main_branch_ref)
         c1_main_commit = self.repo.get(c1_main_oid)
         _create_and_checkout_branch(self.repo, "feature", c1_main_commit) # Uses local _create_and_checkout_branch
         c1_feature_oid = self._make_commit(self.repo, "C1 feature", {"file.txt": "feature change", "new_file.txt":"new"}) # Uses local _make_commit
@@ -706,8 +766,11 @@ class TestSaveChangesCore(GitWriteCoreTestCaseBase):
                 self.ancestor.path = path
 
         mock_conflict = MockConflictEntry(conflict_path)
+        # Ensure the mock returns a list containing a 3-tuple (ancestor, ours, theirs)
+        # to match the real structure of repo.index.conflicts iterator items.
+        mock_conflict_data = (mock_conflict.ancestor, mock_conflict.our, mock_conflict.their)
 
-        with mock.patch.object(self.repo.index, 'conflicts', new=[mock_conflict]):
+        with mock.patch('pygit2.Index.conflicts', new_callable=mock.PropertyMock, return_value=[mock_conflict_data]):
             self.repo.index.write() # This write might not be necessary if conflicts are mocked
 
             self.assertIsNotNone(self.repo.references.get("REVERT_HEAD"))
@@ -821,7 +884,7 @@ class TestSaveChangesCore(GitWriteCoreTestCaseBase):
 
         # Empty repo, files created but not included
         self._create_file(self.repo, "somefile.txt", "content") # Use local _create_file
-        with self.assertRaisesRegex(NoChangesToSaveError, "No specified files could be staged for the initial commit"):
+        with self.assertRaisesRegex(NoChangesToSaveError, "Cannot create an initial commit: no files were staged. If include_paths were specified, they might be invalid or ignored."):
             save_changes(self.repo_path_str, "Initial commit with non-existent include", include_paths=["doesnotexist.txt"])
 
     # 2. Normal Commits
