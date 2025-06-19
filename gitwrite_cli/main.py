@@ -697,7 +697,7 @@ def add(ctx, name, message, force, commit_ish): # Function signature updated
 
     except (RepositoryNotFoundError, CommitNotFoundError, TagAlreadyExistsError, GitWriteError) as e:
         click.echo(f"Error: {e}", err=True)
-        if ctx: ctx.exit(1)
+        # if ctx: ctx.exit(1) # Removed as per request
     except Exception as e:
         click.echo(f"An unexpected error occurred: {e}", err=True)
         if ctx: ctx.exit(1)
@@ -759,10 +759,10 @@ def list_cmd(ctx): # Renamed to avoid conflict if we had a variable named list
 
     except RepositoryNotFoundError:
         click.echo(click.style("Error: Not a git repository.", fg='red'), err=True)
-        if ctx: ctx.exit(1)
+        # if ctx: ctx.exit(1) # Removed as per request
     except GitWriteError as e: # Catching base GitWriteError for other core errors
         click.echo(click.style(f"Error listing tags: {e}", fg='red'), err=True)
-        if ctx: ctx.exit(1)
+        # if ctx: ctx.exit(1) # Removed as per request
     except ImportError: # For Rich
         click.echo(click.style("Error: Rich library is not installed. Please ensure it is in pyproject.toml and installed.", fg='red'), err=True)
         if ctx: ctx.exit(1)
