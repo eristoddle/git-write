@@ -258,3 +258,12 @@ This refactoring of the test helpers and the subsequent updates to the test meth
     - Sync/Merge conflict tests now verify CLI messages and conflict markers, expecting a clean repository state post-operation.
 - The original `tests/test_main.py` and `tests/test_tag_command.py` files were deleted.
 - **Note:** Execution of `poetry run pytest tests/` failed due to an environment/tooling issue ('Failed to compute affected file count and total size after command execution'), so complete test verification was not possible during this refactoring process.
+---
+## Task: Fix Test Suite by Centralizing Fixtures
+
+**Date:** 2025-06-19
+
+**Summary:** Created `tests/conftest.py` and centralized all shared test fixtures from individual test files (`tests/test_*.py`) into this new file. This was done to resolve "fixture not found" errors that were occurring due to fixtures not being shared across the test suite. Helper functions used by these fixtures were also moved and consolidated where appropriate. Necessary imports were added to `tests/conftest.py`, and redundant imports and fixture definitions were removed from the individual test files.
+
+**Note:** Test execution to confirm the resolution of "fixture not found" errors was blocked by a persistent `ModuleNotFoundError: No module named 'pygit2'` in the testing environment.
+---

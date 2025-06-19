@@ -16,9 +16,9 @@ from gitwrite_core.exceptions import (
     MergeConflictError, PushError, GitWriteError
 )
 
-# Default signature for tests
-TEST_USER_NAME = "Test Sync User"
-TEST_USER_EMAIL = "test_sync@example.com"
+# Constants TEST_USER_NAME and TEST_USER_EMAIL are now in conftest.py
+from .conftest import TEST_USER_NAME, TEST_USER_EMAIL
+
 
 class TestSyncRepositoryCore(unittest.TestCase):
     def setUp(self):

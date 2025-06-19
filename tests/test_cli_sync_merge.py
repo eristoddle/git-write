@@ -1,195 +1,25 @@
 import pytest
 import pygit2
 import os
-import shutil
+# shutil was for fixtures, now in conftest
 import re # Used by TestMergeCommandCLI
-from pathlib import Path
-from click.testing import CliRunner
+from pathlib import Path # Used by test methods directly
+from click.testing import CliRunner # For type hinting runner fixture from conftest
 from unittest.mock import patch # Used by TestSyncCommandCLI
 
 from gitwrite_cli.main import cli
 # It's good practice to import specific exceptions if they are explicitly caught or expected.
-from gitwrite_core.exceptions import FetchError, PushError
+from gitwrite_core.exceptions import FetchError, PushError # Used by test methods directly
 
-# Helper to create a commit
-def make_commit(repo, filename, content, message, branch_name=None): # Added branch_name for flexibility
-    # Create file
-    file_path = Path(repo.workdir) / filename
-    file_path.write_text(content)
-    # Stage
-    repo.index.add(filename)
-    repo.index.write()
-    # Commit
-    author = pygit2.Signature("Test Author", "test@example.com", 946684800, 0)
-    committer = pygit2.Signature("Test Committer", "committer@example.com", 946684800, 0)
-
-    # Handle branching if specified
-    current_head_ref = "HEAD"
-    if branch_name:
-        if branch_name not in repo.branches.local:
-             # If branch doesn't exist, create it from current HEAD or make it the first commit if HEAD is unborn
-            if repo.head_is_unborn:
-                pass # Will be handled by create_commit naturally for the first commit
-            else:
-                repo.branches.local.create(branch_name, repo.head.peel(pygit2.Commit))
-
-        # If branch exists or was just created, ensure we are on it for the commit
-        if repo.head.shorthand != branch_name:
-            repo.checkout(repo.branches.local[branch_name])
-        current_head_ref = repo.lookup_reference(f"refs/heads/{branch_name}").name
-
-
-    parents = [repo.head.target] if not repo.head_is_unborn else []
-    tree = repo.index.write_tree()
-    return repo.create_commit(current_head_ref, author, committer, message, tree, parents)
-
-# Fixtures - Copied and adapted from test_main.py.
-# Consider moving to conftest.py if shared across more files.
-
-@pytest.fixture
-def runner():
-    return CliRunner()
-
-# A minimal local_repo fixture, more complex ones like local_repo_path, remote_repo_path,
-# bare_remote_repo might be needed if tests directly use them.
-# For now, focus on what TestMergeCommandCLI and TestSyncCommandCLI directly use.
-@pytest.fixture
-def local_repo(tmp_path): # Simplified from test_main for direct use
-    repo_path = tmp_path / "test_repo"
-    if repo_path.exists():
-        shutil.rmtree(repo_path)
-    repo_path.mkdir()
-    repo = pygit2.init_repository(str(repo_path), bare=False)
-    # Initial commit
-    make_commit(repo, "initial.txt", "Initial content for test repo", "Initial commit")
-    # Configure user
-    config = repo.config
-    config["user.name"] = "Test User"
-    config["user.email"] = "test@example.com"
-    return repo
-
-@pytest.fixture
-def cli_test_repo(tmp_path: Path): # Already used by TestMergeCommandCLI
-    """Creates a standard initialized repo for CLI tests, returning its path."""
-    repo_path = tmp_path / "cli_git_repo_merge_sync"
-    repo_path.mkdir()
-    repo = pygit2.init_repository(str(repo_path), bare=False)
-    file_path = repo_path / "initial.txt"
-    file_path.write_text("initial content for CLI tests")
-    repo.index.add("initial.txt")
-    repo.index.write()
-    author = pygit2.Signature("Test Author CLI", "testcli@example.com")
-    tree = repo.index.write_tree()
-    repo.create_commit("HEAD", author, author, "Initial commit for CLI", tree, [])
-    return repo_path
-
-
-@pytest.fixture
-def configure_git_user_for_cli(tmp_path):
-    """Fixture to configure user.name and user.email for CLI tests requiring commits."""
-    def _configure(repo_path_str: str):
-        repo = pygit2.Repository(repo_path_str)
-        config = repo.config
-        config.set_multivar("user.name", "CLITest User")
-        config.set_multivar("user.email", "clitest@example.com")
-    return _configure
-
-@pytest.fixture
-def cli_repo_for_merge(tmp_path: Path, configure_git_user_for_cli) -> Path:
-    repo_path = tmp_path / "cli_merge_normal_repo"
-    repo_path.mkdir()
-    pygit2.init_repository(str(repo_path))
-    configure_git_user_for_cli(str(repo_path))
-    repo = pygit2.Repository(str(repo_path))
-    make_commit(repo, "common.txt", "line0", "C0: Initial on main", branch_name="main")
-    c0_oid = repo.head.target
-    make_commit(repo, "main_file.txt", "main content", "C1: Commit on main", branch_name="main")
-    repo.branches.local.create("feature", repo.get(c0_oid))
-    make_commit(repo, "feature_file.txt", "feature content", "C2: Commit on feature", branch_name="feature")
-    repo.checkout(repo.branches.local['main'].name)
-    return repo_path
-
-@pytest.fixture
-def cli_repo_for_ff_merge(tmp_path: Path, configure_git_user_for_cli) -> Path:
-    repo_path = tmp_path / "cli_repo_for_ff_merge"
-    repo_path.mkdir()
-    pygit2.init_repository(str(repo_path))
-    configure_git_user_for_cli(str(repo_path))
-    repo = pygit2.Repository(str(repo_path))
-    make_commit(repo, "main_base.txt", "base for ff", "C0: Base on main", branch_name="main")
-    c0_oid = repo.head.target
-    repo.branches.local.create("feature", repo.get(c0_oid))
-    make_commit(repo, "feature_ff.txt", "ff content", "C1: Commit on feature", branch_name="feature")
-    repo.checkout(repo.branches.local['main'].name)
-    return repo_path
-
-@pytest.fixture
-def cli_repo_for_conflict_merge(tmp_path: Path, configure_git_user_for_cli) -> Path:
-    repo_path = tmp_path / "cli_repo_for_conflict_merge"
-    repo_path.mkdir()
-    pygit2.init_repository(str(repo_path))
-    configure_git_user_for_cli(str(repo_path))
-    repo = pygit2.Repository(str(repo_path))
-    conflict_file = "conflict.txt"
-    make_commit(repo, conflict_file, "Line1\nCommon Line\nLine3", "C0: Common ancestor", branch_name="main")
-    c0_oid = repo.head.target
-    make_commit(repo, conflict_file, "Line1\nChange on Main\nLine3", "C1: Change on main", branch_name="main")
-    repo.branches.local.create("feature", repo.get(c0_oid))
-    make_commit(repo, conflict_file, "Line1\nChange on Feature\nLine3", "C2: Change on feature", branch_name="feature")
-    repo.checkout(repo.branches.local['main'].name)
-    return repo_path
-
-@pytest.fixture
-def synctest_repos(tmp_path, local_repo): # local_repo here is a pygit2.Repository instance
-    """
-    Sets up a local repository (based on the passed local_repo),
-    a bare remote repository, and a path for a second clone.
-    """
-    base_dir = tmp_path / "sync_test_area_for_cli" # Unique name
-    base_dir.mkdir(exist_ok=True)
-
-    # 1. Use the provided local_repo as the base for the "main user"
-    #    We need its path. If local_repo is the one from this file, its path is tmp_path / "test_repo"
-    #    If it's a more generic one, we need to adapt.
-    #    For simplicity, let's assume local_repo is a fully setup repo.
-    #    We'll create a new local repo for sync tests to keep it clean.
-
-    local_repo_path_for_sync = base_dir / "local_user_repo_sync"
-    if local_repo_path_for_sync.exists():
-        shutil.rmtree(local_repo_path_for_sync)
-    local_repo_path_for_sync.mkdir()
-
-    cloned_local_repo = pygit2.init_repository(str(local_repo_path_for_sync), bare=False)
-    config_local = cloned_local_repo.config
-    config_local["user.name"] = "Local Sync User"
-    config_local["user.email"] = "localsync@example.com"
-    make_commit(cloned_local_repo, "initial_sync_local.txt", "Local's first file for sync", "Initial local sync commit on main", branch_name="main")
-
-
-    # 2. Create Bare Remote Repo
-    remote_bare_path = base_dir / "remote_server_sync.git"
-    if remote_bare_path.exists(): shutil.rmtree(remote_bare_path)
-    remote_bare_repo = pygit2.init_repository(str(remote_bare_path), bare=True)
-
-    cloned_local_repo.remotes.create("origin", str(remote_bare_path))
-    active_branch_name_local = cloned_local_repo.head.shorthand
-    cloned_local_repo.remotes["origin"].push([f"refs/heads/{active_branch_name_local}:refs/heads/{active_branch_name_local}"])
-
-    # 3. Path for Remote Clone Repo (simulates another user)
-    remote_clone_repo_path_for_sync = base_dir / "remote_clone_user_repo_sync"
-
-    return {
-        "local_repo": cloned_local_repo, # This is the pygit2.Repository object for the local repo
-        "remote_bare_repo": remote_bare_repo, # pygit2.Repository for bare remote
-        "remote_clone_repo_path": remote_clone_repo_path_for_sync, # Path for clone
-        "local_repo_path_str": str(local_repo_path_for_sync), # String path for CLI CWD
-        "remote_bare_repo_path_str": str(remote_bare_path) # String path for remote URL
-    }
+# Helper function make_commit is in conftest.py (enhanced version)
+# Fixtures runner, local_repo (generic one from conftest), cli_test_repo,
+# configure_git_user_for_cli, cli_repo_for_merge, cli_repo_for_ff_merge,
+# cli_repo_for_conflict_merge, synctest_repos are all in conftest.py.
 
 
 class TestMergeCommandCLI:
-    def test_merge_normal_success_cli(self, runner: CliRunner, cli_repo_for_merge: Path):
-        os.chdir(cli_repo_for_merge)
+    def test_merge_normal_success_cli(self, runner: CliRunner, cli_repo_for_merge: Path): # Fixtures from conftest
+        os.chdir(cli_repo_for_merge) # os import is kept
         result = runner.invoke(cli, ["merge", "feature"])
 
         assert result.exit_code == 0, f"CLI Error: {result.output}"
@@ -200,12 +30,12 @@ class TestMergeCommandCLI:
         assert match, "Could not find commit OID in output."
         merge_commit_oid_short = match.group(1)
 
-        merge_commit = repo.revparse_single(merge_commit_oid_short)
+        merge_commit = repo.revparse_single(merge_commit_oid_short) # pygit2 import is kept
         assert merge_commit is not None
         assert len(merge_commit.parents) == 2
         assert repo.state == pygit2.GIT_REPOSITORY_STATE_NONE
 
-    def test_merge_fast_forward_success_cli(self, runner: CliRunner, cli_repo_for_ff_merge: Path):
+    def test_merge_fast_forward_success_cli(self, runner: CliRunner, cli_repo_for_ff_merge: Path): # Fixtures from conftest
         os.chdir(cli_repo_for_ff_merge)
         result = runner.invoke(cli, ["merge", "feature"])
 
@@ -215,7 +45,7 @@ class TestMergeCommandCLI:
         repo = pygit2.Repository(str(cli_repo_for_ff_merge))
         assert repo.head.target == repo.branches.local['feature'].target
 
-    def test_merge_up_to_date_cli(self, runner: CliRunner, cli_repo_for_ff_merge: Path):
+    def test_merge_up_to_date_cli(self, runner: CliRunner, cli_repo_for_ff_merge: Path): # Fixtures from conftest
         os.chdir(cli_repo_for_ff_merge)
         runner.invoke(cli, ["merge", "feature"]) # First merge (FF)
 
@@ -223,7 +53,7 @@ class TestMergeCommandCLI:
         assert result.exit_code == 0, f"CLI Error: {result.output}"
         assert "'main' is already up-to-date with 'feature'." in result.output
 
-    def test_merge_conflict_cli(self, runner: CliRunner, cli_repo_for_conflict_merge: Path):
+    def test_merge_conflict_cli(self, runner: CliRunner, cli_repo_for_conflict_merge: Path): # Fixtures from conftest
         repo_path = cli_repo_for_conflict_merge
         os.chdir(repo_path)
         result = runner.invoke(cli, ["merge", "feature"])
@@ -245,13 +75,13 @@ class TestMergeCommandCLI:
         assert repo.index.conflicts is not None
 
 
-    def test_merge_branch_not_found_cli(self, runner: CliRunner, cli_test_repo: Path):
+    def test_merge_branch_not_found_cli(self, runner: CliRunner, cli_test_repo: Path): # Fixtures from conftest
         os.chdir(cli_test_repo)
         result = runner.invoke(cli, ["merge", "no-such-branch"])
         assert result.exit_code == 0, f"CLI Error: {result.output}"
         assert "Error: Branch 'no-such-branch' not found" in result.output
 
-    def test_merge_into_itself_cli(self, runner: CliRunner, cli_test_repo: Path):
+    def test_merge_into_itself_cli(self, runner: CliRunner, cli_test_repo: Path): # Fixtures from conftest
         os.chdir(cli_test_repo)
         repo = pygit2.Repository(str(cli_test_repo))
         current_branch = repo.head.shorthand
@@ -259,7 +89,7 @@ class TestMergeCommandCLI:
         assert result.exit_code == 0, f"CLI Error: {result.output}"
         assert "Error: Cannot merge a branch into itself." in result.output
 
-    def test_merge_detached_head_cli(self, runner: CliRunner, cli_test_repo: Path):
+    def test_merge_detached_head_cli(self, runner: CliRunner, cli_test_repo: Path): # Fixtures from conftest
         os.chdir(cli_test_repo)
         repo = pygit2.Repository(str(cli_test_repo))
         repo.set_head(repo.head.target) # Detach HEAD
@@ -269,7 +99,7 @@ class TestMergeCommandCLI:
         assert result.exit_code == 0, f"CLI Error: {result.output}"
         assert "Error: HEAD is detached. Please switch to a branch to perform a merge." in result.output
 
-    def test_merge_empty_repo_cli(self, runner: CliRunner, tmp_path: Path):
+    def test_merge_empty_repo_cli(self, runner: CliRunner, tmp_path: Path): # runner from conftest, tmp_path from pytest
         empty_repo = tmp_path / "empty_for_merge_cli"
         empty_repo.mkdir()
         pygit2.init_repository(str(empty_repo))
@@ -279,7 +109,7 @@ class TestMergeCommandCLI:
         assert result.exit_code == 0, f"CLI Error: {result.output}"
         assert "Error: Repository is empty or HEAD is unborn. Cannot perform merge." in result.output
 
-    def test_merge_bare_repo_cli(self, runner: CliRunner, tmp_path: Path):
+    def test_merge_bare_repo_cli(self, runner: CliRunner, tmp_path: Path): # runner from conftest, tmp_path from pytest
         bare_repo_path = tmp_path / "bare_for_merge_cli.git"
         pygit2.init_repository(str(bare_repo_path), bare=True)
         os.chdir(bare_repo_path) # CLI will discover CWD is a bare repo
@@ -288,17 +118,17 @@ class TestMergeCommandCLI:
         assert result.exit_code == 0, f"CLI Error: {result.output}"
         assert "Error: Cannot merge in a bare repository." in result.output
 
-    def test_merge_no_signature_cli(self, runner: CliRunner, tmp_path: Path):
+    def test_merge_no_signature_cli(self, runner: CliRunner, tmp_path: Path): # runner from conftest, tmp_path from pytest
         repo_path_no_sig = tmp_path / "no_sig_repo_for_cli_merge"
         repo_path_no_sig.mkdir()
         repo = pygit2.init_repository(str(repo_path_no_sig))
         # DO NOT configure user.name/user.email for this repo
 
-        make_commit(repo, "common.txt", "line0", "C0: Initial on main", branch_name="main")
+        make_commit(repo, "common.txt", "line0", "C0: Initial on main", branch_name="main") # make_commit from conftest
         c0_oid = repo.head.target
-        make_commit(repo, "main_file.txt", "main content", "C1: Commit on main", branch_name="main")
+        make_commit(repo, "main_file.txt", "main content", "C1: Commit on main", branch_name="main") # make_commit from conftest
         repo.branches.local.create("feature", repo.get(c0_oid))
-        make_commit(repo, "feature_file.txt", "feature content", "C2: Commit on feature", branch_name="feature")
+        make_commit(repo, "feature_file.txt", "feature content", "C2: Commit on feature", branch_name="feature") # make_commit from conftest
         repo.checkout(repo.branches.local['main'].name)
 
         os.chdir(repo_path_no_sig)
@@ -308,7 +138,7 @@ class TestMergeCommandCLI:
 
 
 class TestSyncCommandCLI:
-    def _commit_in_clone(self, clone_repo_path_str: str, remote_bare_repo_path_str: str, filename: str, content: str, message: str, branch_name: str = "main"):
+    def _commit_in_clone(self, clone_repo_path_str: str, remote_bare_repo_path_str: str, filename: str, content: str, message: str, branch_name: str = "main"): # This helper is used by tests, stays in test file.
         if not Path(clone_repo_path_str).exists():
              pygit2.clone_repository(remote_bare_repo_path_str, clone_repo_path_str) # Ensure clone exists
 
@@ -327,17 +157,17 @@ class TestSyncCommandCLI:
         if clone_repo.head.shorthand != branch_name:
              clone_repo.checkout(clone_repo.branches.local[branch_name])
 
-        make_commit(clone_repo, filename, content, message) # make_commit handles HEAD update
+        make_commit(clone_repo, filename, content, message, branch_name=branch_name) # make_commit from conftest, pass branch_name
         clone_repo.remotes["origin"].push([f"refs/heads/{branch_name}:refs/heads/{branch_name}"])
 
-    def test_sync_new_repo_initial_push(self, runner, synctest_repos):
+    def test_sync_new_repo_initial_push(self, runner: CliRunner, synctest_repos): # Fixtures from conftest
         local_repo = synctest_repos["local_repo"]
         os.chdir(local_repo.workdir)
         new_branch_name = "feature_new_for_sync"
         # Create commit on main first, then branch from it
         main_head_commit = local_repo.head.peel(pygit2.Commit)
         local_repo.branches.local.create(new_branch_name, main_head_commit)
-        make_commit(local_repo, "feature_file.txt", "content for new feature", f"Commit on {new_branch_name}", branch_name=new_branch_name)
+        make_commit(local_repo, "feature_file.txt", "content for new feature", f"Commit on {new_branch_name}", branch_name=new_branch_name) # make_commit from conftest
         current_commit_oid = local_repo.head.target
 
         result = runner.invoke(cli, ["sync", "--branch", new_branch_name])
@@ -351,7 +181,7 @@ class TestSyncCommandCLI:
         remote_branch_ref = remote_bare_repo.lookup_reference(f"refs/heads/{new_branch_name}")
         assert remote_branch_ref.target == current_commit_oid
 
-    def test_sync_remote_ahead_fast_forward_cli(self, runner, synctest_repos):
+    def test_sync_remote_ahead_fast_forward_cli(self, runner: CliRunner, synctest_repos): # Fixtures from conftest
         local_repo = synctest_repos["local_repo"]
         remote_bare_repo_path_str = synctest_repos["remote_bare_repo_path_str"]
         remote_clone_repo_path = synctest_repos["remote_clone_repo_path"]
@@ -368,12 +198,12 @@ class TestSyncCommandCLI:
         assert "Sync process completed successfully." in result.output
         assert local_repo.head.target == remote_head_commit
 
-    def test_sync_diverged_clean_merge_cli(self, runner, synctest_repos):
+    def test_sync_diverged_clean_merge_cli(self, runner: CliRunner, synctest_repos): # Fixtures from conftest
         local_repo = synctest_repos["local_repo"]
         remote_bare_repo_path_str = synctest_repos["remote_bare_repo_path_str"]
         remote_clone_repo_path = synctest_repos["remote_clone_repo_path"]
         os.chdir(local_repo.workdir)
-        make_commit(local_repo, "local_diverge.txt", "local content", "Local C2 on main", branch_name="main")
+        make_commit(local_repo, "local_diverge.txt", "local content", "Local C2 on main", branch_name="main") # make_commit from conftest
         local_c2_oid = local_repo.head.target
         self._commit_in_clone(str(remote_clone_repo_path), remote_bare_repo_path_str,
                               "remote_diverge.txt", "remote content",
@@ -384,7 +214,7 @@ class TestSyncCommandCLI:
         assert "Fetch complete." in result.output
         assert "Successfully merged remote changes into 'main'. New commit:" in result.output
         assert "Push successful." in result.output
-        merge_commit_oid_match = re.search(r"New commit: ([0-9a-f]{7,})", result.output)
+        merge_commit_oid_match = re.search(r"New commit: ([0-9a-f]{7,})", result.output) # re import is kept
         assert merge_commit_oid_match is not None
         merge_commit_oid_short = merge_commit_oid_match.group(1)
         merge_commit = local_repo.revparse_single(merge_commit_oid_short)
@@ -394,12 +224,12 @@ class TestSyncCommandCLI:
         assert parent_oids == {local_c2_oid, remote_c2_oid}
         assert synctest_repos["remote_bare_repo"].lookup_reference("refs/heads/main").target == merge_commit.id
 
-    def test_sync_specific_branch_cli(self, runner, synctest_repos):
+    def test_sync_specific_branch_cli(self, runner: CliRunner, synctest_repos): # Fixtures from conftest
         local_repo = synctest_repos["local_repo"]
         os.chdir(local_repo.workdir)
         main_commit_oid = local_repo.lookup_reference("refs/heads/main").target
         local_repo.branches.local.create("dev", local_repo.get(main_commit_oid))
-        make_commit(local_repo, "dev_file.txt", "dev content", "Commit on dev", branch_name="dev")
+        make_commit(local_repo, "dev_file.txt", "dev content", "Commit on dev", branch_name="dev") # make_commit from conftest
         local_repo.remotes["origin"].push(["refs/heads/dev:refs/heads/dev"])
         local_repo.checkout(local_repo.branches.local["main"])
         result = runner.invoke(cli, ["sync", "--branch", "dev"])
@@ -408,13 +238,13 @@ class TestSyncCommandCLI:
         assert "Local branch 'dev' is already up-to-date with remote." in result.output
         assert "Push: Nothing to push" in result.output
 
-    def test_sync_branch_not_found_cli(self, runner, synctest_repos):
+    def test_sync_branch_not_found_cli(self, runner: CliRunner, synctest_repos): # Fixtures from conftest
         os.chdir(synctest_repos["local_repo_path_str"])
         result = runner.invoke(cli, ["sync", "--branch", "nonexistentbranch"])
         assert result.exit_code == 0
         assert "Error: Branch 'nonexistentbranch' not found." in result.output
 
-    def test_sync_detached_head_cli(self, runner, synctest_repos):
+    def test_sync_detached_head_cli(self, runner: CliRunner, synctest_repos): # Fixtures from conftest
         local_repo = synctest_repos["local_repo"]
         os.chdir(local_repo.workdir)
         local_repo.set_head(local_repo.head.target)
@@ -423,20 +253,20 @@ class TestSyncCommandCLI:
         assert result.exit_code == 0
         assert "Error: HEAD is detached. Please switch to a branch to sync or specify a branch name." in result.output
 
-    def test_sync_remote_not_found_cli(self, runner, synctest_repos):
+    def test_sync_remote_not_found_cli(self, runner: CliRunner, synctest_repos): # Fixtures from conftest
         os.chdir(synctest_repos["local_repo_path_str"])
         result = runner.invoke(cli, ["sync", "--remote", "nonexistentremote"])
         assert result.exit_code == 0
         assert "Error: Remote 'nonexistentremote' not found." in result.output
 
-    def test_sync_conflict_cli(self, runner, synctest_repos):
+    def test_sync_conflict_cli(self, runner: CliRunner, synctest_repos): # Fixtures from conftest
         local_repo = synctest_repos["local_repo"]
         remote_bare_repo_path_str = synctest_repos["remote_bare_repo_path_str"]
         remote_clone_repo_path = synctest_repos["remote_clone_repo_path"]
         os.chdir(local_repo.workdir)
         conflict_filename = "conflict_file.txt" # Define for use in assertions
         c1_oid = local_repo.lookup_reference("refs/heads/main").target
-        make_commit(local_repo, conflict_filename, "Local version of line", "Local C2 on main", branch_name="main")
+        make_commit(local_repo, conflict_filename, "Local version of line", "Local C2 on main", branch_name="main") # make_commit from conftest
         local_commit_after_local_change = local_repo.head.target # Save this OID
 
         # Ensure clone starts from C1 before making its own C2
@@ -474,10 +304,10 @@ class TestSyncCommandCLI:
         assert local_repo.head.target == local_commit_after_local_change
 
 
-    def test_sync_no_push_flag_cli(self, runner, synctest_repos):
+    def test_sync_no_push_flag_cli(self, runner: CliRunner, synctest_repos): # Fixtures from conftest
         local_repo = synctest_repos["local_repo"]
         os.chdir(local_repo.workdir)
-        make_commit(local_repo, "local_only_for_nopush.txt", "content", "Local commit, no push test", branch_name="main")
+        make_commit(local_repo, "local_only_for_nopush.txt", "content", "Local commit, no push test", branch_name="main") # make_commit from conftest
         result = runner.invoke(cli, ["sync", "--no-push"])
         assert result.exit_code == 0, f"CLI Error: {result.output}"
         assert "Fetch complete." in result.output
@@ -486,7 +316,7 @@ class TestSyncCommandCLI:
         remote_main_ref = synctest_repos["remote_bare_repo"].lookup_reference("refs/heads/main")
         assert remote_main_ref.target != local_repo.head.target
 
-    def test_sync_outside_git_repo_cli(self, runner, tmp_path):
+    def test_sync_outside_git_repo_cli(self, runner: CliRunner, tmp_path: Path): # runner from conftest, tmp_path from pytest
         non_repo_dir = tmp_path / "no_repo_for_sync"
         non_repo_dir.mkdir()
         os.chdir(non_repo_dir)
@@ -494,7 +324,7 @@ class TestSyncCommandCLI:
         assert result.exit_code == 0
         assert "Error: Not a Git repository" in result.output
 
-    def test_sync_empty_repo_cli(self, runner, tmp_path):
+    def test_sync_empty_repo_cli(self, runner: CliRunner, tmp_path: Path): # runner from conftest, tmp_path from pytest
         empty_repo_path = tmp_path / "empty_for_sync"
         empty_repo_path.mkdir()
         pygit2.init_repository(str(empty_repo_path))
@@ -503,18 +333,18 @@ class TestSyncCommandCLI:
         assert result.exit_code == 0
         assert "Error: Repository is empty or HEAD is unborn. Cannot sync." in result.output
 
-    @patch('gitwrite_core.repository.sync_repository')
-    def test_sync_cli_handles_core_fetch_error(self, mock_sync_core, runner, synctest_repos):
+    @patch('gitwrite_core.repository.sync_repository') # patch from unittest.mock is kept
+    def test_sync_cli_handles_core_fetch_error(self, mock_sync_core, runner: CliRunner, synctest_repos): # Fixtures from conftest
         os.chdir(synctest_repos["local_repo_path_str"])
-        mock_sync_core.side_effect = FetchError("Simulated core FetchError")
+        mock_sync_core.side_effect = FetchError("Simulated core FetchError") # FetchError import is kept
         result = runner.invoke(cli, ["sync"])
         assert result.exit_code == 0
         assert "Error during fetch: Simulated core FetchError" in result.output
 
-    @patch('gitwrite_core.repository.sync_repository')
-    def test_sync_cli_handles_core_push_error(self, mock_sync_core, runner, synctest_repos):
+    @patch('gitwrite_core.repository.sync_repository') # patch from unittest.mock is kept
+    def test_sync_cli_handles_core_push_error(self, mock_sync_core, runner: CliRunner, synctest_repos): # Fixtures from conftest
         os.chdir(synctest_repos["local_repo_path_str"])
-        mock_sync_core.side_effect = PushError("Simulated core PushError: Non-fast-forward from core")
+        mock_sync_core.side_effect = PushError("Simulated core PushError: Non-fast-forward from core") # PushError import is kept
         result = runner.invoke(cli, ["sync"])
         assert result.exit_code == 0
         assert "Error during push: Simulated core PushError: Non-fast-forward from core" in result.output

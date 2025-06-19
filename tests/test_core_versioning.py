@@ -5,49 +5,21 @@ import shutil
 import tempfile
 from pathlib import Path
 import os
-from datetime import datetime, timezone, timedelta
+# datetime, timezone, timedelta are not used directly in this file anymore,
+# create_test_signature from conftest handles its own datetime imports.
 
 from gitwrite_core.versioning import revert_commit
 from gitwrite_core.exceptions import RepositoryNotFoundError, CommitNotFoundError, MergeConflictError, GitWriteError
 
-# Default signature for tests
-TEST_USER_NAME = "Test User"
-TEST_USER_EMAIL = "test@example.com"
-
-def create_test_signature(repo: pygit2.Repository) -> pygit2.Signature:
-    """Creates a test signature, trying to use repo default or falling back."""
-    try:
-        return repo.default_signature
-    except pygit2.GitError: # If not configured
-        return pygit2.Signature(TEST_USER_NAME, TEST_USER_EMAIL, int(datetime.now(timezone.utc).timestamp()), 0)
+# Constants TEST_USER_NAME and TEST_USER_EMAIL are in conftest.py
+# The create_test_signature function is now in conftest.py
+# The generic create_file helper is in conftest.py
+from .conftest import TEST_USER_NAME, TEST_USER_EMAIL, create_test_signature, create_file as conftest_create_file
 
 # --- Standardized Test Helpers ---
 
-def _create_file(repo: pygit2.Repository, filepath: str, content: str):
-    """Helper to create and write a file in the repo's workdir."""
-    full_path = Path(repo.workdir) / filepath
-    full_path.parent.mkdir(parents=True, exist_ok=True)
-    full_path.write_text(content, encoding="utf-8")
-
-def _make_commit(repo: pygit2.Repository, message: str, files_to_change: dict = None) -> pygit2.Oid:
-    """
-    Robust helper to create a commit on the current branch.
-    'files_to_change' is a dict of {filepath: content}.
-    """
-    if files_to_change is None:
-        files_to_change = {}
-
-    repo.index.read()
-    for filepath, content in files_to_change.items():
-        _create_file(repo, filepath, content)
-        repo.index.add(filepath)
-    repo.index.write()
-
-    tree = repo.index.write_tree()
-    parents = [] if repo.head_is_unborn else [repo.head.target]
-    signature = create_test_signature(repo) # Assuming create_test_signature is available
-
-    return repo.create_commit("HEAD", signature, signature, message, tree, parents)
+# _make_commit remains local as it's specific to these unittest classes (uses self.signature, files_to_change dict)
+# _create_and_checkout_branch also remains local
 
 def _create_and_checkout_branch(repo: pygit2.Repository, branch_name: str, from_commit: pygit2.Commit):
     """Helper to create and check out a branch."""
@@ -73,10 +45,43 @@ class TestRevertCommitCore(unittest.TestCase):
             user_email = None
 
         if not user_name or not user_email:
+            # Use constants from conftest.py
             self.repo.config["user.name"] = TEST_USER_NAME
             self.repo.config["user.email"] = TEST_USER_EMAIL
 
-        self.signature = create_test_signature(self.repo)
+        self.signature = create_test_signature(self.repo) # Uses conftest.create_test_signature
+
+    def _create_file(self, repo: pygit2.Repository, filepath: str, content: str): # Renaming to avoid conflict
+        """Local helper, distinct from conftest_create_file if needed, or use conftest_create_file."""
+        # This is the original _create_file from this test module.
+        # It's kept here if its specific implementation is important,
+        # or can be replaced by conftest_create_file if identical.
+        # For now, let's assume it might be slightly different or just kept for locality.
+        full_path = Path(repo.workdir) / filepath
+        full_path.parent.mkdir(parents=True, exist_ok=True)
+        full_path.write_text(content, encoding="utf-8")
+
+    def _make_commit(self, repo: pygit2.Repository, message: str, files_to_change: dict = None) -> pygit2.Oid:
+        """
+        Robust helper to create a commit on the current branch.
+        'files_to_change' is a dict of {filepath: content}.
+        This version remains local as it uses self.signature.
+        """
+        if files_to_change is None:
+            files_to_change = {}
+
+        repo.index.read()
+        for filepath, content in files_to_change.items():
+            self._create_file(repo, filepath, content) # Uses the local _create_file
+            repo.index.add(filepath)
+        repo.index.write()
+
+        tree = repo.index.write_tree()
+        parents = [] if repo.head_is_unborn else [repo.head.target]
+        # Uses self.signature which is set up with create_test_signature from conftest
+        signature = self.signature
+
+        return repo.create_commit("HEAD", signature, signature, message, tree, parents)
 
     def tearDown(self):
         # Unlock files before removing (Windows specific issue with pygit2)
@@ -99,7 +104,7 @@ class TestRevertCommitCore(unittest.TestCase):
         self.assertEqual(file_a_path.read_text(encoding="utf-8"), "Content A from C1")
 
         # Commit 2
-        c2_oid = _make_commit(self.repo, "Second change C2", {"file_a.txt": "Content A modified by C2", "file_b.txt": "Content B from C2"})
+        c2_oid = self._make_commit(self.repo, "Second change C2", {"file_a.txt": "Content A modified by C2", "file_b.txt": "Content B from C2"}) # Uses local _make_commit
         self.assertEqual(file_a_path.read_text(encoding="utf-8"), "Content A modified by C2")
         self.assertTrue((self.repo_path_obj / "file_b.txt").exists())
 
@@ -128,7 +133,7 @@ class TestRevertCommitCore(unittest.TestCase):
 
 
     def test_revert_commit_not_found(self):
-        _make_commit(self.repo, "Initial commit", {"dummy.txt": "content"})
+        self._make_commit(self.repo, "Initial commit", {"dummy.txt": "content"}) # Uses local _make_commit
         non_existent_sha = "abcdef1234567890abcdef1234567890abcdef12"
         with self.assertRaisesRegex(CommitNotFoundError, f"Commit '{non_existent_sha}' not found"):
             revert_commit(self.repo_path_str, non_existent_sha)
@@ -144,13 +149,13 @@ class TestRevertCommitCore(unittest.TestCase):
 
     def test_revert_results_in_conflict(self):
         # Commit 1: Base file
-        _make_commit(self.repo, "C1: Base file_c.txt", {"file_c.txt": "line1\nline2\nline3"})
+        self._make_commit(self.repo, "C1: Base file_c.txt", {"file_c.txt": "line1\nline2\nline3"}) # Uses local _make_commit
 
         # Commit 2: First modification to line2
-        c2_oid = _make_commit(self.repo, "C2: Modify line2 in file_c.txt", {"file_c.txt": "line1\nMODIFIED_BY_COMMIT_2\nline3"})
+        c2_oid = self._make_commit(self.repo, "C2: Modify line2 in file_c.txt", {"file_c.txt": "line1\nMODIFIED_BY_COMMIT_2\nline3"}) # Uses local _make_commit
 
         # Commit 3 (HEAD): Conflicting modification to line2
-        c3_oid = _make_commit(self.repo, "C3: Modify line2 again in file_c.txt", {"file_c.txt": "line1\nMODIFIED_BY_COMMIT_3\nline3"})
+        c3_oid = self._make_commit(self.repo, "C3: Modify line2 again in file_c.txt", {"file_c.txt": "line1\nMODIFIED_BY_COMMIT_3\nline3"}) # Uses local _make_commit
         self.assertEqual(self.repo.head.target, c3_oid)
 
         # Attempt to revert Commit 2 - this should cause a conflict
@@ -179,7 +184,7 @@ class TestRevertCommitCore(unittest.TestCase):
         # Merge feature into main: C3 (merge commit)
 
         # C1 on main
-        c1_main_oid = _make_commit(self.repo, "C1 on main", {"file_main.txt": "Main C1", "shared.txt": "Shared C1"})
+        c1_main_oid = self._make_commit(self.repo, "C1 on main", {"file_main.txt": "Main C1", "shared.txt": "Shared C1"}) # Uses local _make_commit
         c1_main_commit = self.repo.get(c1_main_oid)
 
         # Ensure 'main' branch exists and HEAD points to it (or default branch if not 'main')
@@ -197,10 +202,10 @@ class TestRevertCommitCore(unittest.TestCase):
 
         # Create feature branch from C1
         feature_branch_name = "feature/test_merge_clean"
-        _create_and_checkout_branch(self.repo, feature_branch_name, c1_main_commit)
+        _create_and_checkout_branch(self.repo, feature_branch_name, c1_main_commit) # Uses local _create_and_checkout_branch
 
         # C1_F1 on feature branch
-        c1_f1_oid = _make_commit(self.repo, "C1_F1 on feature", {"file_feature.txt": "Feature C1_F1", "shared.txt": "Shared C1 modified by Feature"})
+        c1_f1_oid = self._make_commit(self.repo, "C1_F1 on feature", {"file_feature.txt": "Feature C1_F1", "shared.txt": "Shared C1 modified by Feature"}) # Uses local _make_commit
         self.assertEqual(self.repo.head.target, c1_f1_oid)
 
         # Switch back to main branch
@@ -211,7 +216,7 @@ class TestRevertCommitCore(unittest.TestCase):
 
 
         # C2 on main
-        c2_main_oid = _make_commit(self.repo, "C2 on main", {"file_main.txt": "Main C1 then C2"})
+        c2_main_oid = self._make_commit(self.repo, "C2 on main", {"file_main.txt": "Main C1 then C2"}) # Uses local _make_commit
         self.assertEqual(self.repo.head.target, c2_main_oid)
 
         # Merge feature branch into main - this will be C3 (merge commit)
@@ -260,7 +265,7 @@ class TestRevertCommitCore(unittest.TestCase):
 
     def test_revert_merge_commit_with_conflict(self):
         # C1 on main
-        c1_main_oid = _make_commit(self.repo, "C1: main", {"file.txt": "line1\nline2 from main C1\nline3"})
+        c1_main_oid = self._make_commit(self.repo, "C1: main", {"file.txt": "line1\nline2 from main C1\nline3"}) # Uses local _make_commit
         c1_main_commit = self.repo.get(c1_main_oid)
 
         # Ensure 'main' branch exists and HEAD points to it
@@ -272,11 +277,11 @@ class TestRevertCommitCore(unittest.TestCase):
 
 
         # Create 'dev' branch from C1
-        _create_and_checkout_branch(self.repo, "dev", c1_main_commit)
+        _create_and_checkout_branch(self.repo, "dev", c1_main_commit) # Uses local _create_and_checkout_branch
         self.assertEqual(self.repo.head.shorthand, "dev")
 
         # C2 on dev: Modify line2
-        c2_dev_oid = _make_commit(self.repo, "C2: dev modify line2", {"file.txt": "line1\nline2 MODIFIED by dev C2\nline3"})
+        c2_dev_oid = self._make_commit(self.repo, "C2: dev modify line2", {"file.txt": "line1\nline2 MODIFIED by dev C2\nline3"}) # Uses local _make_commit
 
         # Switch back to main
         main_branch_ref = self.repo.branches["main"]
@@ -285,7 +290,7 @@ class TestRevertCommitCore(unittest.TestCase):
         self.assertEqual(self.repo.head.shorthand, "main")
 
         # C3 on main: Modify line2 (different from dev's C2)
-        c3_main_oid = _make_commit(self.repo, "C3: main modify line2 differently", {"file.txt": "line1\nline2 MODIFIED by main C3\nline3"})
+        c3_main_oid = self._make_commit(self.repo, "C3: main modify line2 differently", {"file.txt": "line1\nline2 MODIFIED by main C3\nline3"}) # Uses local _make_commit
 
         # Merge dev into main (C4 - merge commit) - this will cause a conflict that we resolve
         self.repo.merge(c2_dev_oid)
@@ -318,7 +323,7 @@ class TestRevertCommitCore(unittest.TestCase):
         c5_main_content_parts[2] = "line2 MODIFIED by dev C2 AND THEN BY C5" # Directly modify the line from dev's side of the merge
         c5_main_content = "\n".join(c5_main_content_parts)
 
-        c5_main_oid = _make_commit(self.repo, "C5: main directly modifies dev's merged line", {"file.txt": c5_main_content})
+        c5_main_oid = self._make_commit(self.repo, "C5: main directly modifies dev's merged line", {"file.txt": c5_main_content}) # Uses local _make_commit
         self.assertEqual((self.repo_path_obj / "file.txt").read_text(encoding="utf-8"), c5_main_content)
 
 
@@ -385,8 +390,8 @@ class TestSaveChangesCore(unittest.TestCase):
             print(f"Warning: shutil.rmtree failed for {self.repo_path_obj}: {e}")
 
 
-    # The _create_file method was part of TestSaveChangesCore but is now a module-level _create_file.
-    # The _create_commit method was part of TestSaveChangesCore but is now module-level _make_commit.
+        # The _create_file method was part of TestSaveChangesCore but is now a module-level _create_file. --> Now using self._create_file which is local, or conftest_create_file.
+        # The _create_commit method was part of TestSaveChangesCore but is now module-level _make_commit. --> Now using self._make_commit which is local.
     # The _get_file_content_from_commit method will be kept here for assertions if needed.
     # A _read_file_content_from_workdir will be added for convenience in assertions.
 
@@ -435,7 +440,7 @@ class TestSaveChangesCore(unittest.TestCase):
 
         filename = "initial_file.txt"
         content = "Initial content."
-        _create_file(self.repo, filename, content) # Use module-level helper
+        self._create_file(self.repo, filename, content) # Use local _create_file
         # For initial commit, save_changes will do add_all if include_paths is None
 
         result = save_changes(self.repo_path_str, "Initial commit")
@@ -462,11 +467,11 @@ class TestSaveChangesCore(unittest.TestCase):
 
     # 3. Selective Staging (include_paths)
     def test_save_include_paths_single_file(self):
-        _make_commit(self.repo, "Initial", {"file_a.txt": "A v1", "file_b.txt": "B v1"})
+        self._make_commit(self.repo, "Initial", {"file_a.txt": "A v1", "file_b.txt": "B v1"}) # Uses local _make_commit
 
-        _create_file(self.repo, "file_a.txt", "A v2")
-        _create_file(self.repo, "file_b.txt", "B v2")
-        _create_file(self.repo, "file_c.txt", "C v1")
+        self._create_file(self.repo, "file_a.txt", "A v2") # Uses local _create_file
+        self._create_file(self.repo, "file_b.txt", "B v2") # Uses local _create_file
+        self._create_file(self.repo, "file_c.txt", "C v1") # Uses local _create_file
 
         result = save_changes(self.repo_path_str, "Commit only file_a", include_paths=["file_a.txt"])
 
@@ -489,11 +494,11 @@ class TestSaveChangesCore(unittest.TestCase):
         self.assertIn("file_c.txt", status) # Should be new but not committed
 
     def test_save_include_paths_multiple_files(self):
-        _make_commit(self.repo, "Initial", {"file_a.txt": "A v1", "file_b.txt": "B v1", "file_c.txt": "C v1"})
+        self._make_commit(self.repo, "Initial", {"file_a.txt": "A v1", "file_b.txt": "B v1", "file_c.txt": "C v1"}) # Uses local _make_commit
 
-        _create_file(self.repo, "file_a.txt", "A v2")
-        _create_file(self.repo, "file_b.txt", "B v2")
-        _create_file(self.repo, "file_c.txt", "C v2")
+        self._create_file(self.repo, "file_a.txt", "A v2") # Uses local _create_file
+        self._create_file(self.repo, "file_b.txt", "B v2") # Uses local _create_file
+        self._create_file(self.repo, "file_c.txt", "C v2") # Uses local _create_file
 
         result = save_changes(self.repo_path_str, "Commit file_a and file_b", include_paths=["file_a.txt", "file_b.txt"])
         commit_oid = pygit2.Oid(hex=result['oid'])
@@ -503,9 +508,9 @@ class TestSaveChangesCore(unittest.TestCase):
         self.assertEqual(self._get_file_content_from_commit(commit_oid, "file_c.txt"), "C v1") # Unchanged in commit
 
     def test_save_include_paths_one_changed_one_not(self):
-        _make_commit(self.repo, "Initial", {"file_a.txt": "A v1", "file_b.txt": "B v1"})
+        self._make_commit(self.repo, "Initial", {"file_a.txt": "A v1", "file_b.txt": "B v1"}) # Uses local _make_commit
 
-        _create_file(self.repo, "file_a.txt", "A v2")
+        self._create_file(self.repo, "file_a.txt", "A v2") # Uses local _create_file
         # file_b.txt content is "B v1" from the initial commit, not changed in workdir for this test
 
         result = save_changes(self.repo_path_str, "Commit file_a (changed) and file_b (unchanged)", include_paths=["file_a.txt", "file_b.txt"])
@@ -517,8 +522,8 @@ class TestSaveChangesCore(unittest.TestCase):
     def test_save_include_paths_file_does_not_exist(self):
         # Core function's save_changes prints a warning for non-existent paths but doesn't fail.
         # The commit should proceed with any valid, changed paths.
-        _make_commit(self.repo, "Initial", {"file_a.txt": "A v1"})
-        _create_file(self.repo, "file_a.txt", "A v2")
+        self._make_commit(self.repo, "Initial", {"file_a.txt": "A v1"}) # Uses local _make_commit
+        self._create_file(self.repo, "file_a.txt", "A v2") # Uses local _create_file
 
         result = save_changes(self.repo_path_str, "Commit with non-existent path", include_paths=["file_a.txt", "non_existent.txt"])
         self.assertEqual(result['status'], 'success')
@@ -529,13 +534,13 @@ class TestSaveChangesCore(unittest.TestCase):
 
 
     def test_save_include_paths_ignored_file(self):
-        _make_commit(self.repo, "Initial", {"not_ignored.txt": "content"})
+        self._make_commit(self.repo, "Initial", {"not_ignored.txt": "content"}) # Uses local _make_commit
 
         # Create .gitignore and commit it
-        _make_commit(self.repo, "Add gitignore", {".gitignore": "*.ignored\nignored_dir/"})
+        self._make_commit(self.repo, "Add gitignore", {".gitignore": "*.ignored\nignored_dir/"}) # Uses local _make_commit
 
-        _create_file(self.repo, "file.ignored", "ignored content")
-        _create_file(self.repo, "not_ignored.txt", "new content")
+        self._create_file(self.repo, "file.ignored", "ignored content") # Uses local _create_file
+        self._create_file(self.repo, "not_ignored.txt", "new content") # Uses local _create_file
 
         # Attempt to include an ignored file.
         # save_changes -> index.add(path) for pygit2 by default does not add ignored files unless force=True.
@@ -550,20 +555,20 @@ class TestSaveChangesCore(unittest.TestCase):
             self._get_file_content_from_commit(commit_oid, "file.ignored")
 
     def test_save_include_paths_no_specified_files_have_changes(self):
-        _make_commit(self.repo, "Initial", {"file_a.txt": "A v1", "file_b.txt": "B v1"})
+        self._make_commit(self.repo, "Initial", {"file_a.txt": "A v1", "file_b.txt": "B v1"}) # Uses local _make_commit
         # file_a and file_b are in repo, but no changes made to them in workdir by _create_file.
         # A new file_c is created but not included.
-        _create_file(self.repo, "file_c.txt", "C v1")
+        self._create_file(self.repo, "file_c.txt", "C v1") # Uses local _create_file
 
         with self.assertRaisesRegex(NoChangesToSaveError, "No specified files had changes to stage relative to HEAD"):
             save_changes(self.repo_path_str, "No changes in included files", include_paths=["file_a.txt", "file_b.txt"])
 
     def test_save_include_paths_directory(self):
-        _make_commit(self.repo, "Initial", {"file_x.txt": "x"})
+        self._make_commit(self.repo, "Initial", {"file_x.txt": "x"}) # Uses local _make_commit
 
-        _create_file(self.repo, "dir_a/file_a1.txt", "A1 v1")
-        _create_file(self.repo, "dir_a/file_a2.txt", "A2 v1")
-        _create_file(self.repo, "dir_b/file_b1.txt", "B1 v1")
+        self._create_file(self.repo, "dir_a/file_a1.txt", "A1 v1") # Uses local _create_file
+        self._create_file(self.repo, "dir_a/file_a2.txt", "A2 v1") # Uses local _create_file
+        self._create_file(self.repo, "dir_b/file_b1.txt", "B1 v1") # Uses local _create_file
 
         result = save_changes(self.repo_path_str, "Commit directory dir_a", include_paths=["dir_a"])
         self.assertEqual(result['status'], 'success')
@@ -575,8 +580,8 @@ class TestSaveChangesCore(unittest.TestCase):
             self._get_file_content_from_commit(commit_oid, "dir_b/file_b1.txt")
 
         # Modify a file in dir_a and add a new one, then save dir_a again
-        _create_file(self.repo, "dir_a/file_a1.txt", "A1 v2")
-        _create_file(self.repo, "dir_a/subdir/file_as1.txt", "AS1 v1")
+        self._create_file(self.repo, "dir_a/file_a1.txt", "A1 v2") # Uses local _create_file
+        self._create_file(self.repo, "dir_a/subdir/file_as1.txt", "AS1 v1") # Uses local _create_file
 
         result2 = save_changes(self.repo_path_str, "Commit directory dir_a again", include_paths=["dir_a"])
         self.assertEqual(result2['status'], 'success')
@@ -592,27 +597,27 @@ class TestSaveChangesCore(unittest.TestCase):
         # Setup: C1(main) -> C2(main)
         #              \ -> C1_F1(feature)
         # Merge C1_F1 into C2 (main) = C3_Merge(main)
-        c1_main_oid = _make_commit(self.repo, "C1 main", {"file.txt": "Content from C1 main\nshared_line\n"})
+        c1_main_oid = self._make_commit(self.repo, "C1 main", {"file.txt": "Content from C1 main\nshared_line\n"}) # Uses local _make_commit
         c1_main_commit = self.repo.get(c1_main_oid)
 
         # Feature branch from C1
-        _create_and_checkout_branch(self.repo, "feature/merge_test", c1_main_commit)
-        c1_feature_oid = _make_commit(self.repo, "C1 feature", {"file.txt": "Content from C1 main\nfeature_line\n", "feature_only.txt": "feature content"})
+        _create_and_checkout_branch(self.repo, "feature/merge_test", c1_main_commit) # Uses local _create_and_checkout_branch
+        c1_feature_oid = self._make_commit(self.repo, "C1 feature", {"file.txt": "Content from C1 main\nfeature_line\n", "feature_only.txt": "feature content"}) # Uses local _make_commit
 
         # Switch back to main
         main_branch_ref = self.repo.branches["main"]
         self.repo.checkout(main_branch_ref)
         self.repo.set_head(main_branch_ref.name)
-        head_oid_before_merge = _make_commit(self.repo, "C2 main", {"file.txt": "Content from C1 main\nmain_line\n"})
+        head_oid_before_merge = self._make_commit(self.repo, "C2 main", {"file.txt": "Content from C1 main\nmain_line\n"}) # Uses local _make_commit
 
         # Start merge, which will conflict. Resolve it.
         self.repo.merge(c1_feature_oid)
-        _create_file(self.repo, "file.txt", "Content from C1 main\nmain_line\nfeature_line_resolved\n")
+        self._create_file(self.repo, "file.txt", "Content from C1 main\nmain_line\nfeature_line_resolved\n") # Uses local _create_file
         self.repo.index.add("file.txt")
         try: # Ensure feature_only.txt is staged
             self.repo.index['feature_only.txt']
         except KeyError:
-            _create_file(self.repo, "feature_only.txt", "feature content")
+            self._create_file(self.repo, "feature_only.txt", "feature content") # Uses local _create_file
             self.repo.index.add("feature_only.txt")
         self.repo.index.write()
         self.assertFalse(self.repo.index.conflicts, "Conflicts should be resolved for this test path.")
@@ -640,15 +645,15 @@ class TestSaveChangesCore(unittest.TestCase):
         self.assertEqual(self._get_file_content_from_commit(merge_commit_oid, "feature_only.txt"), "feature content")
 
     def test_save_merge_completion_with_unresolved_conflicts(self):
-        c1_main_oid = _make_commit(self.repo, "C1 main", {"file.txt": "Content from C1 main\nshared_line\n"})
+        c1_main_oid = self._make_commit(self.repo, "C1 main", {"file.txt": "Content from C1 main\nshared_line\n"}) # Uses local _make_commit
         c1_main_commit = self.repo.get(c1_main_oid)
-        _create_and_checkout_branch(self.repo, "feature/merge_test", c1_main_commit)
-        c1_feature_oid = _make_commit(self.repo, "C1 feature", {"file.txt": "Content from C1 main\nfeature_line\n"})
+        _create_and_checkout_branch(self.repo, "feature/merge_test", c1_main_commit) # Uses local _create_and_checkout_branch
+        c1_feature_oid = self._make_commit(self.repo, "C1 feature", {"file.txt": "Content from C1 main\nfeature_line\n"}) # Uses local _make_commit
 
         main_branch_ref = self.repo.branches["main"]
         self.repo.checkout(main_branch_ref)
         self.repo.set_head(main_branch_ref.name)
-        head_oid_before_merge = _make_commit(self.repo, "C2 main", {"file.txt": "Content from C1 main\nmain_line\n"})
+        head_oid_before_merge = self._make_commit(self.repo, "C2 main", {"file.txt": "Content from C1 main\nmain_line\n"}) # Uses local _make_commit
 
         # Start merge, which will conflict. Do NOT resolve it.
         self.repo.merge(c1_feature_oid)
@@ -666,24 +671,24 @@ class TestSaveChangesCore(unittest.TestCase):
         self.assertEqual(self.repo.head.target, head_oid_before_merge, "HEAD should not have moved.")
 
     def test_save_merge_completion_with_include_paths_error(self):
-        c1_main_oid = _make_commit(self.repo, "C1 main", {"file.txt": "shared"})
+        c1_main_oid = self._make_commit(self.repo, "C1 main", {"file.txt": "shared"}) # Uses local _make_commit
         c1_main_commit = self.repo.get(c1_main_oid)
-        _create_and_checkout_branch(self.repo, "feature", c1_main_commit)
-        c1_feature_oid = _make_commit(self.repo, "C1 feature", {"file.txt": "feature change", "new_file.txt":"new"})
+        _create_and_checkout_branch(self.repo, "feature", c1_main_commit) # Uses local _create_and_checkout_branch
+        c1_feature_oid = self._make_commit(self.repo, "C1 feature", {"file.txt": "feature change", "new_file.txt":"new"}) # Uses local _make_commit
 
         main_ref = self.repo.branches["main"]
         self.repo.checkout(main_ref)
         self.repo.set_head(main_ref.name)
-        _make_commit(self.repo, "C2 main", {"file.txt": "main change"})
+        self._make_commit(self.repo, "C2 main", {"file.txt": "main change"}) # Uses local _make_commit
 
         self.repo.merge(c1_feature_oid) # Creates MERGE_HEAD
         # Assume conflicts resolved for this test, as error is about include_paths
-        _create_file(self.repo, "file.txt", "resolved content")
+        self._create_file(self.repo, "file.txt", "resolved content") # Uses local _create_file
         self.repo.index.add("file.txt")
         try:
             self.repo.index['new_file.txt']
         except KeyError:
-            _create_file(self.repo, "new_file.txt", "new")
+            self._create_file(self.repo, "new_file.txt", "new") # Uses local _create_file
             self.repo.index.add("new_file.txt")
         self.repo.index.write()
         self.assertFalse(self.repo.index.conflicts, "Index should be clean before testing include_paths error.")
@@ -696,12 +701,12 @@ class TestSaveChangesCore(unittest.TestCase):
     # Tests will be refactored.
 
     def test_save_revert_completion_no_conflicts(self):
-        _make_commit(self.repo, "C1", {"file.txt": "Content C1"})
-        c2_oid = _make_commit(self.repo, "C2 changes file", {"file.txt": "Content C2"})
+        self._make_commit(self.repo, "C1", {"file.txt": "Content C1"}) # Uses local _make_commit
+        c2_oid = self._make_commit(self.repo, "C2 changes file", {"file.txt": "Content C2"}) # Uses local _make_commit
 
         # Simulate that C2 is being reverted.
         # Workdir/index should reflect the state *after* applying C2's inverse to C2 (i.e., state of C1).
-        _create_file(self.repo, "file.txt", "Content C1")
+        self._create_file(self.repo, "file.txt", "Content C1") # Uses local _create_file
         self.repo.index.read()
         self.repo.index.add("file.txt")
         self.repo.index.write()
@@ -732,16 +737,16 @@ class TestSaveChangesCore(unittest.TestCase):
         self.assertEqual(self._get_file_content_from_commit(revert_commit_oid, "file.txt"), "Content C1")
 
     def test_save_revert_completion_with_unresolved_conflicts(self):
-        _make_commit(self.repo, "C1", {"file.txt": "Content C1"})
-        c2_oid = _make_commit(self.repo, "C2", {"file.txt": "Content C2"})
+        self._make_commit(self.repo, "C1", {"file.txt": "Content C1"}) # Uses local _make_commit
+        c2_oid = self._make_commit(self.repo, "C2", {"file.txt": "Content C2"}) # Uses local _make_commit
 
         # Manually set up REVERT_HEAD state and create a conflict
         self.repo.create_reference("REVERT_HEAD", c2_oid)
         # Create a dummy conflict in the index
         conflict_path = "conflicting_revert_file.txt"
-        _create_file(self.repo, conflict_path + "_ancestor", "ancestor") # Not strictly needed for add_conflict
-        _create_file(self.repo, conflict_path + "_our", "our_version")
-        _create_file(self.repo, conflict_path + "_their", "their_version")
+        self._create_file(self.repo, conflict_path + "_ancestor", "ancestor") # Uses local _create_file
+        self._create_file(self.repo, conflict_path + "_our", "our_version") # Uses local _create_file
+        self._create_file(self.repo, conflict_path + "_their", "their_version") # Uses local _create_file
 
         ancestor_blob_oid = self.repo.create_blob(b"revert_ancestor_content")
         our_blob_oid = self.repo.create_blob(b"revert_our_content")
@@ -770,8 +775,8 @@ class TestSaveChangesCore(unittest.TestCase):
 
 
     def test_save_revert_completion_with_include_paths_error(self):
-        _make_commit(self.repo, "C1", {"file.txt": "Content C1"})
-        c2_oid = _make_commit(self.repo, "C2", {"file.txt": "Content C2"})
+        self._make_commit(self.repo, "C1", {"file.txt": "Content C1"}) # Uses local _make_commit
+        c2_oid = self._make_commit(self.repo, "C2", {"file.txt": "Content C2"}) # Uses local _make_commit
         # Manually set up REVERT_HEAD state (no conflict needed for this test)
         self.repo.create_reference("REVERT_HEAD", c2_oid)
 
@@ -784,7 +789,7 @@ class TestSaveChangesCore(unittest.TestCase):
         self.repo.config["user.name"] = "Config User"
         self.repo.config["user.email"] = "config@example.com"
 
-        _create_file(self.repo, "file.txt", "content for signature test") # Use module helper
+        self._create_file(self.repo, "file.txt", "content for signature test") # Use local _create_file
         result = save_changes(self.repo_path_str, "Commit with default signature")
 
         self.assertEqual(result['status'], 'success')
@@ -801,7 +806,7 @@ class TestSaveChangesCore(unittest.TestCase):
         # This typically happens if user.name/email are not set in any git config.
         mock_default_signature.side_effect = pygit2.GitError("Simulated error: No signature configured")
 
-        _create_file(self.repo, "file.txt", "content for fallback signature test") # Use module helper
+        self._create_file(self.repo, "file.txt", "content for fallback signature test") # Use local _create_file
 
         # Temporarily clear any globally set config for this repo object to ensure fallback path
         # This is tricky as default_signature might still pick up system/global if not careful.
@@ -838,8 +843,8 @@ class TestSaveChangesCore(unittest.TestCase):
 
     def test_save_initial_commit_with_include_paths(self):
         self.assertTrue(self.repo.is_empty)
-        _create_file(self.repo, "file1.txt", "content1") # Use module helper
-        _create_file(self.repo, "file2.txt", "content2") # Use module helper
+        self._create_file(self.repo, "file1.txt", "content1") # Use local _create_file
+        self._create_file(self.repo, "file2.txt", "content2") # Use local _create_file
 
         result = save_changes(self.repo_path_str, "Initial commit with file1", include_paths=["file1.txt"])
 
@@ -865,16 +870,16 @@ class TestSaveChangesCore(unittest.TestCase):
             save_changes(self.repo_path_str, "Initial commit attempt on empty")
 
         # Empty repo, files created but not included
-        _create_file(self.repo, "somefile.txt", "content") # Use module helper
+        self._create_file(self.repo, "somefile.txt", "content") # Use local _create_file
         with self.assertRaisesRegex(NoChangesToSaveError, "No specified files could be staged for the initial commit"):
             save_changes(self.repo_path_str, "Initial commit with non-existent include", include_paths=["doesnotexist.txt"])
 
     # 2. Normal Commits
     def test_save_normal_commit_stage_all(self):
-        c1_oid = _make_commit(self.repo, "Initial", {"file_a.txt": "Content A v1"})
+        c1_oid = self._make_commit(self.repo, "Initial", {"file_a.txt": "Content A v1"}) # Uses local _make_commit
 
-        _create_file(self.repo, "file_a.txt", "Content A v2")
-        _create_file(self.repo, "file_b.txt", "Content B v1")
+        self._create_file(self.repo, "file_a.txt", "Content A v2") # Uses local _create_file
+        self._create_file(self.repo, "file_b.txt", "Content B v1") # Uses local _create_file
 
         result = save_changes(self.repo_path_str, "Second commit with changes")
 
@@ -896,18 +901,18 @@ class TestSaveChangesCore(unittest.TestCase):
         self.assertEqual(len(status), 0, f"Working directory should be clean. Status: {status}")
 
     def test_save_no_changes_in_non_empty_repo_error(self):
-        _make_commit(self.repo, "Initial", {"file_a.txt": "Content A v1"})
+        self._make_commit(self.repo, "Initial", {"file_a.txt": "Content A v1"}) # Uses local _make_commit
         # No changes made after initial commit
 
         with self.assertRaisesRegex(NoChangesToSaveError, "No changes to save \(working directory and index are clean or match HEAD\)\."):
             save_changes(self.repo_path_str, "Attempt to save no changes")
 
     def test_save_with_staged_changes_working_dir_clean(self):
-        c1_oid = _make_commit(self.repo, "Initial", {"file_a.txt": "Original Content"})
+        c1_oid = self._make_commit(self.repo, "Initial", {"file_a.txt": "Original Content"}) # Uses local _make_commit
 
         # Stage a change but don't modify working directory further
         self.repo.index.read()
-        _create_file(self.repo, "file_a.txt", "Staged Content") # workdir now "Staged Content"
+        self._create_file(self.repo, "file_a.txt", "Staged Content") # Uses local _create_file; workdir now "Staged Content"
         self.repo.index.add("file_a.txt") # index now "Staged Content"
         self.repo.index.write()
 
@@ -918,7 +923,7 @@ class TestSaveChangesCore(unittest.TestCase):
         # Workdir for file_a.txt is "Staged Content".
 
         # Create another file in workdir but DO NOT STAGE IT
-        _create_file(self.repo, "file_b.txt", "Unstaged Content") # workdir has file_b.txt
+        self._create_file(self.repo, "file_b.txt", "Unstaged Content") # Uses local _create_file; workdir has file_b.txt
 
         result = save_changes(self.repo_path_str, "Commit staged changes for file_a")
         # This should commit file_a.txt with "Staged Content" (as it was staged)
@@ -941,10 +946,10 @@ class TestSaveChangesCore(unittest.TestCase):
 
     def test_save_with_only_index_changes_no_workdir_changes(self):
         # Initial commit
-        c1_oid = _make_commit(self.repo, "C1", {"original.txt": "v1"})
+        c1_oid = self._make_commit(self.repo, "C1", {"original.txt": "v1"}) # Uses local _make_commit
 
         # Create a new file, add it to index, then REMOVE it from workdir
-        _create_file(self.repo, "only_in_index.txt", "This file is staged then removed from workdir") # workdir has file
+        self._create_file(self.repo, "only_in_index.txt", "This file is staged then removed from workdir") # Uses local _create_file; workdir has file
         self.repo.index.read()
         self.repo.index.add("only_in_index.txt") # index has file
         self.repo.index.write()
@@ -952,10 +957,10 @@ class TestSaveChangesCore(unittest.TestCase):
         os.remove(self.repo_path_obj / "only_in_index.txt") # workdir no longer has file
 
         # Modify an existing tracked file, stage it, then revert workdir change
-        _create_file(self.repo, "original.txt", "v2_staged") # workdir has "v2_staged"
+        self._create_file(self.repo, "original.txt", "v2_staged") # Uses local _create_file; workdir has "v2_staged"
         self.repo.index.add("original.txt") # index has "v2_staged"
         self.repo.index.write()
-        _create_file(self.repo, "original.txt", "v1") # workdir now has "v1"
+        self._create_file(self.repo, "original.txt", "v1") # Uses local _create_file; workdir now has "v1"
 
         # At this point:
         # - only_in_index.txt is in index (staged for add), not in workdir (deleted from workdir)
