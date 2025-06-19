@@ -3,7 +3,7 @@ import pygit2
 import os
 import shutil
 from pathlib import Path
-from typing import List, Dict, Any # Added for fixture return type hint consistency
+from typing import List, Dict, Any, Optional # Added for fixture return type hint consistency
 
 # Corrected import path for core modules
 from gitwrite_core.branching import (
@@ -640,4 +640,3 @@ class TestMergeBranch:
 
         with pytest.raises(GitWriteError, match="User signature (user.name and user.email) not configured in Git."):
             merge_branch_into_current(str(repo_no_sig_path), "feature")
-```

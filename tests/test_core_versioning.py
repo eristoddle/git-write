@@ -1,4 +1,5 @@
 import unittest
+import unittest.mock as mock
 import pygit2
 import shutil
 import tempfile
