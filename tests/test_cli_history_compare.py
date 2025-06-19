@@ -8,6 +8,7 @@ from click.testing import CliRunner # For type hinting runner fixture from conft
 
 from gitwrite_cli.main import cli
 # Fixtures runner, local_repo_path, local_repo and helper make_commit are now in conftest.py
+from conftest import make_commit # Import the helper function
 
 #######################################
 # Compare Command Tests (CLI Runner)

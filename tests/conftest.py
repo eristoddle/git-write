@@ -22,23 +22,55 @@ def make_commit(repo, filename, content, message, branch_name=None): # Added bra
 
     # Handle branching if specified
     current_head_ref = "HEAD"
+    parents = []
+
     if branch_name:
-        if branch_name not in repo.branches.local:
-             # If branch doesn't exist, create it from current HEAD or make it the first commit if HEAD is unborn
-            if repo.head_is_unborn:
-                pass # Will be handled by create_commit naturally for the first commit
-            else:
+        if repo.head_is_unborn:
+            # For the very first commit, point HEAD to the target branch directly
+            current_head_ref = f"refs/heads/{branch_name}"
+            # Parents list is already empty, which is correct for an initial commit
+        else:
+            # For subsequent commits on a named branch
+            if branch_name not in repo.branches.local:
                 repo.branches.local.create(branch_name, repo.head.peel(pygit2.Commit))
 
-        # If branch exists or was just created, ensure we are on it for the commit
-        if repo.head.shorthand != branch_name:
-            repo.checkout(repo.branches.local[branch_name])
-        current_head_ref = repo.lookup_reference(f"refs/heads/{branch_name}").name
+            # Checkout the branch to ensure the commit happens on it
+            # and HEAD points to it.
+            if repo.head.shorthand != branch_name:
+                 branch_obj = repo.branches.local.get(branch_name)
+                 if branch_obj:
+                    repo.checkout(branch_obj)
+                 else:
+                    # This case should ideally not be reached if creation was successful
+                    # or if branch_name was meant for an initial commit.
+                    # Fallback or error might be needed if branch_obj is None.
+                    pass # Or raise an error
+            current_head_ref = repo.lookup_reference(f"refs/heads/{branch_name}").name
+            parents = [repo.head.target] # Parent is the current commit on this branch
+    elif not repo.head_is_unborn:
+        # Standard commit on current HEAD if not unborn and no specific branch name given
+        parents = [repo.head.target]
+    # If repo.head_is_unborn and no branch_name, it's an initial commit on default branch (e.g. main)
+    # parents remains empty, current_head_ref remains "HEAD"
 
-
-    parents = [repo.head.target] if not repo.head_is_unborn else []
     tree = repo.index.write_tree()
-    return repo.create_commit(current_head_ref, author, committer, message, tree, parents)
+    commit_oid = repo.create_commit(current_head_ref, author, committer, message, tree, parents)
+
+    # If it was an initial commit and a specific branch was named,
+    # ensure HEAD is correctly pointing to this branch.
+    # This is especially important if pygit2's default initial branch (e.g. "master")
+    # differs from the desired branch_name (e.g. "main").
+    if repo.head_is_unborn and branch_name and current_head_ref == f"refs/heads/{branch_name}":
+         # After the commit, HEAD might still be detached or on a default branch like 'master'.
+         # Explicitly set HEAD to the new branch.
+         new_branch_ref = repo.lookup_reference(f"refs/heads/{branch_name}")
+         if new_branch_ref:
+             repo.set_head(new_branch_ref.name)
+         # If the commit created a branch like 'master' instead of 'main' (older pygit2/libgit2),
+         # and 'main' was desired, rename it.
+         # However, with current_head_ref set to f"refs/heads/{branch_name}", this should create the correct branch.
+
+    return commit_oid
 
 @pytest.fixture
 def runner():
@@ -86,8 +118,9 @@ def cli_repo_with_remote(tmp_path: Path, runner: CliRunner): # Added runner fixt
     local_repo.checkout("refs/heads/feature-y-local")
     make_commit(local_repo, "fy_file.txt", "feature-y content", "Commit for feature-y")
     origin_remote.push(["refs/heads/feature-y-local:refs/heads/feature-y"])
-    local_repo.branches.local.delete("feature-y-local")
+    # Checkout main before deleting feature-y-local, as it's the current HEAD
     local_repo.checkout(f"refs/heads/{main_branch_name}")
+    local_repo.branches.local.delete("feature-y-local")
     return local_repo_path
 
 @pytest.fixture
@@ -378,13 +411,17 @@ def synctest_repos(tmp_path: Path, local_repo: pygit2.Repository, bare_remote_re
     config_local = cloned_local_repo.config
     config_local["user.name"] = "Local Sync User"
     config_local["user.email"] = "localsync@example.com"
-    make_commit(cloned_local_repo, "initial_sync_local.txt", "Local's first file for sync", "Initial local sync commit on main", branch_name="main")
+    make_commit(cloned_local_repo, "initial_sync_local.txt", "Local's first file for sync", "Initial local sync commit on main", branch_name="main") # Ensure this uses the updated make_commit
 
     # Use the bare_remote_repo_obj fixture passed in
     # Ensure it's clean or re-initialize if necessary (bare_remote_repo_obj should be fresh from its own fixture scope)
 
-    cloned_local_repo.remotes.create("origin", bare_remote_repo_obj.path)
-    active_branch_name_local = cloned_local_repo.head.shorthand
+    if "origin" not in cloned_local_repo.remotes: # Create remote if it doesn't exist
+        cloned_local_repo.remotes.create("origin", bare_remote_repo_obj.path)
+    else: # Ensure URL is correct if it does exist
+        cloned_local_repo.remotes.set_url("origin", bare_remote_repo_obj.path)
+
+    active_branch_name_local = cloned_local_repo.head.shorthand # This should be 'main' after fixed make_commit
     cloned_local_repo.remotes["origin"].push([f"refs/heads/{active_branch_name_local}:refs/heads/{active_branch_name_local}"])
 
     remote_clone_repo_path_for_sync = base_dir / "remote_clone_user_repo_sync_conftest"
@@ -470,17 +507,29 @@ def make_commit_on_path(repo_path_str: str, filename: str = "default_file.txt", 
     initial_commit_done_here = was_unborn
     if initial_commit_done_here and branch_name:
         current_actual_branch = repo.head.shorthand
-        if current_actual_branch != branch_name:
-            if current_actual_branch == "master" and not repo.branches.get(branch_name):
-                master_b = repo.branches.local["master"]
-                master_b.rename(branch_name)
-            if repo.head.shorthand != branch_name:
-                repo.checkout(f"refs/heads/{branch_name}")
+        if current_actual_branch != branch_name: # e.g. if first commit made 'master' by default
+            # This logic might need refinement based on pygit2's behavior for initial commits
+            # when HEAD ref is specified vs. when it's just "HEAD".
+            # The goal is to ensure the branch specified by 'branch_name' is the one that exists and is checked out.
+            # If pygit2 created 'master' but 'main' was intended:
+            if current_actual_branch == "master" and branch_name == "main" and not repo.branches.local.get("main"):
+                 master_b = repo.branches.local.get("master")
+                 if master_b: master_b.rename(branch_name) # Force in case main somehow exists but is not HEAD
+
+            # Ensure we are on the correctly named branch
+            final_branch_ref = repo.branches.local.get(branch_name)
+            if final_branch_ref and repo.head.target != final_branch_ref.target:
+                repo.checkout(final_branch_ref)
+                repo.set_head(final_branch_ref.name) # Redundant if checkout does this
+            elif not final_branch_ref:
+                # This state implies something went wrong with branch creation/renaming.
+                pass # Or raise error
+
     elif branch_name and repo.head.shorthand != branch_name:
         branch_to_checkout = repo.branches.local.get(branch_name)
         if branch_to_checkout:
-            repo.checkout(branch_to_checkout.name)
-            repo.set_head(branch_to_checkout.name)
+            repo.checkout(branch_to_checkout) # Checkout can take branch object
+            # repo.set_head(branch_to_checkout.name) # Usually checkout handles setting HEAD
     return commit_oid
 
 def make_initial_commit(repo_path_str: str, filename: str = "initial.txt", content: str = "Initial", msg: str = "Initial commit"):
@@ -494,11 +543,22 @@ def make_initial_commit(repo_path_str: str, filename: str = "initial.txt", conte
         committer = author
         tree = repo.index.write_tree()
         repo.create_commit("HEAD", author, committer, msg, tree, [])
-        if repo.head.shorthand == "master" and not repo.branches.get("main"):
-            master_branch = repo.branches.local["master"]
-            master_branch.rename("main")
-            repo.checkout("refs/heads/main")
-            repo.set_head("refs/heads/main")
+        # After initial commit, if pygit2 created 'master' and 'main' was intended (or any other name)
+        # This logic is now largely handled within make_commit if branch_name is passed.
+        # If make_commit is called without branch_name for initial commit, it will use default (likely 'main').
+        # This part can be simplified or removed if make_commit handles it robustly.
+        # For now, let's assume make_commit (if called with branch_name="main") or pygit2 default handles it.
+        # If a specific default name is desired here (e.g. "main"), it should be passed to make_commit.
+        # If make_commit is called by this function, it should pass the desired default.
+        # This function, as is, seems to assume make_commit handles branch naming.
+        # The check below is a safeguard.
+        if repo.head.shorthand == "master" and "main" not in repo.branches.local:
+             # This situation implies the initial commit created 'master' and we prefer 'main'
+             master_b = repo.branches.local.get("master")
+             if master_b:
+                 master_b.rename("main") # force to overwrite if 'main' somehow exists but isn't HEAD
+                 repo.checkout(repo.branches.local["main"]) # Switch to 'main'
+                 # repo.set_head(...) might be needed if checkout doesn't suffice for all cases.
 
 @pytest.fixture
 def test_repo(tmp_path: Path) -> Path:
@@ -536,32 +596,48 @@ def repo_with_remote_branches(tmp_path: Path, configure_git_user: Callable[[pygi
     local_repo_path.mkdir(exist_ok=True)
     local_repo = pygit2.init_repository(str(local_repo_path))
     configure_git_user(local_repo) # Configure user for commits made by make_initial_commit if it uses default_signature
-    make_initial_commit(str(local_repo_path), msg="Initial commit on main")
+    # make_initial_commit now defaults to 'main' or respects pygit2's default.
+    # The commits inside this fixture should ideally use make_commit_on_path for consistency
+    # if they need to ensure specific branch context beyond the initial one.
+    make_commit_on_path(str(local_repo_path), filename="initial_main.txt", content="Initial on main", msg="Initial commit on main", branch_name="main")
+
 
     bare_remote_path = tmp_path / "remote_server_for_branch_tests_core.git" # Renamed
     pygit2.init_repository(str(bare_remote_path), bare=True)
-    origin_remote = local_repo.remotes.create("origin", str(bare_remote_path))
+
+    if "origin" not in local_repo.remotes:
+        origin_remote = local_repo.remotes.create("origin", str(bare_remote_path))
+    else:
+        origin_remote = local_repo.remotes["origin"]
+        origin_remote.url = str(bare_remote_path)
+
 
     main_commit = local_repo.head.peel(pygit2.Commit)
+    # Create feature-a from main's current state
     local_repo.branches.local.create("feature-a", main_commit)
-    local_repo.checkout("refs/heads/feature-a")
-    make_initial_commit(str(local_repo_path), filename="fa.txt", content="feature-a content", msg="Commit on feature-a")
+    # No need to checkout 'main' first if we are creating from its commit object.
+    # Then commit on feature-a
+    make_commit_on_path(str(local_repo_path), filename="fa.txt", content="feature-a content", msg="Commit on feature-a", branch_name="feature-a")
     origin_remote.push(["refs/heads/feature-a:refs/heads/feature-a"])
 
-    local_repo.checkout(local_repo.branches.local['main'].name)
-    main_commit_again = local_repo.head.peel(pygit2.Commit)
-    local_repo.branches.local.create("feature-b", main_commit_again)
-    local_repo.checkout("refs/heads/feature-b")
-    make_initial_commit(str(local_repo_path), filename="fb.txt", content="feature-b content", msg="Commit on feature-b")
+    # Create feature-b from main's current state (still main_commit)
+    local_repo.branches.local.create("feature-b", main_commit)
+    make_commit_on_path(str(local_repo_path), filename="fb.txt", content="feature-b content", msg="Commit on feature-b", branch_name="feature-b")
     origin_remote.push(["refs/heads/feature-b:refs/heads/feature-b"])
 
-    local_repo.checkout(local_repo.branches.local['main'].name)
-    main_commit_final = local_repo.head.peel(pygit2.Commit)
-    local_repo.branches.local.create("origin-special-feature", main_commit_final)
-    local_repo.checkout("refs/heads/origin-special-feature")
-    make_initial_commit(str(local_repo_path), filename="osf.txt", content="osf content", msg="Commit on origin-special-feature")
+    # Create origin-special-feature from main's current state
+    local_repo.branches.local.create("origin-special-feature", main_commit)
+    make_commit_on_path(str(local_repo_path), filename="osf.txt", content="osf content", msg="Commit on origin-special-feature", branch_name="origin-special-feature")
     origin_remote.push(["refs/heads/origin-special-feature:refs/heads/origin/special-feature"])
-    local_repo.checkout(local_repo.branches.local['main'].name)
+
+    # Ensure local repo is back on main branch before returning
+    main_branch_ref = local_repo.branches.local.get("main")
+    if main_branch_ref:
+        local_repo.checkout(main_branch_ref)
+    else:
+        # Fallback or error if 'main' doesn't exist for some reason
+        pass
+
     return local_repo_path
 
 @pytest.fixture

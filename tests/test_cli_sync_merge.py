@@ -12,6 +12,7 @@ from gitwrite_cli.main import cli
 from gitwrite_core.exceptions import FetchError, PushError # Used by test methods directly
 
 # Helper function make_commit is in conftest.py (enhanced version)
+from conftest import make_commit # Import the helper function
 # Fixtures runner, local_repo (generic one from conftest), cli_test_repo,
 # configure_git_user_for_cli, cli_repo_for_merge, cli_repo_for_ff_merge,
 # cli_repo_for_conflict_merge, synctest_repos are all in conftest.py.

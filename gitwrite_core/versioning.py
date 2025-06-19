@@ -431,7 +431,7 @@ def save_changes(repo_path_str: str, message: str, include_paths: Optional[List[
             # Standard merge commits often have messages like "Merge branch 'X' into 'Y'".
             # Users of this function are expected to provide such a message if desired.
 
-    except pygit2.KeyError: # MERGE_HEAD not found, so not a merge
+    except KeyError: # MERGE_HEAD not found, so not a merge (lookup_reference raises built-in KeyError)
         pass
     except pygit2.GitError as e: # Other git errors during merge head lookup
         raise GitWriteError(f"Error checking for MERGE_HEAD: {e}")
@@ -473,7 +473,7 @@ def save_changes(repo_path_str: str, message: str, include_paths: Optional[List[
 
                 is_revert_commit = True
 
-        except pygit2.KeyError: # REVERT_HEAD not found
+        except KeyError: # REVERT_HEAD not found (lookup_reference raises built-in KeyError)
             pass # Not a revert
         except pygit2.GitError as e: # Other git errors
             raise GitWriteError(f"Error checking for REVERT_HEAD: {e}")

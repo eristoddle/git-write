@@ -26,6 +26,7 @@ from gitwrite_core.exceptions import (
 # repo_with_remote_branches, repo_for_merge, repo_for_ff_merge, repo_for_conflict_merge)
 # are in conftest.py.
 # The generic make_commit (taking repo object) is also in conftest.py
+from conftest import make_commit_on_path # Import the helper function
 
 class TestCreateAndSwitchBranch:
     def test_success(self, test_repo: Path): # test_repo from conftest

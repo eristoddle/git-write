@@ -7,6 +7,7 @@ from click.testing import CliRunner # Used by runner fixture in conftest.py, but
 
 from gitwrite_cli.main import cli
 # Fixtures (runner, cli_test_repo, cli_repo_with_remote) and make_commit helper are now in conftest.py
+from .conftest import make_commit # Import the helper function
 from gitwrite_core.branching import create_and_switch_branch, list_branches, switch_to_branch
 from gitwrite_core.exceptions import BranchAlreadyExistsError, BranchNotFoundError, RepositoryEmptyError, RepositoryNotFoundError
 from rich.table import Table # Used by switch command output formatting

@@ -8,8 +8,8 @@ import os
 # datetime, timezone, timedelta are not used directly in this file anymore,
 # create_test_signature from conftest handles its own datetime imports.
 
-from gitwrite_core.versioning import revert_commit
-from gitwrite_core.exceptions import RepositoryNotFoundError, CommitNotFoundError, MergeConflictError, GitWriteError
+from gitwrite_core.versioning import revert_commit, save_changes # Added save_changes
+from gitwrite_core.exceptions import RepositoryNotFoundError, CommitNotFoundError, MergeConflictError, GitWriteError, NoChangesToSaveError # Added NoChangesToSaveError
 
 # Constants TEST_USER_NAME and TEST_USER_EMAIL are in conftest.py
 # The create_test_signature function is now in conftest.py
@@ -28,83 +28,65 @@ def _create_and_checkout_branch(repo: pygit2.Repository, branch_name: str, from_
     repo.set_head(branch.name)
     return branch
 
-class TestRevertCommitCore(unittest.TestCase):
+class GitWriteCoreTestCaseBase(unittest.TestCase):
     def setUp(self):
         self.repo_path_obj = Path(tempfile.mkdtemp())
         self.repo_path_str = str(self.repo_path_obj)
-        # Initialize a bare repository first for full control, then open it as non-bare
         pygit2.init_repository(self.repo_path_str, bare=False)
         self.repo = pygit2.Repository(self.repo_path_str)
 
-        # Set up a default signature if none is configured globally for git
         try:
             user_name = self.repo.config["user.name"]
             user_email = self.repo.config["user.email"]
-        except KeyError: # If not configured
+        except KeyError:
             user_name = None
             user_email = None
 
         if not user_name or not user_email:
-            # Use constants from conftest.py
             self.repo.config["user.name"] = TEST_USER_NAME
             self.repo.config["user.email"] = TEST_USER_EMAIL
+        self.signature = create_test_signature(self.repo)
 
-        self.signature = create_test_signature(self.repo) # Uses conftest.create_test_signature
-
-    def _create_file(self, repo: pygit2.Repository, filepath: str, content: str): # Renaming to avoid conflict
-        """Local helper, distinct from conftest_create_file if needed, or use conftest_create_file."""
-        # This is the original _create_file from this test module.
-        # It's kept here if its specific implementation is important,
-        # or can be replaced by conftest_create_file if identical.
-        # For now, let's assume it might be slightly different or just kept for locality.
+    def _create_file(self, repo: pygit2.Repository, filepath: str, content: str):
         full_path = Path(repo.workdir) / filepath
         full_path.parent.mkdir(parents=True, exist_ok=True)
         full_path.write_text(content, encoding="utf-8")
 
     def _make_commit(self, repo: pygit2.Repository, message: str, files_to_change: dict = None) -> pygit2.Oid:
-        """
-        Robust helper to create a commit on the current branch.
-        'files_to_change' is a dict of {filepath: content}.
-        This version remains local as it uses self.signature.
-        """
         if files_to_change is None:
             files_to_change = {}
-
         repo.index.read()
         for filepath, content in files_to_change.items():
-            self._create_file(repo, filepath, content) # Uses the local _create_file
+            self._create_file(repo, filepath, content)
             repo.index.add(filepath)
         repo.index.write()
-
         tree = repo.index.write_tree()
         parents = [] if repo.head_is_unborn else [repo.head.target]
-        # Uses self.signature which is set up with create_test_signature from conftest
         signature = self.signature
-
         return repo.create_commit("HEAD", signature, signature, message, tree, parents)
 
     def tearDown(self):
-        # Unlock files before removing (Windows specific issue with pygit2)
         if os.name == 'nt':
             for root, dirs, files in os.walk(self.repo_path_str):
                 for name in files:
                     try:
                         filepath = os.path.join(root, name)
                         os.chmod(filepath, 0o777)
-                    except OSError: # some files might be git internal and not modifiable
+                    except OSError:
                         pass
         shutil.rmtree(self.repo_path_obj)
 
+class TestRevertCommitCore(GitWriteCoreTestCaseBase):
     def test_revert_successful_clean(self):
         # Commit 1
-        _make_commit(self.repo, "Initial content C1", {"file_a.txt": "Content A from C1"})
+        self._make_commit(self.repo, "Initial content C1", {"file_a.txt": "Content A from C1"})
         # Verify file in workdir
         file_a_path = self.repo_path_obj / "file_a.txt"
         self.assertTrue(file_a_path.exists())
         self.assertEqual(file_a_path.read_text(encoding="utf-8"), "Content A from C1")
 
         # Commit 2
-        c2_oid = self._make_commit(self.repo, "Second change C2", {"file_a.txt": "Content A modified by C2", "file_b.txt": "Content B from C2"}) # Uses local _make_commit
+        c2_oid = self._make_commit(self.repo, "Second change C2", {"file_a.txt": "Content A modified by C2", "file_b.txt": "Content B from C2"})
         self.assertEqual(file_a_path.read_text(encoding="utf-8"), "Content A modified by C2")
         self.assertTrue((self.repo_path_obj / "file_b.txt").exists())
 
@@ -133,7 +115,7 @@ class TestRevertCommitCore(unittest.TestCase):
 
 
     def test_revert_commit_not_found(self):
-        self._make_commit(self.repo, "Initial commit", {"dummy.txt": "content"}) # Uses local _make_commit
+        self._make_commit(self.repo, "Initial commit", {"dummy.txt": "content"})
         non_existent_sha = "abcdef1234567890abcdef1234567890abcdef12"
         with self.assertRaisesRegex(CommitNotFoundError, f"Commit '{non_existent_sha}' not found"):
             revert_commit(self.repo_path_str, non_existent_sha)
@@ -149,13 +131,13 @@ class TestRevertCommitCore(unittest.TestCase):
 
     def test_revert_results_in_conflict(self):
         # Commit 1: Base file
-        self._make_commit(self.repo, "C1: Base file_c.txt", {"file_c.txt": "line1\nline2\nline3"}) # Uses local _make_commit
+        self._make_commit(self.repo, "C1: Base file_c.txt", {"file_c.txt": "line1\nline2\nline3"})
 
         # Commit 2: First modification to line2
-        c2_oid = self._make_commit(self.repo, "C2: Modify line2 in file_c.txt", {"file_c.txt": "line1\nMODIFIED_BY_COMMIT_2\nline3"}) # Uses local _make_commit
+        c2_oid = self._make_commit(self.repo, "C2: Modify line2 in file_c.txt", {"file_c.txt": "line1\nMODIFIED_BY_COMMIT_2\nline3"})
 
         # Commit 3 (HEAD): Conflicting modification to line2
-        c3_oid = self._make_commit(self.repo, "C3: Modify line2 again in file_c.txt", {"file_c.txt": "line1\nMODIFIED_BY_COMMIT_3\nline3"}) # Uses local _make_commit
+        c3_oid = self._make_commit(self.repo, "C3: Modify line2 again in file_c.txt", {"file_c.txt": "line1\nMODIFIED_BY_COMMIT_3\nline3"})
         self.assertEqual(self.repo.head.target, c3_oid)
 
         # Attempt to revert Commit 2 - this should cause a conflict
@@ -184,7 +166,7 @@ class TestRevertCommitCore(unittest.TestCase):
         # Merge feature into main: C3 (merge commit)
 
         # C1 on main
-        c1_main_oid = self._make_commit(self.repo, "C1 on main", {"file_main.txt": "Main C1", "shared.txt": "Shared C1"}) # Uses local _make_commit
+        c1_main_oid = self._make_commit(self.repo, "C1 on main", {"file_main.txt": "Main C1", "shared.txt": "Shared C1"})
         c1_main_commit = self.repo.get(c1_main_oid)
 
         # Ensure 'main' branch exists and HEAD points to it (or default branch if not 'main')
@@ -202,10 +184,10 @@ class TestRevertCommitCore(unittest.TestCase):
 
         # Create feature branch from C1
         feature_branch_name = "feature/test_merge_clean"
-        _create_and_checkout_branch(self.repo, feature_branch_name, c1_main_commit) # Uses local _create_and_checkout_branch
+        _create_and_checkout_branch(self.repo, feature_branch_name, c1_main_commit)
 
         # C1_F1 on feature branch
-        c1_f1_oid = self._make_commit(self.repo, "C1_F1 on feature", {"file_feature.txt": "Feature C1_F1", "shared.txt": "Shared C1 modified by Feature"}) # Uses local _make_commit
+        c1_f1_oid = self._make_commit(self.repo, "C1_F1 on feature", {"file_feature.txt": "Feature C1_F1", "shared.txt": "Shared C1 modified by Feature"})
         self.assertEqual(self.repo.head.target, c1_f1_oid)
 
         # Switch back to main branch
@@ -216,7 +198,7 @@ class TestRevertCommitCore(unittest.TestCase):
 
 
         # C2 on main
-        c2_main_oid = self._make_commit(self.repo, "C2 on main", {"file_main.txt": "Main C1 then C2"}) # Uses local _make_commit
+        c2_main_oid = self._make_commit(self.repo, "C2 on main", {"file_main.txt": "Main C1 then C2"})
         self.assertEqual(self.repo.head.target, c2_main_oid)
 
         # Merge feature branch into main - this will be C3 (merge commit)
@@ -265,7 +247,7 @@ class TestRevertCommitCore(unittest.TestCase):
 
     def test_revert_merge_commit_with_conflict(self):
         # C1 on main
-        c1_main_oid = self._make_commit(self.repo, "C1: main", {"file.txt": "line1\nline2 from main C1\nline3"}) # Uses local _make_commit
+        c1_main_oid = self._make_commit(self.repo, "C1: main", {"file.txt": "line1\nline2 from main C1\nline3"})
         c1_main_commit = self.repo.get(c1_main_oid)
 
         # Ensure 'main' branch exists and HEAD points to it
@@ -277,11 +259,11 @@ class TestRevertCommitCore(unittest.TestCase):
 
 
         # Create 'dev' branch from C1
-        _create_and_checkout_branch(self.repo, "dev", c1_main_commit) # Uses local _create_and_checkout_branch
+        _create_and_checkout_branch(self.repo, "dev", c1_main_commit)
         self.assertEqual(self.repo.head.shorthand, "dev")
 
         # C2 on dev: Modify line2
-        c2_dev_oid = self._make_commit(self.repo, "C2: dev modify line2", {"file.txt": "line1\nline2 MODIFIED by dev C2\nline3"}) # Uses local _make_commit
+        c2_dev_oid = self._make_commit(self.repo, "C2: dev modify line2", {"file.txt": "line1\nline2 MODIFIED by dev C2\nline3"})
 
         # Switch back to main
         main_branch_ref = self.repo.branches["main"]
@@ -290,7 +272,7 @@ class TestRevertCommitCore(unittest.TestCase):
         self.assertEqual(self.repo.head.shorthand, "main")
 
         # C3 on main: Modify line2 (different from dev's C2)
-        c3_main_oid = self._make_commit(self.repo, "C3: main modify line2 differently", {"file.txt": "line1\nline2 MODIFIED by main C3\nline3"}) # Uses local _make_commit
+        c3_main_oid = self._make_commit(self.repo, "C3: main modify line2 differently", {"file.txt": "line1\nline2 MODIFIED by main C3\nline3"})
 
         # Merge dev into main (C4 - merge commit) - this will cause a conflict that we resolve
         self.repo.merge(c2_dev_oid)
@@ -323,7 +305,7 @@ class TestRevertCommitCore(unittest.TestCase):
         c5_main_content_parts[2] = "line2 MODIFIED by dev C2 AND THEN BY C5" # Directly modify the line from dev's side of the merge
         c5_main_content = "\n".join(c5_main_content_parts)
 
-        c5_main_oid = self._make_commit(self.repo, "C5: main directly modifies dev's merged line", {"file.txt": c5_main_content}) # Uses local _make_commit
+        c5_main_oid = self._make_commit(self.repo, "C5: main directly modifies dev's merged line", {"file.txt": c5_main_content})
         self.assertEqual((self.repo_path_obj / "file.txt").read_text(encoding="utf-8"), c5_main_content)
 
 
@@ -348,52 +330,8 @@ if __name__ == '__main__':
     unittest.main()
 
 
-class TestSaveChangesCore(unittest.TestCase):
-    def setUp(self):
-        self.repo_path_obj = Path(tempfile.mkdtemp(prefix="gitwrite_test_save_"))
-        self.repo_path_str = str(self.repo_path_obj)
-        pygit2.init_repository(self.repo_path_str, bare=False)
-        self.repo = pygit2.Repository(self.repo_path_str)
-
-        try:
-            user_name = self.repo.config["user.name"]
-            user_email = self.repo.config["user.email"]
-        except KeyError:
-            user_name = None
-            user_email = None
-
-        if not user_name or not user_email:
-            self.repo.config["user.name"] = TEST_USER_NAME
-            self.repo.config["user.email"] = TEST_USER_EMAIL
-
-        self.signature = create_test_signature(self.repo)
-
-    def tearDown(self):
-        # Attempt to force remove read-only files, especially on Windows
-        for root, dirs, files in os.walk(self.repo_path_obj, topdown=False):
-            for name in files:
-                filepath = os.path.join(root, name)
-                try:
-                    os.chmod(filepath, 0o777) # Make it writable
-                    os.remove(filepath)
-                except OSError as e:
-                    print(f"Warning: Could not remove file {filepath}: {e}") # Or log
-            for name in dirs:
-                dirpath = os.path.join(root, name)
-                try:
-                    os.rmdir(dirpath)
-                except OSError as e:
-                    print(f"Warning: Could not remove directory {dirpath}: {e}") # Or log
-        try:
-            shutil.rmtree(self.repo_path_obj)
-        except OSError as e:
-            print(f"Warning: shutil.rmtree failed for {self.repo_path_obj}: {e}")
-
-
-        # The _create_file method was part of TestSaveChangesCore but is now a module-level _create_file. --> Now using self._create_file which is local, or conftest_create_file.
-        # The _create_commit method was part of TestSaveChangesCore but is now module-level _make_commit. --> Now using self._make_commit which is local.
-    # The _get_file_content_from_commit method will be kept here for assertions if needed.
-    # A _read_file_content_from_workdir will be added for convenience in assertions.
+class TestSaveChangesCore(GitWriteCoreTestCaseBase):
+    # setUp, tearDown, _make_commit, _create_file are inherited from GitWriteCoreTestCaseBase
 
     def _get_file_content_from_commit(self, commit_oid: pygit2.Oid, filepath: str) -> str:
         commit = self.repo.get(commit_oid)
