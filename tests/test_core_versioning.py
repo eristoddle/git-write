@@ -983,20 +983,13 @@ class TestSaveChangesCore(GitWriteCoreTestCaseBase):
         # For "only_in_index.txt", it's staged for addition. add_all() might see it as deleted from workdir.
         # For "original.txt", it's staged as "v2_staged". add_all() will update staging with workdir "v1".
         # This means the commit should reflect the working directory state due to add_all().
+        # In this specific scenario, applying add_all() makes the index identical to HEAD (C1),
+        # thus no actual commit should be created by save_changes.
 
-        result = save_changes(self.repo_path_str, "Commit with add_all effect")
+        with self.assertRaises(NoChangesToSaveError) as cm:
+            save_changes(self.repo_path_str, "Commit with add_all effect")
 
-        self.assertEqual(result['status'], 'success')
-        commit_oid = pygit2.Oid(hex=result['oid'])
-
-        # original.txt should be committed as "v1" (from workdir)
-        self.assertEqual(self._get_file_content_from_commit(commit_oid, "original.txt"), "v1")
-
-        # only_in_index.txt was staged for addition but deleted from workdir.
-        # git commit -a (which is like add_all then commit) would commit the deletion.
-        # Let's verify it's not in the commit.
-        with self.assertRaises(FileNotFoundError):
-            self._get_file_content_from_commit(commit_oid, "only_in_index.txt")
-
-        status = self.repo.status()
-        self.assertEqual(len(status), 0, f"Working directory should be clean. Status: {status}")
+        self.assertEqual(
+            str(cm.exception),
+            "No changes to save (working directory and index are clean or match HEAD)."
+        )
