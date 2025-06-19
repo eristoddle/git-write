@@ -323,17 +323,22 @@ def list_gitignore_patterns(repo_path_str: str) -> Dict[str, Any]:
 
 
 def get_conflicting_files(conflicts_iterator) -> List[str]: # Copied from versioning.py for now
-    """Helper function to extract path names from conflicts iterator."""
-    conflicting_paths = []
+    """Helper function to extract path names from conflicts iterator.
+    Assumes conflicts_iterator yields tuples of (ancestor_entry, our_entry, their_entry).
+    """
+    conflicting_paths = set() # Use a set to store paths to ensure uniqueness
     if conflicts_iterator:
-        for conflict_entry in conflicts_iterator:
-            if conflict_entry.our:
-                conflicting_paths.append(conflict_entry.our.path)
-            elif conflict_entry.their:
-                conflicting_paths.append(conflict_entry.their.path)
-            elif conflict_entry.ancestor:
-                conflicting_paths.append(conflict_entry.ancestor.path)
-    return conflicting_paths
+        for conflict_tuple in conflicts_iterator:
+            # Each element of the tuple is an IndexEntry or None
+            ancestor_entry, our_entry, their_entry = conflict_tuple
+
+            if our_entry is not None:
+                conflicting_paths.add(our_entry.path)
+            elif their_entry is not None: # Use elif as the path is the same for a single conflict
+                conflicting_paths.add(their_entry.path)
+            elif ancestor_entry is not None:
+                conflicting_paths.add(ancestor_entry.path)
+    return list(conflicting_paths)
 
 
 def sync_repository(repo_path_str: str, remote_name: str = "origin", branch_name_opt: Optional[str] = None, push: bool = True, allow_no_push: bool = False) -> dict:
@@ -489,6 +494,8 @@ def sync_repository(repo_path_str: str, remote_name: str = "origin", branch_name
                                 [local_commit_oid, their_commit_oid] # Parents
                             )
                             repo.state_cleanup()
+                                # Explicitly checkout the branch after merge and cleanup to ensure workdir and state are pristine
+                            repo.checkout(local_branch_ref.name, strategy=pygit2.GIT_CHECKOUT_FORCE)
                             result_summary["local_update_status"]["type"] = "merged_ok"
                             result_summary["local_update_status"]["message"] = f"Successfully merged remote changes into '{local_branch_name}'."
                             result_summary["local_update_status"]["commit_oid"] = str(new_merge_commit_oid)

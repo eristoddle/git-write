@@ -212,3 +212,30 @@ Proceed with Phase 1, Task 1.2, which involves moving the first piece of logic (
 - During the implementation of `sync` CLI tests, some `revert` CLI tests in `tests/test_main.py` were accidentally removed due to an overly broad search pattern in the `replace_with_git_merge_diff` tool. This needs to be addressed in a separate action to restore the `revert` CLI tests. The focus of this task was solely the `save` and `sync` command refactoring and testing, which was successful.
 
 **Next Steps:** Update `Implementation_Plan.md`.
+---
+## Test Suite Fixes - `tests/test_core_repository.py`
+
+**Agent:** Jules
+**Task Reference:** Fix test failures in `tests/test_core_repository.py` after `_make_commit` refactoring.
+
+**Summary:**
+A significant number of test failures (initially 17) arose in `tests/test_core_repository.py` after the `sync_repository` function was added and its associated test suite was created. These failures were primarily traced back to the test helper function `_make_commit` within `tests/test_core_repository.py` itself, which was also used by many tests for `sync_repository`.
+
+**Problem with `_make_commit`:**
+The original `_make_commit` test helper had flawed logic for handling branch creation and switching. It would attempt to switch branches by calling `repo.set_head(ref_name)` without an accompanying `repo.checkout()` to update the working directory and index. This led to inconsistencies in the repository state, causing many tests that relied on this helper for setting up specific Git scenarios to fail.
+
+**Solution:**
+1.  **Refactor `_make_commit`:** The problematic `_make_commit` was refactored into three more focused and correctly implemented helper functions:
+    *   `_create_branch(self, repo: pygit2.Repository, branch_name: str, from_commit: pygit2.Commit)`: Handles only branch creation.
+    *   `_checkout_branch(self, repo: pygit2.Repository, branch_name: str)`: Handles branch checkout, including updating HEAD and working directory.
+    *   A new, simplified `_make_commit(self, repo: pygit2.Repository, filename: str, content: str, message: str) -> pygit2.Oid`: This version now only creates a commit on the *currently checked-out* branch. It no longer attempts any branch switching.
+
+2.  **Update Test Methods:** All test methods in `tests/test_core_repository.py` that previously used the old `_make_commit` with a `branch_name` parameter were updated to use the new set of helpers explicitly:
+    *   To create/commit to a new branch: First call `_make_commit` (if it's the first commit on HEAD), then `_create_branch`, then `_checkout_branch`. Or, `_create_branch` from an existing commit, `_checkout_branch`, then `_make_commit`.
+    *   To commit to an existing branch: Explicitly call `_checkout_branch` first, then `_make_commit`.
+
+**Outcome:**
+This refactoring of the test helpers and the subsequent updates to the test methods resolved the vast majority of the test failures. After these changes and further iterative debugging of specific test logic (related to bare repository setups, mock paths, and state assertions), 16 out of 17 tests in `tests/test_core_repository.py` are now believed to be passing. One test, `test_sync_push_failure_non_fast_forward`, still has issues related to reliably setting up its initial state on a bare remote repository.
+
+**Status:** Mostly Completed (16/17 tests fixed).
+---
