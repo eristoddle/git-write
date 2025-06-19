@@ -20,7 +20,16 @@ class BranchNotFoundError(GitWriteError):
 
 class MergeConflictError(GitWriteError):
     """Raised when a merge or revert results in conflicts."""
-    pass
+    def __init__(self, message: str, conflicting_files: list[str] | None = None):
+        super().__init__(message)
+        self.message = message # Store message separately for direct access if needed
+        self.conflicting_files = conflicting_files if conflicting_files is not None else []
+
+    def __str__(self):
+        # Override __str__ to include conflicting files if they exist
+        if self.conflicting_files:
+            return f"{self.message} Conflicting files: {', '.join(self.conflicting_files)}"
+        return self.message
 
 class TagAlreadyExistsError(GitWriteError):
     """Raised when a tag with the given name already exists."""
