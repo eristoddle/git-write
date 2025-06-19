@@ -2466,652 +2466,6 @@ Consider the task: "Load and inspect training and validation datasets."
 ```
 </file>
 
-<file path="tests/test_core_branching.py">
-import pytest
-import pygit2
-import os
-import shutil
-from pathlib import Path
-from typing import List, Dict, Any # Added for fixture return type hint consistency
-
-# Corrected import path for core modules
-from gitwrite_core.branching import (
-    create_and_switch_branch,
-    list_branches,
-    switch_to_branch,
-    merge_branch_into_current # Added for merge tests
-)
-from gitwrite_core.exceptions import (
-    RepositoryNotFoundError,
-    RepositoryEmptyError,
-    BranchAlreadyExistsError,
-    BranchNotFoundError,
-    MergeConflictError, # Added for merge tests
-    GitWriteError
-)
-
-# Helper to create a basic commit if needed by tests
-# This helper is used by multiple test classes in this file.
-# Ensure it can create commits on current HEAD, not just for unborn HEAD.
-def make_commit_helper(repo_path_str: str, filename: str = "default_file.txt", content: str = "Default content", msg: str = "Default commit message", branch_name: Optional[str] = None):
-    repo = pygit2.Repository(repo_path_str)
-
-    # If a branch name is provided, ensure we are on it, or create it if it doesn't exist from current HEAD
-    if branch_name:
-        if branch_name not in repo.branches.local:
-            if repo.head_is_unborn:
-                # Cannot create branch if HEAD is unborn and we need to commit first.
-                # This case should be handled by initial make_initial_commit or specific setup.
-                # For simplicity, this helper will assume if branch_name is given, HEAD is born.
-                 pass # Fall through, commit will be on current HEAD or fail if unborn.
-            else:
-                repo.branches.local.create(branch_name, repo.head.peel(pygit2.Commit))
-
-        if repo.head.shorthand != branch_name: # If HEAD is not the target branch
-            branch_ref = repo.branches.local.get(branch_name)
-            if branch_ref:
-                repo.checkout(branch_ref.name)
-                repo.set_head(branch_ref.name) # Ensure HEAD symbolic ref is updated
-            else: # Should not happen if create worked, but as a fallback:
-                pass # Commit on current branch
-
-    # Create file and commit
-    full_file_path = Path(repo.workdir) / filename
-    full_file_path.parent.mkdir(parents=True, exist_ok=True) # Ensure parent dirs exist
-    full_file_path.write_text(content)
-
-    repo.index.add(filename)
-    repo.index.write()
-
-    try:
-        author = repo.default_signature
-    except: # If default_signature is not set (e.g. in some test environments)
-        author = pygit2.Signature("Test Author", "test@example.com")
-    committer = author
-
-    tree = repo.index.write_tree()
-    parents = [] if repo.head_is_unborn else [repo.head.target]
-
-    commit_oid = repo.create_commit("HEAD", author, committer, msg, tree, parents)
-    return commit_oid
-
-
-# Original make_initial_commit, specialized for the first commit.
-# make_commit_helper is more general for subsequent commits.
-# This helper is used by multiple test classes in this file.
-def make_initial_commit(repo_path_str: str, filename: str = "initial.txt", content: str = "Initial", msg: str = "Initial commit"):
-    repo = pygit2.Repository(repo_path_str)
-    if repo.head_is_unborn: # Check if HEAD is unborn before attempting to create a commit
-        file_path = Path(repo.workdir) / filename
-        file_path.write_text(content)
-        repo.index.add(filename)
-        repo.index.write()
-        author = pygit2.Signature("Test Author", "test@example.com")
-        committer = author
-        tree = repo.index.write_tree()
-        repo.create_commit("HEAD", author, committer, msg, tree, [])
-
-@pytest.fixture
-def test_repo(tmp_path: Path) -> Path:
-    repo_path = tmp_path / "test_git_repo"
-    repo_path.mkdir()
-    pygit2.init_repository(str(repo_path), bare=False)
-    # Make an initial commit so HEAD is born for most tests
-    make_initial_commit(str(repo_path))
-    return repo_path
-
-@pytest.fixture
-def empty_test_repo(tmp_path: Path) -> Path:
-    repo_path = tmp_path / "empty_git_repo"
-    repo_path.mkdir()
-    pygit2.init_repository(str(repo_path), bare=False)
-    return repo_path
-
-@pytest.fixture
-def bare_test_repo(tmp_path: Path) -> Path:
-    repo_path = tmp_path / "bare_git_repo.git"
-    # pygit2.init_repository with bare=True does not create the directory.
-    # repo_path.mkdir() # Not needed.
-    pygit2.init_repository(str(repo_path), bare=True)
-    return repo_path
-
-class TestCreateAndSwitchBranch:
-    def test_success(self, test_repo: Path):
-        branch_name = "new-feature"
-        result = create_and_switch_branch(str(test_repo), branch_name)
-        assert result['status'] == 'success'
-        assert result['branch_name'] == branch_name
-        assert 'head_commit_oid' in result
-
-        repo = pygit2.Repository(str(test_repo))
-        assert repo.head.shorthand == branch_name
-        assert not repo.head_is_detached
-        assert repo.lookup_branch(branch_name) is not None
-
-    def test_error_repo_not_found(self, tmp_path: Path):
-        non_existent_path = tmp_path / "non_existent_repo"
-        # Ensure the directory does not exist for a clean test
-        if non_existent_path.exists():
-            shutil.rmtree(non_existent_path)
-
-        with pytest.raises(RepositoryNotFoundError):
-            create_and_switch_branch(str(non_existent_path), "any-branch")
-
-    def test_error_bare_repo(self, bare_test_repo: Path):
-        with pytest.raises(GitWriteError, match="Operation not supported in bare repositories"):
-            create_and_switch_branch(str(bare_test_repo), "any-branch")
-
-    def test_error_empty_repo_unborn_head(self, empty_test_repo: Path):
-        repo = pygit2.Repository(str(empty_test_repo))
-        assert repo.head_is_unborn # This is the key check for this test case
-
-        # The core function's message is "Cannot create branch: HEAD is unborn. Commit changes first."
-        # Let's match that specific message.
-        with pytest.raises(RepositoryEmptyError, match="Cannot create branch: HEAD is unborn. Commit changes first."):
-            create_and_switch_branch(str(empty_test_repo), "any-branch")
-
-    def test_error_branch_already_exists(self, test_repo: Path):
-        branch_name = "existing-branch"
-        repo = pygit2.Repository(str(test_repo))
-        # Create the branch directly for setup
-        head_commit = repo.head.peel(pygit2.Commit)
-        repo.branches.local.create(branch_name, head_commit)
-
-        with pytest.raises(BranchAlreadyExistsError, match=f"Branch '{branch_name}' already exists."):
-            create_and_switch_branch(str(test_repo), branch_name)
-
-    def test_branch_name_with_slashes(self, test_repo: Path):
-        # Git allows slashes in branch names, e.g. "feature/login"
-        branch_name = "feature/user-login"
-        result = create_and_switch_branch(str(test_repo), branch_name)
-        assert result['status'] == 'success'
-        assert result['branch_name'] == branch_name
-
-        repo = pygit2.Repository(str(test_repo))
-        assert repo.head.shorthand == branch_name # pygit2 shorthand handles this
-
-    def test_checkout_safe_strategy(self, test_repo: Path):
-        # This test primarily ensures the function completes successfully, implying
-        # the GIT_CHECKOUT_SAFE strategy didn't cause an issue on a clean repo.
-        # A deeper test of GIT_CHECKOUT_SAFE's behavior (e.g., with a dirty workdir)
-        # would require more setup and depends on how the core function is expected
-        # to handle such cases (currently it would likely bubble up a pygit2 error).
-        branch_name = "safe-checkout-branch"
-        result = create_and_switch_branch(str(test_repo), branch_name)
-        assert result['status'] == 'success'
-        assert result['branch_name'] == branch_name
-        # Add a check to ensure the branch is indeed active
-        repo = pygit2.Repository(str(test_repo))
-        assert repo.head.shorthand == branch_name
-
-    # Consider adding a test for when HEAD is detached, though
-    # `repo.head.peel(pygit2.Commit)` should still work if HEAD points to a commit.
-    # The current `head_is_unborn` check is the primary guard for invalid HEAD states.
-    # If HEAD were detached but pointed to a valid commit, branch creation should still succeed.
-    def test_success_from_detached_head(self, test_repo: Path):
-        repo = pygit2.Repository(str(test_repo))
-        # Detach HEAD by checking out the current HEAD commit directly
-        current_commit_oid = repo.head.target
-        repo.set_head(current_commit_oid) # This detaches HEAD
-        assert repo.head_is_detached
-
-        branch_name = "branch-from-detached"
-        result = create_and_switch_branch(str(test_repo), branch_name)
-
-        assert result['status'] == 'success'
-        assert result['branch_name'] == branch_name
-        assert result['head_commit_oid'] == str(current_commit_oid) # New branch points to the same commit
-
-        # Verify repo state
-        updated_repo = pygit2.Repository(str(test_repo))
-        assert not updated_repo.head_is_detached
-        assert updated_repo.head.shorthand == branch_name
-        assert updated_repo.lookup_branch(branch_name) is not None
-        assert updated_repo.head.target == current_commit_oid
-
-    # Test case for when repo.head.peel(pygit2.Commit) might fail for other reasons
-    # This is a bit harder to simulate without deeper pygit2 manipulation or specific repo states.
-    # The `head_is_unborn` check in the core function aims to prevent `peel` errors.
-    # If `peel` still fails, it raises pygit2.GitError, wrapped into GitWriteError by the core function.
-    # One scenario could be if HEAD points to a non-commit object (e.g., a tag object directly, not a commit).
-    # This is less common for `repo.head` but possible.
-
-    # Let's refine the `make_initial_commit` to be more robust for the tests.
-    # The one in the prompt is good, just a small tweak in the test for `test_error_empty_repo_unborn_head`
-    # to match the exact error message from the core function.
-    # I've also added a test for creating a branch from a detached HEAD.
-    # And a small cleanup in `test_error_repo_not_found` to ensure the path doesn't exist.
-
-@pytest.fixture
-def configure_git_user():
-    """Fixture to configure git user.name and user.email for a repo instance."""
-    def _configure(repo: pygit2.Repository):
-        config = repo.config
-        config.set_multivar("user.name", "Test User")
-        config.set_multivar("user.email", "test@example.com")
-    return _configure
-
-@pytest.fixture
-def repo_with_remote_branches(tmp_path: Path) -> Path:
-    local_repo_path = tmp_path / "local_for_remote_branch_tests"
-    local_repo_path.mkdir()
-    local_repo = pygit2.init_repository(str(local_repo_path))
-    make_initial_commit(str(local_repo_path), msg="Initial commit on main") # Creates and commits to main
-
-    bare_remote_path = tmp_path / "remote_server_for_branch_tests.git"
-    pygit2.init_repository(str(bare_remote_path), bare=True)
-
-    origin_remote = local_repo.remotes.create("origin", str(bare_remote_path))
-
-    # Create feature_a, commit, push to origin/feature_a
-    main_commit = local_repo.head.peel(pygit2.Commit)
-    local_repo.branches.local.create("feature-a", main_commit)
-    local_repo.checkout("refs/heads/feature-a")
-    make_initial_commit(str(local_repo_path), filename="fa.txt", content="feature-a content", msg="Commit on feature-a")
-    origin_remote.push(["refs/heads/feature-a:refs/heads/feature-a"])
-
-    # Create feature-b, commit, push to origin/feature-b
-    local_repo.checkout(local_repo.branches.local['main'].name) # Back to main
-    main_commit_again = local_repo.head.peel(pygit2.Commit) # Re-peel main's commit
-    local_repo.branches.local.create("feature-b", main_commit_again)
-    local_repo.checkout("refs/heads/feature-b")
-    make_initial_commit(str(local_repo_path), filename="fb.txt", content="feature-b content", msg="Commit on feature-b")
-    origin_remote.push(["refs/heads/feature-b:refs/heads/feature-b"])
-
-    # Create a branch that will be pushed with a full-like name to simulate "origin/special-feature" on remote
-    # This local branch name is "origin-special-feature" to avoid slash issues locally if not intended.
-    local_repo.checkout(local_repo.branches.local['main'].name) # Back to main
-    main_commit_final = local_repo.head.peel(pygit2.Commit)
-    local_repo.branches.local.create("origin-special-feature", main_commit_final)
-    local_repo.checkout("refs/heads/origin-special-feature")
-    make_initial_commit(str(local_repo_path), filename="osf.txt", content="osf content", msg="Commit on origin-special-feature")
-    # Push this local branch to a remote branch named "origin/special-feature"
-    origin_remote.push(["refs/heads/origin-special-feature:refs/heads/origin/special-feature"])
-
-
-    # Return to main branch in local repo
-    local_repo.checkout(local_repo.branches.local['main'].name)
-
-    # For some tests, we might want local 'feature-a' deleted
-    # This can be done in the specific test method if needed.
-    # e.g., local_repo.branches.local.delete("feature-a")
-
-    return local_repo_path
-
-
-class TestListBranches:
-    def test_list_branches_success(self, test_repo: Path):
-        repo = pygit2.Repository(str(test_repo)) # test_repo has 'main' by default from make_initial_commit
-
-        # Create a couple more branches
-        main_commit = repo.head.peel(pygit2.Commit)
-        repo.branches.local.create("feature-a", main_commit)
-        repo.branches.local.create("hotfix/b", main_commit) # Branch with slash
-
-        # Switch to feature-a to make it current
-        repo.checkout(repo.branches.local["feature-a"].name)
-        repo.set_head(repo.branches.local["feature-a"].name)
-
-        result = list_branches(str(test_repo))
-
-        assert isinstance(result, list)
-        assert len(result) == 3 # main, feature-a, hotfix/b
-
-        expected_names = ["feature-a", "hotfix/b", "main"] # Sorted order
-        actual_names = [b['name'] for b in result]
-        assert actual_names == expected_names
-
-        current_found = False
-        for branch_data in result:
-            assert 'name' in branch_data
-            assert 'is_current' in branch_data
-            assert 'target_oid' in branch_data
-            if branch_data['name'] == "feature-a":
-                assert branch_data['is_current'] is True
-                current_found = True
-            else:
-                assert branch_data['is_current'] is False
-        assert current_found, "Current branch 'feature-a' not marked as current."
-
-    def test_list_branches_empty_repo(self, empty_test_repo: Path):
-        result = list_branches(str(empty_test_repo))
-        assert result == []
-
-    def test_list_branches_bare_repo(self, bare_test_repo: Path):
-        with pytest.raises(GitWriteError, match="Operation not supported in bare repositories"):
-            list_branches(str(bare_test_repo))
-
-    def test_list_branches_repo_not_found(self, tmp_path: Path):
-        non_existent_path = tmp_path / "non_existent_repo_for_list"
-        if non_existent_path.exists(): shutil.rmtree(non_existent_path) # ensure
-        with pytest.raises(RepositoryNotFoundError):
-            list_branches(str(non_existent_path))
-
-    def test_list_branches_detached_head(self, test_repo: Path):
-        repo = pygit2.Repository(str(test_repo))
-        # Detach HEAD
-        repo.set_head(repo.head.target)
-        assert repo.head_is_detached
-
-        # Add another branch to ensure local branches are listed
-        main_commit = repo.lookup_reference("refs/heads/main").peel(pygit2.Commit)
-        repo.branches.local.create("feature-c", main_commit)
-
-        result = list_branches(str(test_repo))
-        assert isinstance(result, list)
-        # Expecting 'main' and 'feature-c'
-        assert len(result) >= 1 # test_repo creates 'main'
-
-        found_main = False
-        for branch_data in result:
-            assert branch_data['is_current'] is False, "No branch should be current in detached HEAD state."
-            if branch_data['name'] == 'main':
-                found_main = True
-        assert found_main
-
-
-class TestSwitchToBranch:
-    def test_switch_success_local_branch(self, test_repo: Path):
-        repo = pygit2.Repository(str(test_repo)) # On 'main'
-        main_commit = repo.head.peel(pygit2.Commit)
-        repo.branches.local.create("develop", main_commit)
-
-        result = switch_to_branch(str(test_repo), "develop")
-
-        assert result['status'] == 'success'
-        assert result['branch_name'] == "develop"
-        assert result['previous_branch_name'] == "main" # or specific default from fixture
-        assert result.get('is_detached') is False
-
-        updated_repo = pygit2.Repository(str(test_repo))
-        assert not updated_repo.head_is_detached
-        assert updated_repo.head.shorthand == "develop"
-
-    def test_switch_already_on_branch(self, test_repo: Path):
-        # test_repo is already on 'main' (or default branch from make_initial_commit)
-        current_branch_name = pygit2.Repository(str(test_repo)).head.shorthand
-        result = switch_to_branch(str(test_repo), current_branch_name)
-        assert result['status'] == 'already_on_branch'
-        assert result['branch_name'] == current_branch_name
-
-    def test_switch_to_remote_tracking_branch_origin(self, repo_with_remote_branches: Path):
-        # 'feature-a' was pushed to origin/feature-a.
-        # Delete local 'feature-a' to ensure we are checking out from remote.
-        local_repo = pygit2.Repository(str(repo_with_remote_branches))
-        if "feature-a" in local_repo.branches.local:
-             local_repo.branches.local.delete("feature-a")
-
-        # Switch to 'feature-a', expecting it to be found via 'origin/feature-a' and result in detached HEAD
-        result = switch_to_branch(str(repo_with_remote_branches), "feature-a")
-
-        assert result['status'] == 'success'
-        # The core function resolves "feature-a" to "origin/feature-a" and branch_name in result is "origin/feature-a"
-        assert result['branch_name'] == "origin/feature-a"
-        assert result.get('is_detached') is True
-
-        updated_repo = pygit2.Repository(str(repo_with_remote_branches))
-        assert updated_repo.head_is_detached
-        # Check if HEAD points to the commit of origin/feature-a
-        remote_branch = updated_repo.branches.remote.get("origin/feature-a")
-        assert remote_branch is not None
-        assert updated_repo.head.target == remote_branch.target
-
-    def test_switch_to_full_remote_tracking_branch_name(self, repo_with_remote_branches: Path):
-        # The fixture pushed local 'origin-special-feature' to remote 'origin/special-feature'
-        # We are testing if user provides "origin/special-feature" directly.
-        full_remote_name = "origin/special-feature"
-        result = switch_to_branch(str(repo_with_remote_branches), full_remote_name)
-
-        assert result['status'] == 'success'
-        assert result['branch_name'] == full_remote_name # Should match the input full name
-        assert result.get('is_detached') is True
-
-        updated_repo = pygit2.Repository(str(repo_with_remote_branches))
-        assert updated_repo.head_is_detached
-        remote_branch = updated_repo.branches.remote.get(full_remote_name)
-        assert remote_branch is not None
-        assert updated_repo.head.target == remote_branch.target
-
-
-    def test_switch_branch_not_found(self, test_repo: Path):
-        with pytest.raises(BranchNotFoundError, match="Branch 'non-existent-branch' not found"):
-            switch_to_branch(str(test_repo), "non-existent-branch")
-
-    def test_switch_bare_repo(self, bare_test_repo: Path):
-        with pytest.raises(GitWriteError, match="Operation not supported in bare repositories"):
-            switch_to_branch(str(bare_test_repo), "anybranch")
-
-    def test_switch_repo_not_found(self, tmp_path: Path):
-        non_existent_path = tmp_path / "non_existent_for_switch"
-        if non_existent_path.exists(): shutil.rmtree(non_existent_path)
-        with pytest.raises(RepositoryNotFoundError):
-            switch_to_branch(str(non_existent_path), "anybranch")
-
-    def test_switch_empty_repo_no_branches_exist(self, empty_test_repo: Path):
-        # Core `switch_to_branch` raises BranchNotFoundError if branch doesn't exist,
-        # or RepositoryEmptyError if the repo is empty and the branch isn't found.
-        with pytest.raises(RepositoryEmptyError, match="Cannot switch branch in an empty repository to non-existent branch 'anybranch'"):
-            switch_to_branch(str(empty_test_repo), "anybranch")
-
-    def test_switch_checkout_failure_dirty_workdir(self, test_repo: Path):
-        repo = pygit2.Repository(str(test_repo)) # On 'main'
-
-        # Create 'develop' branch and switch to it
-        main_commit = repo.head.peel(pygit2.Commit)
-        repo.branches.local.create("develop", main_commit)
-        repo.checkout("refs/heads/develop")
-        repo.set_head("refs/heads/develop")
-        # Commit a file on 'develop' that is different from 'main'
-        # Using make_commit_helper for subsequent commits
-        make_commit_helper(str(test_repo), filename="conflict.txt", content="Version on develop", msg="Add conflict.txt on develop")
-
-        # Switch back to 'main'
-        repo.checkout("refs/heads/main") # Assumes 'main' exists from test_repo fixture
-        repo.set_head("refs/heads/main")
-        # Create the same file on 'main' but with different content (to ensure checkout to develop would modify it)
-        (Path(str(test_repo)) / "conflict.txt").write_text("Version on main - will be changed by user")
-        # DO NOT COMMIT THIS CHANGE ON MAIN. This makes the working dir dirty for 'conflict.txt'.
-
-        # Now try to switch to 'develop'. Checkout should fail due to 'conflict.txt' being modified.
-        with pytest.raises(GitWriteError, match="Checkout failed: Your local changes to tracked files would be overwritten"):
-            switch_to_branch(str(test_repo), "develop")
-
-@pytest.fixture
-def repo_for_merge(tmp_path: Path, configure_git_user) -> Path:
-    repo_path = tmp_path / "repo_for_merge_normal"
-    repo_path.mkdir()
-    repo = pygit2.init_repository(str(repo_path))
-    configure_git_user(repo)
-
-    # C0 - Initial commit on main
-    make_commit_helper(str(repo_path), filename="common.txt", content="line0", msg="C0: Initial on main", branch_name="main")
-    c0_oid = repo.head.target
-
-    # C1 on main
-    make_commit_helper(str(repo_path), filename="main_file.txt", content="main content", msg="C1: Commit on main", branch_name="main")
-
-    # Create feature branch from C0
-    feature_branch = repo.branches.local.create("feature", repo.get(c0_oid))
-    repo.checkout(feature_branch.name) # Switch to feature branch
-    repo.set_head(feature_branch.name)
-    make_commit_helper(str(repo_path), filename="feature_file.txt", content="feature content", msg="C2: Commit on feature", branch_name="feature")
-
-    # Switch back to main for the test starting point
-    main_branch_ref = repo.branches.local.get("main")
-    repo.checkout(main_branch_ref.name)
-    repo.set_head(main_branch_ref.name)
-    return repo_path
-
-@pytest.fixture
-def repo_for_ff_merge(tmp_path: Path, configure_git_user) -> Path:
-    repo_path = tmp_path / "repo_for_ff_merge"
-    repo_path.mkdir()
-    repo = pygit2.init_repository(str(repo_path))
-    configure_git_user(repo)
-
-    # C0 on main
-    make_commit_helper(str(repo_path), filename="main_base.txt", content="base for ff", msg="C0: Base on main", branch_name="main")
-    c0_oid = repo.head.target
-
-    # Create feature branch from C0
-    feature_branch = repo.branches.local.create("feature", repo.get(c0_oid))
-    repo.checkout(feature_branch.name)
-    repo.set_head(feature_branch.name)
-
-    # C1 on feature
-    make_commit_helper(str(repo_path), filename="feature_ff.txt", content="ff content", msg="C1: Commit on feature", branch_name="feature")
-
-    # Switch back to main (which is at C0)
-    main_branch_ref = repo.branches.local.get("main")
-    repo.checkout(main_branch_ref.name)
-    repo.set_head(main_branch_ref.name)
-    return repo_path
-
-@pytest.fixture
-def repo_for_conflict_merge(tmp_path: Path, configure_git_user) -> Path:
-    repo_path = tmp_path / "repo_for_conflict_merge"
-    repo_path.mkdir()
-    repo = pygit2.init_repository(str(repo_path))
-    configure_git_user(repo)
-
-    # C0 - Common ancestor commit on main
-    conflict_file = "conflict.txt"
-    make_commit_helper(str(repo_path), filename=conflict_file, content="Line1\nCommon Line\nLine3", msg="C0: Common ancestor", branch_name="main")
-    c0_oid = repo.head.target
-
-    # C1 on main - modify conflict.txt
-    make_commit_helper(str(repo_path), filename=conflict_file, content="Line1\nChange on Main\nLine3", msg="C1: Change on main", branch_name="main")
-
-    # Create feature branch from C0
-    feature_branch = repo.branches.local.create("feature", repo.get(c0_oid))
-    repo.checkout(feature_branch.name)
-    repo.set_head(feature_branch.name)
-
-    # C2 on feature - modify conflict.txt differently
-    make_commit_helper(str(repo_path), filename=conflict_file, content="Line1\nChange on Feature\nLine3", msg="C2: Change on feature", branch_name="feature")
-
-    # Switch back to main for the test
-    main_branch_ref = repo.branches.local.get("main")
-    repo.checkout(main_branch_ref.name)
-    repo.set_head(main_branch_ref.name)
-    return repo_path
-
-
-class TestMergeBranch:
-    def test_merge_success_normal(self, repo_for_merge: Path, configure_git_user):
-        # repo_for_merge is already on 'main'
-        # configure_git_user has already been applied to repo_for_merge fixture
-        result = merge_branch_into_current(str(repo_for_merge), "feature")
-
-        assert result['status'] == 'merged_ok'
-        assert result['branch_name'] == "feature" # branch that was merged
-        assert result['current_branch'] == "main"  # branch merged into
-        assert 'commit_oid' in result
-
-        repo = pygit2.Repository(str(repo_for_merge))
-        merge_commit = repo.get(result['commit_oid'])
-        assert isinstance(merge_commit, pygit2.Commit)
-        assert len(merge_commit.parents) == 2
-        assert f"Merge branch 'feature' into main" in merge_commit.message
-        assert repo.state == pygit2.GIT_REPOSITORY_STATE_NONE # Check repo state is clean
-
-    def test_merge_success_fast_forward(self, repo_for_ff_merge: Path, configure_git_user):
-        # repo_for_ff_merge is on 'main', 'feature' is ahead.
-        result = merge_branch_into_current(str(repo_for_ff_merge), "feature")
-
-        assert result['status'] == 'fast_forwarded'
-        assert result['branch_name'] == "feature"
-        assert 'commit_oid' in result # This is the commit feature was pointing to
-
-        repo = pygit2.Repository(str(repo_for_ff_merge))
-        assert repo.head.target == repo.branches.local['feature'].target
-        assert repo.head.target.hex == result['commit_oid']
-        # Check working directory content (e.g., feature_ff.txt exists)
-        assert (Path(str(repo_for_ff_merge)) / "feature_ff.txt").exists()
-
-    def test_merge_up_to_date(self, repo_for_ff_merge: Path, configure_git_user):
-        # First, merge 'feature' into 'main' (fast-forward)
-        merge_branch_into_current(str(repo_for_ff_merge), "feature")
-
-        # Attempt to merge again
-        result = merge_branch_into_current(str(repo_for_ff_merge), "feature")
-        assert result['status'] == 'up_to_date'
-        assert result['branch_name'] == "feature"
-
-    def test_merge_conflict(self, repo_for_conflict_merge: Path, configure_git_user):
-        with pytest.raises(MergeConflictError) as excinfo:
-            merge_branch_into_current(str(repo_for_conflict_merge), "feature")
-
-        assert "Automatic merge of 'feature' into 'main' failed due to conflicts." in str(excinfo.value)
-        assert excinfo.value.conflicting_files == ["conflict.txt"]
-
-        repo = pygit2.Repository(str(repo_for_conflict_merge))
-        assert repo.index.conflicts is not None
-        # MERGE_HEAD should be set indicating an incomplete merge
-        assert repo.lookup_reference("MERGE_HEAD") is not None
-
-    def test_merge_branch_not_found(self, test_repo: Path, configure_git_user):
-        configure_git_user(pygit2.Repository(str(test_repo))) # ensure signature for consistency if other tests modify it
-        with pytest.raises(BranchNotFoundError):
-            merge_branch_into_current(str(test_repo), "non-existent-branch")
-
-    def test_merge_into_itself(self, test_repo: Path, configure_git_user):
-        configure_git_user(pygit2.Repository(str(test_repo)))
-        with pytest.raises(GitWriteError, match="Cannot merge a branch into itself"):
-            merge_branch_into_current(str(test_repo), "main") # Assuming 'main' is current
-
-    def test_merge_in_bare_repo(self, bare_test_repo: Path):
-        with pytest.raises(GitWriteError, match="Cannot merge in a bare repository"):
-            merge_branch_into_current(str(bare_test_repo), "any-branch")
-
-    def test_merge_in_empty_repo(self, empty_test_repo: Path, configure_git_user):
-        # configure_git_user might fail on empty repo if it tries to read HEAD for config
-        # For this test, signature isn't the primary concern, but repo state.
-        # Let's try to configure. If it fails, it highlights another issue.
-        # repo = pygit2.Repository(str(empty_test_repo))
-        # configure_git_user(repo) # This might fail as HEAD is unborn
-        with pytest.raises(RepositoryEmptyError, match="Repository is empty or HEAD is unborn"):
-            merge_branch_into_current(str(empty_test_repo), "any-branch")
-
-    def test_merge_detached_head(self, test_repo: Path, configure_git_user):
-        repo = pygit2.Repository(str(test_repo))
-        configure_git_user(repo)
-        repo.set_head(repo.head.target) # Detach HEAD
-        assert repo.head_is_detached
-        with pytest.raises(GitWriteError, match="HEAD is detached"):
-            merge_branch_into_current(str(test_repo), "main")
-
-    def test_merge_no_signature_configured(self, repo_for_merge: Path): # Uses repo_for_merge
-        # The repo_for_merge fixture uses configure_git_user.
-        # We need a repo *without* user configured.
-        repo_no_sig_path = repo_for_merge # Re-use path, but re-init repo without config
-
-        # Clean up existing repo at path and reinitialize without signature
-        shutil.rmtree(repo_no_sig_path / ".git")
-        repo = pygit2.init_repository(str(repo_no_sig_path))
-        # DO NOT call configure_git_user(repo)
-
-        # Setup branches manually like in repo_for_merge
-        # C0 - Initial commit on main
-        make_commit_helper(str(repo_no_sig_path), filename="common.txt", content="line0", msg="C0: Initial on main", branch_name="main")
-        c0_oid = repo.head.target
-        # C1 on main
-        make_commit_helper(str(repo_no_sig_path), filename="main_file.txt", content="main content", msg="C1: Commit on main", branch_name="main")
-        # Create feature branch from C0
-        feature_branch = repo.branches.local.create("feature", repo.get(c0_oid))
-        repo.checkout(feature_branch.name)
-        repo.set_head(feature_branch.name)
-        make_commit_helper(str(repo_no_sig_path), filename="feature_file.txt", content="feature content", msg="C2: Commit on feature", branch_name="feature")
-        # Switch back to main
-        main_branch_ref = repo.branches.local.get("main")
-        repo.checkout(main_branch_ref.name)
-        repo.set_head(main_branch_ref.name)
-
-        with pytest.raises(GitWriteError, match="User signature (user.name and user.email) not configured in Git."):
-            merge_branch_into_current(str(repo_no_sig_path), "feature")
-```
-</file>
-
 <file path="tests/test_core_repository.py">
 import unittest
 import pygit2
@@ -5230,6 +4584,651 @@ def list_tags(repo_path_str: str):
     return tags_data
 </file>
 
+<file path="tests/test_core_branching.py">
+import pytest
+import pygit2
+import os
+import shutil
+from pathlib import Path
+from typing import List, Dict, Any, Optional # Added for fixture return type hint consistency
+
+# Corrected import path for core modules
+from gitwrite_core.branching import (
+    create_and_switch_branch,
+    list_branches,
+    switch_to_branch,
+    merge_branch_into_current # Added for merge tests
+)
+from gitwrite_core.exceptions import (
+    RepositoryNotFoundError,
+    RepositoryEmptyError,
+    BranchAlreadyExistsError,
+    BranchNotFoundError,
+    MergeConflictError, # Added for merge tests
+    GitWriteError
+)
+
+# Helper to create a basic commit if needed by tests
+# This helper is used by multiple test classes in this file.
+# Ensure it can create commits on current HEAD, not just for unborn HEAD.
+def make_commit_helper(repo_path_str: str, filename: str = "default_file.txt", content: str = "Default content", msg: str = "Default commit message", branch_name: Optional[str] = None):
+    repo = pygit2.Repository(repo_path_str)
+
+    # If a branch name is provided, ensure we are on it, or create it if it doesn't exist from current HEAD
+    if branch_name:
+        if branch_name not in repo.branches.local:
+            if repo.head_is_unborn:
+                # Cannot create branch if HEAD is unborn and we need to commit first.
+                # This case should be handled by initial make_initial_commit or specific setup.
+                # For simplicity, this helper will assume if branch_name is given, HEAD is born.
+                 pass # Fall through, commit will be on current HEAD or fail if unborn.
+            else:
+                repo.branches.local.create(branch_name, repo.head.peel(pygit2.Commit))
+
+        if repo.head.shorthand != branch_name: # If HEAD is not the target branch
+            branch_ref = repo.branches.local.get(branch_name)
+            if branch_ref:
+                repo.checkout(branch_ref.name)
+                repo.set_head(branch_ref.name) # Ensure HEAD symbolic ref is updated
+            else: # Should not happen if create worked, but as a fallback:
+                pass # Commit on current branch
+
+    # Create file and commit
+    full_file_path = Path(repo.workdir) / filename
+    full_file_path.parent.mkdir(parents=True, exist_ok=True) # Ensure parent dirs exist
+    full_file_path.write_text(content)
+
+    repo.index.add(filename)
+    repo.index.write()
+
+    try:
+        author = repo.default_signature
+    except: # If default_signature is not set (e.g. in some test environments)
+        author = pygit2.Signature("Test Author", "test@example.com")
+    committer = author
+
+    tree = repo.index.write_tree()
+    parents = [] if repo.head_is_unborn else [repo.head.target]
+
+    commit_oid = repo.create_commit("HEAD", author, committer, msg, tree, parents)
+    return commit_oid
+
+
+# Original make_initial_commit, specialized for the first commit.
+# make_commit_helper is more general for subsequent commits.
+# This helper is used by multiple test classes in this file.
+def make_initial_commit(repo_path_str: str, filename: str = "initial.txt", content: str = "Initial", msg: str = "Initial commit"):
+    repo = pygit2.Repository(repo_path_str)
+    if repo.head_is_unborn: # Check if HEAD is unborn before attempting to create a commit
+        file_path = Path(repo.workdir) / filename
+        file_path.write_text(content)
+        repo.index.add(filename)
+        repo.index.write()
+        author = pygit2.Signature("Test Author", "test@example.com")
+        committer = author
+        tree = repo.index.write_tree()
+        repo.create_commit("HEAD", author, committer, msg, tree, [])
+
+@pytest.fixture
+def test_repo(tmp_path: Path) -> Path:
+    repo_path = tmp_path / "test_git_repo"
+    repo_path.mkdir()
+    pygit2.init_repository(str(repo_path), bare=False)
+    # Make an initial commit so HEAD is born for most tests
+    make_initial_commit(str(repo_path))
+    return repo_path
+
+@pytest.fixture
+def empty_test_repo(tmp_path: Path) -> Path:
+    repo_path = tmp_path / "empty_git_repo"
+    repo_path.mkdir()
+    pygit2.init_repository(str(repo_path), bare=False)
+    return repo_path
+
+@pytest.fixture
+def bare_test_repo(tmp_path: Path) -> Path:
+    repo_path = tmp_path / "bare_git_repo.git"
+    # pygit2.init_repository with bare=True does not create the directory.
+    # repo_path.mkdir() # Not needed.
+    pygit2.init_repository(str(repo_path), bare=True)
+    return repo_path
+
+class TestCreateAndSwitchBranch:
+    def test_success(self, test_repo: Path):
+        branch_name = "new-feature"
+        result = create_and_switch_branch(str(test_repo), branch_name)
+        assert result['status'] == 'success'
+        assert result['branch_name'] == branch_name
+        assert 'head_commit_oid' in result
+
+        repo = pygit2.Repository(str(test_repo))
+        assert repo.head.shorthand == branch_name
+        assert not repo.head_is_detached
+        assert repo.lookup_branch(branch_name) is not None
+
+    def test_error_repo_not_found(self, tmp_path: Path):
+        non_existent_path = tmp_path / "non_existent_repo"
+        # Ensure the directory does not exist for a clean test
+        if non_existent_path.exists():
+            shutil.rmtree(non_existent_path)
+
+        with pytest.raises(RepositoryNotFoundError):
+            create_and_switch_branch(str(non_existent_path), "any-branch")
+
+    def test_error_bare_repo(self, bare_test_repo: Path):
+        with pytest.raises(GitWriteError, match="Operation not supported in bare repositories"):
+            create_and_switch_branch(str(bare_test_repo), "any-branch")
+
+    def test_error_empty_repo_unborn_head(self, empty_test_repo: Path):
+        repo = pygit2.Repository(str(empty_test_repo))
+        assert repo.head_is_unborn # This is the key check for this test case
+
+        # The core function's message is "Cannot create branch: HEAD is unborn. Commit changes first."
+        # Let's match that specific message.
+        with pytest.raises(RepositoryEmptyError, match="Cannot create branch: HEAD is unborn. Commit changes first."):
+            create_and_switch_branch(str(empty_test_repo), "any-branch")
+
+    def test_error_branch_already_exists(self, test_repo: Path):
+        branch_name = "existing-branch"
+        repo = pygit2.Repository(str(test_repo))
+        # Create the branch directly for setup
+        head_commit = repo.head.peel(pygit2.Commit)
+        repo.branches.local.create(branch_name, head_commit)
+
+        with pytest.raises(BranchAlreadyExistsError, match=f"Branch '{branch_name}' already exists."):
+            create_and_switch_branch(str(test_repo), branch_name)
+
+    def test_branch_name_with_slashes(self, test_repo: Path):
+        # Git allows slashes in branch names, e.g. "feature/login"
+        branch_name = "feature/user-login"
+        result = create_and_switch_branch(str(test_repo), branch_name)
+        assert result['status'] == 'success'
+        assert result['branch_name'] == branch_name
+
+        repo = pygit2.Repository(str(test_repo))
+        assert repo.head.shorthand == branch_name # pygit2 shorthand handles this
+
+    def test_checkout_safe_strategy(self, test_repo: Path):
+        # This test primarily ensures the function completes successfully, implying
+        # the GIT_CHECKOUT_SAFE strategy didn't cause an issue on a clean repo.
+        # A deeper test of GIT_CHECKOUT_SAFE's behavior (e.g., with a dirty workdir)
+        # would require more setup and depends on how the core function is expected
+        # to handle such cases (currently it would likely bubble up a pygit2 error).
+        branch_name = "safe-checkout-branch"
+        result = create_and_switch_branch(str(test_repo), branch_name)
+        assert result['status'] == 'success'
+        assert result['branch_name'] == branch_name
+        # Add a check to ensure the branch is indeed active
+        repo = pygit2.Repository(str(test_repo))
+        assert repo.head.shorthand == branch_name
+
+    # Consider adding a test for when HEAD is detached, though
+    # `repo.head.peel(pygit2.Commit)` should still work if HEAD points to a commit.
+    # The current `head_is_unborn` check is the primary guard for invalid HEAD states.
+    # If HEAD were detached but pointed to a valid commit, branch creation should still succeed.
+    def test_success_from_detached_head(self, test_repo: Path):
+        repo = pygit2.Repository(str(test_repo))
+        # Detach HEAD by checking out the current HEAD commit directly
+        current_commit_oid = repo.head.target
+        repo.set_head(current_commit_oid) # This detaches HEAD
+        assert repo.head_is_detached
+
+        branch_name = "branch-from-detached"
+        result = create_and_switch_branch(str(test_repo), branch_name)
+
+        assert result['status'] == 'success'
+        assert result['branch_name'] == branch_name
+        assert result['head_commit_oid'] == str(current_commit_oid) # New branch points to the same commit
+
+        # Verify repo state
+        updated_repo = pygit2.Repository(str(test_repo))
+        assert not updated_repo.head_is_detached
+        assert updated_repo.head.shorthand == branch_name
+        assert updated_repo.lookup_branch(branch_name) is not None
+        assert updated_repo.head.target == current_commit_oid
+
+    # Test case for when repo.head.peel(pygit2.Commit) might fail for other reasons
+    # This is a bit harder to simulate without deeper pygit2 manipulation or specific repo states.
+    # The `head_is_unborn` check in the core function aims to prevent `peel` errors.
+    # If `peel` still fails, it raises pygit2.GitError, wrapped into GitWriteError by the core function.
+    # One scenario could be if HEAD points to a non-commit object (e.g., a tag object directly, not a commit).
+    # This is less common for `repo.head` but possible.
+
+    # Let's refine the `make_initial_commit` to be more robust for the tests.
+    # The one in the prompt is good, just a small tweak in the test for `test_error_empty_repo_unborn_head`
+    # to match the exact error message from the core function.
+    # I've also added a test for creating a branch from a detached HEAD.
+    # And a small cleanup in `test_error_repo_not_found` to ensure the path doesn't exist.
+
+@pytest.fixture
+def configure_git_user():
+    """Fixture to configure git user.name and user.email for a repo instance."""
+    def _configure(repo: pygit2.Repository):
+        config = repo.config
+        config.set_multivar("user.name", "Test User")
+        config.set_multivar("user.email", "test@example.com")
+    return _configure
+
+@pytest.fixture
+def repo_with_remote_branches(tmp_path: Path) -> Path:
+    local_repo_path = tmp_path / "local_for_remote_branch_tests"
+    local_repo_path.mkdir()
+    local_repo = pygit2.init_repository(str(local_repo_path))
+    make_initial_commit(str(local_repo_path), msg="Initial commit on main") # Creates and commits to main
+
+    bare_remote_path = tmp_path / "remote_server_for_branch_tests.git"
+    pygit2.init_repository(str(bare_remote_path), bare=True)
+
+    origin_remote = local_repo.remotes.create("origin", str(bare_remote_path))
+
+    # Create feature_a, commit, push to origin/feature_a
+    main_commit = local_repo.head.peel(pygit2.Commit)
+    local_repo.branches.local.create("feature-a", main_commit)
+    local_repo.checkout("refs/heads/feature-a")
+    make_initial_commit(str(local_repo_path), filename="fa.txt", content="feature-a content", msg="Commit on feature-a")
+    origin_remote.push(["refs/heads/feature-a:refs/heads/feature-a"])
+
+    # Create feature-b, commit, push to origin/feature-b
+    local_repo.checkout(local_repo.branches.local['main'].name) # Back to main
+    main_commit_again = local_repo.head.peel(pygit2.Commit) # Re-peel main's commit
+    local_repo.branches.local.create("feature-b", main_commit_again)
+    local_repo.checkout("refs/heads/feature-b")
+    make_initial_commit(str(local_repo_path), filename="fb.txt", content="feature-b content", msg="Commit on feature-b")
+    origin_remote.push(["refs/heads/feature-b:refs/heads/feature-b"])
+
+    # Create a branch that will be pushed with a full-like name to simulate "origin/special-feature" on remote
+    # This local branch name is "origin-special-feature" to avoid slash issues locally if not intended.
+    local_repo.checkout(local_repo.branches.local['main'].name) # Back to main
+    main_commit_final = local_repo.head.peel(pygit2.Commit)
+    local_repo.branches.local.create("origin-special-feature", main_commit_final)
+    local_repo.checkout("refs/heads/origin-special-feature")
+    make_initial_commit(str(local_repo_path), filename="osf.txt", content="osf content", msg="Commit on origin-special-feature")
+    # Push this local branch to a remote branch named "origin/special-feature"
+    origin_remote.push(["refs/heads/origin-special-feature:refs/heads/origin/special-feature"])
+
+
+    # Return to main branch in local repo
+    local_repo.checkout(local_repo.branches.local['main'].name)
+
+    # For some tests, we might want local 'feature-a' deleted
+    # This can be done in the specific test method if needed.
+    # e.g., local_repo.branches.local.delete("feature-a")
+
+    return local_repo_path
+
+
+class TestListBranches:
+    def test_list_branches_success(self, test_repo: Path):
+        repo = pygit2.Repository(str(test_repo)) # test_repo has 'main' by default from make_initial_commit
+
+        # Create a couple more branches
+        main_commit = repo.head.peel(pygit2.Commit)
+        repo.branches.local.create("feature-a", main_commit)
+        repo.branches.local.create("hotfix/b", main_commit) # Branch with slash
+
+        # Switch to feature-a to make it current
+        repo.checkout(repo.branches.local["feature-a"].name)
+        repo.set_head(repo.branches.local["feature-a"].name)
+
+        result = list_branches(str(test_repo))
+
+        assert isinstance(result, list)
+        assert len(result) == 3 # main, feature-a, hotfix/b
+
+        expected_names = ["feature-a", "hotfix/b", "main"] # Sorted order
+        actual_names = [b['name'] for b in result]
+        assert actual_names == expected_names
+
+        current_found = False
+        for branch_data in result:
+            assert 'name' in branch_data
+            assert 'is_current' in branch_data
+            assert 'target_oid' in branch_data
+            if branch_data['name'] == "feature-a":
+                assert branch_data['is_current'] is True
+                current_found = True
+            else:
+                assert branch_data['is_current'] is False
+        assert current_found, "Current branch 'feature-a' not marked as current."
+
+    def test_list_branches_empty_repo(self, empty_test_repo: Path):
+        result = list_branches(str(empty_test_repo))
+        assert result == []
+
+    def test_list_branches_bare_repo(self, bare_test_repo: Path):
+        with pytest.raises(GitWriteError, match="Operation not supported in bare repositories"):
+            list_branches(str(bare_test_repo))
+
+    def test_list_branches_repo_not_found(self, tmp_path: Path):
+        non_existent_path = tmp_path / "non_existent_repo_for_list"
+        if non_existent_path.exists(): shutil.rmtree(non_existent_path) # ensure
+        with pytest.raises(RepositoryNotFoundError):
+            list_branches(str(non_existent_path))
+
+    def test_list_branches_detached_head(self, test_repo: Path):
+        repo = pygit2.Repository(str(test_repo))
+        # Detach HEAD
+        repo.set_head(repo.head.target)
+        assert repo.head_is_detached
+
+        # Add another branch to ensure local branches are listed
+        main_commit = repo.lookup_reference("refs/heads/main").peel(pygit2.Commit)
+        repo.branches.local.create("feature-c", main_commit)
+
+        result = list_branches(str(test_repo))
+        assert isinstance(result, list)
+        # Expecting 'main' and 'feature-c'
+        assert len(result) >= 1 # test_repo creates 'main'
+
+        found_main = False
+        for branch_data in result:
+            assert branch_data['is_current'] is False, "No branch should be current in detached HEAD state."
+            if branch_data['name'] == 'main':
+                found_main = True
+        assert found_main
+
+
+class TestSwitchToBranch:
+    def test_switch_success_local_branch(self, test_repo: Path):
+        repo = pygit2.Repository(str(test_repo)) # On 'main'
+        main_commit = repo.head.peel(pygit2.Commit)
+        repo.branches.local.create("develop", main_commit)
+
+        result = switch_to_branch(str(test_repo), "develop")
+
+        assert result['status'] == 'success'
+        assert result['branch_name'] == "develop"
+        assert result['previous_branch_name'] == "main" # or specific default from fixture
+        assert result.get('is_detached') is False
+
+        updated_repo = pygit2.Repository(str(test_repo))
+        assert not updated_repo.head_is_detached
+        assert updated_repo.head.shorthand == "develop"
+
+    def test_switch_already_on_branch(self, test_repo: Path):
+        # test_repo is already on 'main' (or default branch from make_initial_commit)
+        current_branch_name = pygit2.Repository(str(test_repo)).head.shorthand
+        result = switch_to_branch(str(test_repo), current_branch_name)
+        assert result['status'] == 'already_on_branch'
+        assert result['branch_name'] == current_branch_name
+
+    def test_switch_to_remote_tracking_branch_origin(self, repo_with_remote_branches: Path):
+        # 'feature-a' was pushed to origin/feature-a.
+        # Delete local 'feature-a' to ensure we are checking out from remote.
+        local_repo = pygit2.Repository(str(repo_with_remote_branches))
+        if "feature-a" in local_repo.branches.local:
+             local_repo.branches.local.delete("feature-a")
+
+        # Switch to 'feature-a', expecting it to be found via 'origin/feature-a' and result in detached HEAD
+        result = switch_to_branch(str(repo_with_remote_branches), "feature-a")
+
+        assert result['status'] == 'success'
+        # The core function resolves "feature-a" to "origin/feature-a" and branch_name in result is "origin/feature-a"
+        assert result['branch_name'] == "origin/feature-a"
+        assert result.get('is_detached') is True
+
+        updated_repo = pygit2.Repository(str(repo_with_remote_branches))
+        assert updated_repo.head_is_detached
+        # Check if HEAD points to the commit of origin/feature-a
+        remote_branch = updated_repo.branches.remote.get("origin/feature-a")
+        assert remote_branch is not None
+        assert updated_repo.head.target == remote_branch.target
+
+    def test_switch_to_full_remote_tracking_branch_name(self, repo_with_remote_branches: Path):
+        # The fixture pushed local 'origin-special-feature' to remote 'origin/special-feature'
+        # We are testing if user provides "origin/special-feature" directly.
+        full_remote_name = "origin/special-feature"
+        result = switch_to_branch(str(repo_with_remote_branches), full_remote_name)
+
+        assert result['status'] == 'success'
+        assert result['branch_name'] == full_remote_name # Should match the input full name
+        assert result.get('is_detached') is True
+
+        updated_repo = pygit2.Repository(str(repo_with_remote_branches))
+        assert updated_repo.head_is_detached
+        remote_branch = updated_repo.branches.remote.get(full_remote_name)
+        assert remote_branch is not None
+        assert updated_repo.head.target == remote_branch.target
+
+
+    def test_switch_branch_not_found(self, test_repo: Path):
+        with pytest.raises(BranchNotFoundError, match="Branch 'non-existent-branch' not found"):
+            switch_to_branch(str(test_repo), "non-existent-branch")
+
+    def test_switch_bare_repo(self, bare_test_repo: Path):
+        with pytest.raises(GitWriteError, match="Operation not supported in bare repositories"):
+            switch_to_branch(str(bare_test_repo), "anybranch")
+
+    def test_switch_repo_not_found(self, tmp_path: Path):
+        non_existent_path = tmp_path / "non_existent_for_switch"
+        if non_existent_path.exists(): shutil.rmtree(non_existent_path)
+        with pytest.raises(RepositoryNotFoundError):
+            switch_to_branch(str(non_existent_path), "anybranch")
+
+    def test_switch_empty_repo_no_branches_exist(self, empty_test_repo: Path):
+        # Core `switch_to_branch` raises BranchNotFoundError if branch doesn't exist,
+        # or RepositoryEmptyError if the repo is empty and the branch isn't found.
+        with pytest.raises(RepositoryEmptyError, match="Cannot switch branch in an empty repository to non-existent branch 'anybranch'"):
+            switch_to_branch(str(empty_test_repo), "anybranch")
+
+    def test_switch_checkout_failure_dirty_workdir(self, test_repo: Path):
+        repo = pygit2.Repository(str(test_repo)) # On 'main'
+
+        # Create 'develop' branch and switch to it
+        main_commit = repo.head.peel(pygit2.Commit)
+        repo.branches.local.create("develop", main_commit)
+        repo.checkout("refs/heads/develop")
+        repo.set_head("refs/heads/develop")
+        # Commit a file on 'develop' that is different from 'main'
+        # Using make_commit_helper for subsequent commits
+        make_commit_helper(str(test_repo), filename="conflict.txt", content="Version on develop", msg="Add conflict.txt on develop")
+
+        # Switch back to 'main'
+        repo.checkout("refs/heads/main") # Assumes 'main' exists from test_repo fixture
+        repo.set_head("refs/heads/main")
+        # Create the same file on 'main' but with different content (to ensure checkout to develop would modify it)
+        (Path(str(test_repo)) / "conflict.txt").write_text("Version on main - will be changed by user")
+        # DO NOT COMMIT THIS CHANGE ON MAIN. This makes the working dir dirty for 'conflict.txt'.
+
+        # Now try to switch to 'develop'. Checkout should fail due to 'conflict.txt' being modified.
+        with pytest.raises(GitWriteError, match="Checkout failed: Your local changes to tracked files would be overwritten"):
+            switch_to_branch(str(test_repo), "develop")
+
+@pytest.fixture
+def repo_for_merge(tmp_path: Path, configure_git_user) -> Path:
+    repo_path = tmp_path / "repo_for_merge_normal"
+    repo_path.mkdir()
+    repo = pygit2.init_repository(str(repo_path))
+    configure_git_user(repo)
+
+    # C0 - Initial commit on main
+    make_commit_helper(str(repo_path), filename="common.txt", content="line0", msg="C0: Initial on main", branch_name="main")
+    c0_oid = repo.head.target
+
+    # C1 on main
+    make_commit_helper(str(repo_path), filename="main_file.txt", content="main content", msg="C1: Commit on main", branch_name="main")
+
+    # Create feature branch from C0
+    feature_branch = repo.branches.local.create("feature", repo.get(c0_oid))
+    repo.checkout(feature_branch.name) # Switch to feature branch
+    repo.set_head(feature_branch.name)
+    make_commit_helper(str(repo_path), filename="feature_file.txt", content="feature content", msg="C2: Commit on feature", branch_name="feature")
+
+    # Switch back to main for the test starting point
+    main_branch_ref = repo.branches.local.get("main")
+    repo.checkout(main_branch_ref.name)
+    repo.set_head(main_branch_ref.name)
+    return repo_path
+
+@pytest.fixture
+def repo_for_ff_merge(tmp_path: Path, configure_git_user) -> Path:
+    repo_path = tmp_path / "repo_for_ff_merge"
+    repo_path.mkdir()
+    repo = pygit2.init_repository(str(repo_path))
+    configure_git_user(repo)
+
+    # C0 on main
+    make_commit_helper(str(repo_path), filename="main_base.txt", content="base for ff", msg="C0: Base on main", branch_name="main")
+    c0_oid = repo.head.target
+
+    # Create feature branch from C0
+    feature_branch = repo.branches.local.create("feature", repo.get(c0_oid))
+    repo.checkout(feature_branch.name)
+    repo.set_head(feature_branch.name)
+
+    # C1 on feature
+    make_commit_helper(str(repo_path), filename="feature_ff.txt", content="ff content", msg="C1: Commit on feature", branch_name="feature")
+
+    # Switch back to main (which is at C0)
+    main_branch_ref = repo.branches.local.get("main")
+    repo.checkout(main_branch_ref.name)
+    repo.set_head(main_branch_ref.name)
+    return repo_path
+
+@pytest.fixture
+def repo_for_conflict_merge(tmp_path: Path, configure_git_user) -> Path:
+    repo_path = tmp_path / "repo_for_conflict_merge"
+    repo_path.mkdir()
+    repo = pygit2.init_repository(str(repo_path))
+    configure_git_user(repo)
+
+    # C0 - Common ancestor commit on main
+    conflict_file = "conflict.txt"
+    make_commit_helper(str(repo_path), filename=conflict_file, content="Line1\nCommon Line\nLine3", msg="C0: Common ancestor", branch_name="main")
+    c0_oid = repo.head.target
+
+    # C1 on main - modify conflict.txt
+    make_commit_helper(str(repo_path), filename=conflict_file, content="Line1\nChange on Main\nLine3", msg="C1: Change on main", branch_name="main")
+
+    # Create feature branch from C0
+    feature_branch = repo.branches.local.create("feature", repo.get(c0_oid))
+    repo.checkout(feature_branch.name)
+    repo.set_head(feature_branch.name)
+
+    # C2 on feature - modify conflict.txt differently
+    make_commit_helper(str(repo_path), filename=conflict_file, content="Line1\nChange on Feature\nLine3", msg="C2: Change on feature", branch_name="feature")
+
+    # Switch back to main for the test
+    main_branch_ref = repo.branches.local.get("main")
+    repo.checkout(main_branch_ref.name)
+    repo.set_head(main_branch_ref.name)
+    return repo_path
+
+
+class TestMergeBranch:
+    def test_merge_success_normal(self, repo_for_merge: Path, configure_git_user):
+        # repo_for_merge is already on 'main'
+        # configure_git_user has already been applied to repo_for_merge fixture
+        result = merge_branch_into_current(str(repo_for_merge), "feature")
+
+        assert result['status'] == 'merged_ok'
+        assert result['branch_name'] == "feature" # branch that was merged
+        assert result['current_branch'] == "main"  # branch merged into
+        assert 'commit_oid' in result
+
+        repo = pygit2.Repository(str(repo_for_merge))
+        merge_commit = repo.get(result['commit_oid'])
+        assert isinstance(merge_commit, pygit2.Commit)
+        assert len(merge_commit.parents) == 2
+        assert f"Merge branch 'feature' into main" in merge_commit.message
+        assert repo.state == pygit2.GIT_REPOSITORY_STATE_NONE # Check repo state is clean
+
+    def test_merge_success_fast_forward(self, repo_for_ff_merge: Path, configure_git_user):
+        # repo_for_ff_merge is on 'main', 'feature' is ahead.
+        result = merge_branch_into_current(str(repo_for_ff_merge), "feature")
+
+        assert result['status'] == 'fast_forwarded'
+        assert result['branch_name'] == "feature"
+        assert 'commit_oid' in result # This is the commit feature was pointing to
+
+        repo = pygit2.Repository(str(repo_for_ff_merge))
+        assert repo.head.target == repo.branches.local['feature'].target
+        assert repo.head.target.hex == result['commit_oid']
+        # Check working directory content (e.g., feature_ff.txt exists)
+        assert (Path(str(repo_for_ff_merge)) / "feature_ff.txt").exists()
+
+    def test_merge_up_to_date(self, repo_for_ff_merge: Path, configure_git_user):
+        # First, merge 'feature' into 'main' (fast-forward)
+        merge_branch_into_current(str(repo_for_ff_merge), "feature")
+
+        # Attempt to merge again
+        result = merge_branch_into_current(str(repo_for_ff_merge), "feature")
+        assert result['status'] == 'up_to_date'
+        assert result['branch_name'] == "feature"
+
+    def test_merge_conflict(self, repo_for_conflict_merge: Path, configure_git_user):
+        with pytest.raises(MergeConflictError) as excinfo:
+            merge_branch_into_current(str(repo_for_conflict_merge), "feature")
+
+        assert "Automatic merge of 'feature' into 'main' failed due to conflicts." in str(excinfo.value)
+        assert excinfo.value.conflicting_files == ["conflict.txt"]
+
+        repo = pygit2.Repository(str(repo_for_conflict_merge))
+        assert repo.index.conflicts is not None
+        # MERGE_HEAD should be set indicating an incomplete merge
+        assert repo.lookup_reference("MERGE_HEAD") is not None
+
+    def test_merge_branch_not_found(self, test_repo: Path, configure_git_user):
+        configure_git_user(pygit2.Repository(str(test_repo))) # ensure signature for consistency if other tests modify it
+        with pytest.raises(BranchNotFoundError):
+            merge_branch_into_current(str(test_repo), "non-existent-branch")
+
+    def test_merge_into_itself(self, test_repo: Path, configure_git_user):
+        configure_git_user(pygit2.Repository(str(test_repo)))
+        with pytest.raises(GitWriteError, match="Cannot merge a branch into itself"):
+            merge_branch_into_current(str(test_repo), "main") # Assuming 'main' is current
+
+    def test_merge_in_bare_repo(self, bare_test_repo: Path):
+        with pytest.raises(GitWriteError, match="Cannot merge in a bare repository"):
+            merge_branch_into_current(str(bare_test_repo), "any-branch")
+
+    def test_merge_in_empty_repo(self, empty_test_repo: Path, configure_git_user):
+        # configure_git_user might fail on empty repo if it tries to read HEAD for config
+        # For this test, signature isn't the primary concern, but repo state.
+        # Let's try to configure. If it fails, it highlights another issue.
+        # repo = pygit2.Repository(str(empty_test_repo))
+        # configure_git_user(repo) # This might fail as HEAD is unborn
+        with pytest.raises(RepositoryEmptyError, match="Repository is empty or HEAD is unborn"):
+            merge_branch_into_current(str(empty_test_repo), "any-branch")
+
+    def test_merge_detached_head(self, test_repo: Path, configure_git_user):
+        repo = pygit2.Repository(str(test_repo))
+        configure_git_user(repo)
+        repo.set_head(repo.head.target) # Detach HEAD
+        assert repo.head_is_detached
+        with pytest.raises(GitWriteError, match="HEAD is detached"):
+            merge_branch_into_current(str(test_repo), "main")
+
+    def test_merge_no_signature_configured(self, repo_for_merge: Path): # Uses repo_for_merge
+        # The repo_for_merge fixture uses configure_git_user.
+        # We need a repo *without* user configured.
+        repo_no_sig_path = repo_for_merge # Re-use path, but re-init repo without config
+
+        # Clean up existing repo at path and reinitialize without signature
+        shutil.rmtree(repo_no_sig_path / ".git")
+        repo = pygit2.init_repository(str(repo_no_sig_path))
+        # DO NOT call configure_git_user(repo)
+
+        # Setup branches manually like in repo_for_merge
+        # C0 - Initial commit on main
+        make_commit_helper(str(repo_no_sig_path), filename="common.txt", content="line0", msg="C0: Initial on main", branch_name="main")
+        c0_oid = repo.head.target
+        # C1 on main
+        make_commit_helper(str(repo_no_sig_path), filename="main_file.txt", content="main content", msg="C1: Commit on main", branch_name="main")
+        # Create feature branch from C0
+        feature_branch = repo.branches.local.create("feature", repo.get(c0_oid))
+        repo.checkout(feature_branch.name)
+        repo.set_head(feature_branch.name)
+        make_commit_helper(str(repo_no_sig_path), filename="feature_file.txt", content="feature content", msg="C2: Commit on feature", branch_name="feature")
+        # Switch back to main
+        main_branch_ref = repo.branches.local.get("main")
+        repo.checkout(main_branch_ref.name)
+        repo.set_head(main_branch_ref.name)
+
+        with pytest.raises(GitWriteError, match="User signature (user.name and user.email) not configured in Git."):
+            merge_branch_into_current(str(repo_no_sig_path), "feature")
+</file>
+
 <file path="writegit-project-doc.md">
 # GitWrite Platform - Project Management Document
 
@@ -6841,8 +6840,1002 @@ def sync_repository(repo_path_str: str, remote_name: str = "origin", branch_name
     return result_summary
 </file>
 
+<file path=".gitignore">
+__pycache__
+*__pycache__*
+*.pyc
+</file>
+
+<file path="Jules_Commands.md">
+- Now run the unit tests and fix any issues you find and make a new commit to the same branch if there are changes. Remember to install all the necessary Python package first.
+- Can you update Memory_Bank.md and Implementation_Plan.md with the details of that and make a new commit. Then give me the prompt I should give for the next Jules session. I will be merging the current changes into main, so the next session should branch from main.
+- Read Memory_Bank.md and Implementation_Plan.md and do the next pending task. When you are done, update both of those files with the state of the project. Also give me a prompt for the next Jules session. I will be merging the current changes into main, so the next session should branch from main.
+</file>
+
+<file path="README.md">
+# GitWrite
+
+**Git-based version control for writers and writing teams**
+
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Python 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org/downloads/)
+[![TypeScript](https://img.shields.io/badge/TypeScript-4.9+-blue.svg)](https://www.typescriptlang.org/)
+[![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](http://makeapullrequest.com)
+
+GitWrite brings Git's powerful version control to writers through an intuitive, writer-friendly interface. Built on top of Git's proven technology, it maintains full compatibility with existing Git repositories and hosting services while making version control accessible to non-technical writers.
+
+## 🎯 Why GitWrite?
+
+**For Writers:**
+- Track every revision of your manuscript with meaningful history
+- Experiment with different versions without fear of losing work
+- Collaborate seamlessly with editors, beta readers, and co-authors
+- Get feedback through an intuitive annotation system
+- Export to multiple formats (EPUB, PDF, DOCX) at any point in your writing journey
+
+**For Editors & Publishers:**
+- Review and suggest changes using familiar editorial workflows
+- Maintain version control throughout the publishing process
+- Enable beta readers to provide structured feedback
+- Integrate with existing Git-based development workflows
+
+**For Developers:**
+- All GitWrite repositories are standard Git repositories
+- Use GitWrite alongside existing Git tools and workflows
+- Integrate with any Git hosting service (GitHub, GitLab, Bitbucket)
+- No vendor lock-in - repositories remain Git-compatible
+
+## ✨ Key Features
+
+### 📝 Writer-Friendly Interface
+- **Simple Commands**: `gitwrite save "Finished chapter 3"` instead of `git add . && git commit -m "..."`
+- **Intuitive Terminology**: "explorations" instead of "branches", "save" instead of "commit"
+- **Word-by-Word Comparison**: See exactly what changed between versions at the word level
+- **Visual Diff Viewer**: Compare versions side-by-side with highlighting
+
+### 🤝 Collaborative Writing
+- **Author Control**: Repository owners maintain ultimate control over the main manuscript
+- **Editorial Workflows**: Role-based permissions for editors, copy editors, and proofreaders
+- **Selective Integration**: Cherry-pick individual changes from editors using Git's proven mechanisms
+- **Beta Reader Feedback**: Export to EPUB, collect annotations, sync back as Git commits
+
+### 🔧 Multiple Interfaces
+- **Command Line**: Full-featured CLI for power users
+- **Web Application**: Modern browser-based interface
+- **Mobile App**: EPUB reader with annotation capabilities
+- **REST API**: Integration with writing tools and services
+- **TypeScript SDK**: Easy integration for developers
+
+### 🌐 Git Ecosystem Integration
+- **Full Git Compatibility**: Works with any Git hosting service
+- **Standard Git Operations**: Use `git` commands alongside `gitwrite` commands
+- **Hosting Service Features**: Leverage GitHub/GitLab pull requests, branch protection, and more
+- **Developer Friendly**: Integrate with existing development workflows
+
+## 🚀 Quick Start
+
+### Installation
+
+```bash
+# Install GitWrite CLI (when available)
+pip install git-write
+
+# Or install from source
+git clone https://github.com/eristoddle/git-write.git
+cd git-write
+pip install -e .
+```
+
+*Note: GitWrite is currently in development. Installation instructions will be updated as the project progresses.*
+
+### Your First Writing Project
+
+```bash
+# Start a new writing project
+gitwrite init "my-novel"
+cd my-novel
+
+# Create your first file
+echo "# Chapter 1\n\nIt was a dark and stormy night..." > chapter1.md
+
+# Save your progress
+gitwrite save "Started Chapter 1"
+
+# See your history
+gitwrite history
+
+# Create an alternative version to experiment
+gitwrite explore "alternate-opening"
+echo "# Chapter 1\n\nThe sun was shining brightly..." > chapter1.md
+gitwrite save "Trying a different opening"
+
+# Switch back to main version
+gitwrite switch main
+
+# Compare the versions
+gitwrite compare main alternate-opening
+```
+
+### Working with Editors
+
+```bash
+# Editor creates their own branch for suggestions
+git checkout -b editor-suggestions
+# Editor makes changes and commits them
+
+# Author reviews editor's changes individually
+gitwrite review editor-suggestions
+
+# Author selectively accepts changes
+gitwrite cherry-pick abc1234  # Accept this specific change
+gitwrite cherry-pick def5678 --modify  # Accept this change with modifications
+
+# Merge accepted changes
+gitwrite merge editor-suggestions
+```
+
+### Beta Reader Workflow
+
+```bash
+# Export manuscript for beta readers
+gitwrite export epub --version v1.0
+
+# Beta reader annotations automatically create commits in their branch
+# Author reviews and integrates feedback
+gitwrite review beta-reader-jane
+gitwrite cherry-pick selected-feedback-commits
+```
+
+## 📚 Documentation
+
+- **[User Guide](docs/user-guide.md)** - Complete guide for writers
+- **[Editorial Workflows](docs/editorial-workflows.md)** - Guide for editors and publishers
+- **[API Documentation](docs/api.md)** - REST API reference
+- **[SDK Documentation](docs/sdk.md)** - TypeScript SDK guide
+- **[Git Integration](docs/git-integration.md)** - How GitWrite leverages Git
+- **[Contributing](CONTRIBUTING.md)** - How to contribute to GitWrite
+
+## 🏗️ Architecture
+
+GitWrite is built as a multi-component platform:
+
+```
+┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
+│   Web Client    │    │  Mobile Reader  │    │  Writing Tools  │
+│   (React/TS)    │    │ (React Native)  │    │   (3rd Party)   │
+└─────────┬───────┘    └─────────┬───────┘    └─────────┬───────┘
+          │                      │                      │
+          └──────────────────────┼──────────────────────┘
+                                 │
+                     ┌───────────▼───────────┐
+                     │    TypeScript SDK     │
+                     │   (npm package)       │
+                     └───────────┬───────────┘
+                                 │
+                     ┌───────────▼───────────┐
+                     │      REST API         │
+                     │   (FastAPI/Python)    │
+                     └───────────┬───────────┘
+                                 │
+                     ┌───────────▼───────────┐
+                     │    GitWrite CLI       │
+                     │   (Python Click)      │
+                     └───────────┬───────────┘
+                                 │
+                     ┌───────────▼───────────┐
+                     │       Git Core        │
+                     │   (libgit2/pygit2)    │
+                     └───────────────────────┘
+```
+
+## 🛠️ Development
+
+### Prerequisites
+
+- Python 3.9+
+- Node.js 16+
+- Git 2.20+
+- Docker (for development environment)
+
+### Setup Development Environment
+
+```bash
+# Clone the repository
+git clone https://github.com/eristoddle/git-write.git
+cd git-write
+
+# Set up Python environment
+python -m venv venv
+source venv/bin/activate  # On Windows: venv\Scripts\activate
+
+# Install dependencies (when available)
+pip install -r requirements.txt  # or requirements-dev.txt for development
+
+# Run tests (when available)
+pytest
+
+# Start development (project-specific commands will be documented as they're implemented)
+```
+
+*Note: Development setup instructions will be updated as the project structure is finalized.*
+
+### Project Structure
+
+```
+git-write/
+├── README.md              # This file
+├── LICENSE                # MIT License
+├── .gitignore            # Git ignore rules
+├── requirements.txt       # Python dependencies
+├── setup.py              # Package setup
+├── src/                  # Source code
+│   └── gitwrite/         # Main package
+├── tests/                # Test files
+├── docs/                 # Documentation
+└── examples/             # Example projects and usage
+```
+
+*Note: The actual project structure may differ. Please check the repository directly for the current organization.*
+
+## 🤝 Contributing
+
+We welcome contributions! Please see our [Contributing Guide](CONTRIBUTING.md) for details.
+
+### Ways to Contribute
+
+- **🐛 Bug Reports**: Found a bug? [Open an issue](https://github.com/eristoddle/git-write/issues)
+- **💡 Feature Requests**: Have an idea? [Start a discussion](https://github.com/eristoddle/git-write/discussions)
+- **📝 Documentation**: Help improve our docs
+- **🔧 Code**: Submit pull requests for bug fixes or features
+- **🧪 Testing**: Help test new features and report issues
+- **🎨 Design**: Improve user interface and experience
+
+## 🌟 Use Cases
+
+### Fiction Writers
+- **Novel Writing**: Track character development, plot changes, and multiple endings
+- **Short Stories**: Maintain collections with version history
+- **Collaborative Fiction**: Co-author stories with real-time collaboration
+
+### Academic Writers
+- **Research Papers**: Track citations, methodology changes, and revisions
+- **Dissertations**: Manage chapters, advisor feedback, and committee suggestions
+- **Grant Proposals**: Version control for funding applications
+
+### Professional Writers
+- **Content Marketing**: Track blog posts, whitepapers, and marketing copy
+- **Technical Documentation**: Maintain software documentation with code integration
+- **Journalism**: Version control for articles and investigative pieces
+
+### Publishers & Editors
+- **Manuscript Management**: Track submissions through editorial process
+- **Multi-Author Projects**: Coordinate anthology and collection projects
+- **Quality Control**: Systematic review and approval workflows
+
+## 🔗 Integrations
+
+GitWrite integrates with popular writing and development tools:
+
+- **Writing Tools**: Scrivener, Ulysses, Bear, Notion
+- **Git Hosting**: GitHub, GitLab, Bitbucket, SourceForge
+- **Export Formats**: Pandoc integration for EPUB, PDF, DOCX, HTML
+- **Editorial Tools**: Track Changes, Google Docs, Microsoft Word
+- **Publishing Platforms**: Integration APIs for self-publishing platforms
+
+## 📊 Roadmap
+
+### Core Features (In Development)
+- [ ] Core Git integration and CLI
+- [ ] Word-by-word diff engine
+- [ ] Basic project management commands
+- [ ] Git repository compatibility
+- [ ] Writer-friendly command interface
+
+### Planned Features
+- [ ] Web interface
+- [ ] Mobile EPUB reader
+- [ ] Beta reader workflow
+- [ ] TypeScript SDK
+- [ ] Git hosting service integration
+- [ ] Advanced selective merge interface
+- [ ] Plugin system for writing tools
+- [ ] Real-time collaboration features
+- [ ] Advanced export options
+- [ ] Workflow automation
+
+### Future Enhancements
+- [ ] AI-powered writing assistance integration
+- [ ] Advanced analytics and insights
+- [ ] Team management features
+- [ ] Enterprise deployment options
+
+*Note: This project is in early development. Features and timelines may change based on community feedback and development progress.*
+
+## 📄 License
+
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+
+## 🙏 Acknowledgments
+
+- **Git Community**: For creating the foundational technology that makes GitWrite possible
+- **Writing Community**: For feedback and guidance on writing workflows
+- **Open Source Contributors**: For libraries and tools that power GitWrite
+- **Beta Testers**: For helping refine the user experience
+
+---
+
+**Made with ❤️ for writers everywhere**
+
+*GitWrite: Where every word matters, and every change is remembered.*
+</file>
+
+<file path="gitwrite_cli/pyproject.toml">
+[project]
+name = "gitwrite-cli"
+version = "0.1.0"
+description = "CLI for GitWrite"
+authors = [
+    {name = "Agent_CLI_Dev",email = "agent@example.com"}
+]
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "click (>=8.2.1,<9.0.0)",
+    "rich (>=14.0.0,<15.0.0)",
+    "pygit2 (>=1.18.0,<2.0.0)"
+]
+
+[tool.poetry]
+packages = [
+    { include = "gitwrite_cli" },
+]
+
+[tool.poetry.group.dev.dependencies]
+pytest = "^8.0.0"  # Or a version compatible with what was seen (8.3.5)
+pytest-cov = "^5.0.0" # Or a recent compatible version
+
+[build-system]
+requires = ["poetry-core>=2.0.0,<3.0.0"]
+build-backend = "poetry.core.masonry.api"
+</file>
+
+<file path="gitwrite_core/versioning.py">
+import pygit2
+# import pygit2.ops # No longer attempting to use pygit2.ops
+from datetime import datetime, timezone, timedelta
+from typing import Optional, List, Dict, Any
+
+from gitwrite_core.exceptions import RepositoryNotFoundError, CommitNotFoundError, NotEnoughHistoryError, MergeConflictError, GitWriteError
+
+def _get_commit_summary(commit: pygit2.Commit) -> str:
+    """Helper function to get the first line of a commit message."""
+    return commit.message.splitlines()[0]
+
+def get_commit_history(repo_path_str: str, count: Optional[int] = None) -> List[Dict]:
+    """
+    Retrieves the commit history for a Git repository.
+
+    Args:
+        repo_path_str: Path to the repository.
+        count: Optional number of commits to return.
+
+    Returns:
+        A list of dictionaries, where each dictionary contains details of a commit.
+
+    Raises:
+        RepositoryNotFoundError: If the repository is not found at the given path.
+    """
+    try:
+        # Discover the repository path
+        repo_path = pygit2.discover_repository(repo_path_str)
+        if repo_path is None:
+            raise RepositoryNotFoundError(f"No repository found at or above '{repo_path_str}'")
+
+        repo = pygit2.Repository(repo_path)
+    except pygit2.GitError as e:
+        raise RepositoryNotFoundError(f"Error opening repository at '{repo_path_str}': {e}")
+
+    if repo.is_bare:
+        return []
+
+    if repo.is_empty or repo.head_is_unborn:
+        return []
+
+    history = []
+    commits_processed = 0
+
+    walker = repo.walk(repo.head.target, pygit2.GIT_SORT_TIME)
+
+    for commit_obj in walker:
+        if count is not None and commits_processed >= count:
+            break
+
+        author_tz = timezone(timedelta(minutes=commit_obj.author.offset))
+        committer_tz = timezone(timedelta(minutes=commit_obj.committer.offset))
+
+        history.append({
+            "short_hash": str(commit_obj.id)[:7],
+            "author_name": commit_obj.author.name,
+            "author_email": commit_obj.author.email,
+            "date": datetime.fromtimestamp(commit_obj.author.time, tz=author_tz).strftime('%Y-%m-%d %H:%M:%S %z'),
+            "committer_name": commit_obj.committer.name,
+            "committer_email": commit_obj.committer.email,
+            "committer_date": datetime.fromtimestamp(commit_obj.committer.time, tz=committer_tz).strftime('%Y-%m-%d %H:%M:%S %z'),
+            "message": commit_obj.message.strip(),
+            "message_short": commit_obj.message.splitlines()[0].strip(),
+            "oid": str(commit_obj.id),
+        })
+        commits_processed += 1
+
+    return history
+
+def get_diff(repo_path_str: str, ref1_str: Optional[str] = None, ref2_str: Optional[str] = None) -> Dict[str, Any]:
+    """
+    Compares two references in a Git repository and returns the diff.
+
+    Args:
+        repo_path_str: Path to the repository.
+        ref1_str: The first reference (e.g., commit hash, branch, tag). Defaults to HEAD~1.
+        ref2_str: The second reference. Defaults to HEAD.
+
+    Returns:
+        A dictionary containing resolved OIDs, display names, and the patch text.
+        {
+            "ref1_oid": str,
+            "ref2_oid": str,
+            "ref1_display_name": str,
+            "ref2_display_name": str,
+            "patch_text": str
+        }
+
+    Raises:
+        RepositoryNotFoundError: If the repository is not found.
+        CommitNotFoundError: If a specified reference cannot be resolved to a commit.
+        NotEnoughHistoryError: If the comparison cannot be made due to lack of history (e.g., initial commit).
+        ValueError: If an invalid combination of references is provided.
+    """
+    try:
+        repo_discovered_path = pygit2.discover_repository(repo_path_str)
+        if repo_discovered_path is None:
+            raise RepositoryNotFoundError(f"No repository found at or above '{repo_path_str}'")
+        repo = pygit2.Repository(repo_discovered_path)
+    except pygit2.GitError as e:
+        raise RepositoryNotFoundError(f"Error opening repository at '{repo_path_str}': {e}")
+
+    commit1_obj: Optional[pygit2.Commit] = None
+    commit2_obj: Optional[pygit2.Commit] = None
+
+    ref1_resolved_name = ref1_str
+    ref2_resolved_name = ref2_str
+
+    if ref1_str is None and ref2_str is None: # Default: HEAD~1 vs HEAD
+        if repo.is_empty or repo.head_is_unborn:
+            raise NotEnoughHistoryError("Repository is empty or HEAD is unborn.")
+        try:
+            commit2_obj = repo.head.peel(pygit2.Commit)
+        except (pygit2.GitError, KeyError) as e:
+            raise CommitNotFoundError(f"Could not resolve HEAD: {e}")
+
+        if not commit2_obj.parents:
+            raise NotEnoughHistoryError("HEAD is the initial commit and has no parent to compare with.")
+        commit1_obj = commit2_obj.parents[0]
+
+        ref1_resolved_name = f"{str(commit1_obj.id)[:7]} (HEAD~1)"
+        ref2_resolved_name = f"{str(commit2_obj.id)[:7]} (HEAD)"
+
+    elif ref1_str is not None and ref2_str is None: # Compare ref1_str vs HEAD
+        if repo.is_empty or repo.head_is_unborn:
+            raise NotEnoughHistoryError("Repository is empty or HEAD is unborn, cannot compare with HEAD.")
+        try:
+            commit1_obj = repo.revparse_single(ref1_str).peel(pygit2.Commit)
+        except (pygit2.GitError, KeyError, TypeError) as e: # TypeError if peel is on wrong type
+            raise CommitNotFoundError(f"Reference '{ref1_str}' not found or not a commit: {e}")
+        try:
+            commit2_obj = repo.head.peel(pygit2.Commit)
+        except (pygit2.GitError, KeyError) as e:
+            raise CommitNotFoundError(f"Could not resolve HEAD: {e}")
+
+        # ref1_resolved_name is already ref1_str
+        ref2_resolved_name = f"{str(commit2_obj.id)[:7]} (HEAD)"
+
+
+    elif ref1_str is not None and ref2_str is not None: # Compare ref1_str vs ref2_str
+        try:
+            commit1_obj = repo.revparse_single(ref1_str).peel(pygit2.Commit)
+        except (pygit2.GitError, KeyError, TypeError) as e:
+            raise CommitNotFoundError(f"Reference '{ref1_str}' not found or not a commit: {e}")
+        try:
+            commit2_obj = repo.revparse_single(ref2_str).peel(pygit2.Commit)
+        except (pygit2.GitError, KeyError, TypeError) as e:
+            raise CommitNotFoundError(f"Reference '{ref2_str}' not found or not a commit: {e}")
+
+        # ref1_resolved_name and ref2_resolved_name are already the input strings
+
+    else: # ref1_str is None and ref2_str is not None -- invalid combination
+        raise ValueError("Invalid reference combination for diff. Cannot specify ref2 without ref1 unless both are None.")
+
+    if not commit1_obj or not commit2_obj:
+        # This should ideally be caught by earlier checks, but as a safeguard:
+        raise CommitNotFoundError("Could not resolve one or both references to commits.")
+
+    tree1 = commit1_obj.tree
+    tree2 = commit2_obj.tree
+
+    diff_obj = repo.diff(tree1, tree2, context_lines=3, interhunk_lines=1)
+
+    return {
+        "ref1_oid": str(commit1_obj.id),
+        "ref2_oid": str(commit2_obj.id),
+        "ref1_display_name": ref1_resolved_name if ref1_resolved_name else str(commit1_obj.id), # Fallback if somehow None
+        "ref2_display_name": ref2_resolved_name if ref2_resolved_name else str(commit2_obj.id), # Fallback if somehow None
+        "patch_text": diff_obj.patch if diff_obj else ""
+    }
+
+def revert_commit(repo_path_str: str, commit_ish_to_revert: str) -> dict:
+    """
+    Reverts a specified commit.
+
+    Args:
+        repo_path_str: Path to the repository.
+        commit_ish_to_revert: The commit reference (hash, branch, tag) to revert.
+
+    Returns:
+        A dictionary indicating success and the new commit OID if the revert was clean.
+        {'status': 'success', 'new_commit_oid': str(new_commit_oid), 'message': 'Commit reverted successfully.'}
+
+    Raises:
+        RepositoryNotFoundError: If the repository is not found.
+        CommitNotFoundError: If the commit to revert is not found.
+        MergeConflictError: If the revert results in conflicts.
+        GitWriteError: For other Git-related errors.
+    """
+    try:
+        repo_discovered_path = pygit2.discover_repository(repo_path_str)
+        if repo_discovered_path is None:
+            raise RepositoryNotFoundError(f"No repository found at or above '{repo_path_str}'")
+        repo = pygit2.Repository(repo_discovered_path)
+    except pygit2.GitError as e:
+        raise RepositoryNotFoundError(f"Error opening repository at '{repo_path_str}': {e}")
+
+    try:
+        commit_to_revert = repo.revparse_single(commit_ish_to_revert).peel(pygit2.Commit)
+    except (pygit2.GitError, KeyError, TypeError) as e: # TypeError if peel on wrong type
+        raise CommitNotFoundError(f"Commit '{commit_ish_to_revert}' not found or not a commit: {e}")
+
+    try:
+        # For reverting regular commits, mainline_index is typically 1.
+        # pygit2's revert defaults to mainline 1 if not specified (mainline_opts=0).
+        # which is usually correct for reverting a merge commit by
+        # Manual revert logic using three-way merge.
+        # The goal is to apply the inverse of 'commit_to_revert' onto the current HEAD.
+        # This is equivalent to merging the parent of 'commit_to_revert' into HEAD,
+        # using 'commit_to_revert' as the common ancestor.
+
+        if not commit_to_revert.parents:
+            raise GitWriteError(f"Cannot revert commit {commit_to_revert.short_id} as it has no parents (initial commit).")
+
+        # For non-merge commits, there's one parent.
+        # For merge commits, mainline_opts=0 (default for repo.revert) usually means reverting
+        # the changes brought by the second parent. So, P1 is current HEAD's line, P2 is merged line.
+        # Reverting a merge commit M(P1, P2) with mainline 1 (default) means applying changes from P1,
+        # effectively undoing what P2 brought. So, "their_tree" should be P1's tree.
+        # P1 is commit_to_revert.parents[0].
+        parent_to_revert_to = commit_to_revert.parents[0] # This is "mainline 1"
+
+        ancestor_tree = commit_to_revert.tree
+        current_head_commit = repo.head.peel(pygit2.Commit)
+        our_tree = current_head_commit.tree
+        their_tree = parent_to_revert_to.tree
+
+        # Store original HEAD in case of conflict and reset
+        original_head_oid = repo.head.target
+
+        # Perform the merge into a new index
+        # This index will represent the state of the working directory after the revert.
+        # The merge_trees function simulates merging 'their_tree' (parent of reverted commit)
+        # onto 'our_tree' (current HEAD), using 'ancestor_tree' (the commit being reverted)
+        # as the common base.
+        index = repo.merge_trees(ancestor_tree, our_tree, their_tree)
+
+        has_actual_conflicts = False # Initialize before checking
+        if index.conflicts is not None:
+            try:
+                next(iter(index.conflicts)) # Try to get the first conflict entry
+                has_actual_conflicts = True
+            except StopIteration:
+                has_actual_conflicts = False # Iterator was empty, so no conflicts
+
+        if has_actual_conflicts:
+            # Conflicts detected by merge_trees. Abort the revert.
+            repo.index.clear() # Clear any staged changes from the conflicted merge index if it affected repo.index
+            # Reset working directory and index to original HEAD
+            repo.reset(original_head_oid, pygit2.GIT_RESET_HARD)
+            raise MergeConflictError("Revert resulted in conflicts. The revert has been aborted and the working directory is clean.")
+
+        # No conflicts, write this new index to the actual repository's index
+        repo.index.read_tree(index.write_tree()) # Load the resolved tree into the main index
+        repo.index.write()
+
+        # Checkout the index to update the working directory
+        repo.checkout_index(strategy=pygit2.GIT_CHECKOUT_FORCE)
+
+    except MergeConflictError: # Specifically let MergeConflictError pass through
+        raise
+    except GitWriteError as e: # Catch our own specific errors first
+        if original_head_oid and str(original_head_oid) != str(repo.head.target): # Avoid reset if HEAD didn't change or error is from reset itself
+             repo.reset(original_head_oid, pygit2.GIT_RESET_HARD)
+        raise # Re-raise GitWriteError
+    except pygit2.GitError as e:
+        # In case of other GitErrors during the manual revert process
+        if original_head_oid and str(original_head_oid) != str(repo.head.target):
+             repo.reset(original_head_oid, pygit2.GIT_RESET_HARD)
+        raise GitWriteError(f"Error during revert operation: {e}. Working directory reset.")
+    except Exception as e: # Catch any other unexpected error
+        if original_head_oid and str(original_head_oid) != str(repo.head.target):
+            repo.reset(original_head_oid, pygit2.GIT_RESET_HARD)
+        raise GitWriteError(f"An unexpected error occurred during revert: {e}. Working directory reset.")
+
+
+    # If we reach here, the index and working directory should reflect the reverted state.
+    # Proceed to commit.
+
+    try:
+        user_signature = repo.default_signature
+        if not user_signature:
+            # Fallback if default signature is not set (e.g., in some CI environments)
+            # pygit2 requires author and committer to be set.
+            # Using a placeholder. Ideally, this should be configured in the git environment.
+            user_signature = pygit2.Signature("GitWrite", "gitwrite@example.com")
+
+        original_commit_summary = _get_commit_summary(commit_to_revert)
+        revert_commit_message = f"Revert \"{original_commit_summary}\"\n\nThis reverts commit {commit_to_revert.id}."
+
+        # Determine parents for the new commit
+        parents = [repo.head.target] if not repo.head_is_unborn else []
+
+        new_commit_oid = repo.index.write_tree()
+        new_commit_oid = repo.create_commit(
+            "HEAD",  # Update HEAD to point to the new commit
+            user_signature,
+            user_signature,
+            revert_commit_message,
+            new_commit_oid, # Tree OID
+            parents
+        )
+        repo.state_cleanup() # Clean up repository state after commit
+
+        return {
+            'status': 'success',
+            'new_commit_oid': str(new_commit_oid),
+            'message': 'Commit reverted successfully.'
+        }
+    except pygit2.GitError as e:
+        # If commit fails after a successful revert, try to clean up.
+        # This situation is less common but good to handle.
+        repo.reset(repo.head.target, pygit2.GIT_RESET_HARD) # Reset to pre-revert state if possible
+        raise GitWriteError(f"Failed to create revert commit after a clean revert: {e}. Working directory reset.")
+    except Exception as e: # Catch any other unexpected error during commit
+        repo.reset(repo.head.target, pygit2.GIT_RESET_HARD)
+        raise GitWriteError(f"An unexpected error occurred while creating the revert commit: {e}. Working directory reset.")
+
+
+def get_conflicting_files(conflicts_iterator):
+    """Helper function to extract path names from conflicts iterator."""
+    conflicting_paths = []
+    if conflicts_iterator:
+        for conflict_entry in conflicts_iterator:
+            # Each conflict_entry can have ancestor, our, their.
+            # We need to pick one path that represents the conflict.
+            # Usually, 'our' or 'their' path is sufficient.
+            if conflict_entry.our:
+                conflicting_paths.append(conflict_entry.our.path)
+            elif conflict_entry.their: # Fallback if 'our' is not present for some reason
+                conflicting_paths.append(conflict_entry.their.path)
+            elif conflict_entry.ancestor: # Fallback if both 'our' and 'their' are not present
+                conflicting_paths.append(conflict_entry.ancestor.path)
+    return conflicting_paths
+
+
+def save_changes(repo_path_str: str, message: str, include_paths: Optional[List[str]] = None) -> Dict:
+    """
+    Saves changes in the repository by creating a new commit.
+
+    Args:
+        repo_path_str: Path to the repository.
+        message: The commit message.
+        include_paths: Optional list of file/directory paths to stage.
+                       If None, all changes in the working directory are staged.
+
+    Returns:
+        A dictionary with commit details on success.
+        Example: {'status': 'success', 'oid': '...', 'short_oid': '...', ...}
+
+    Raises:
+        RepositoryNotFoundError: If the repository is not found.
+        RepositoryEmptyError: If trying to save in an empty repository without an initial commit
+                              (unless this is the initial commit itself).
+        NoChangesToSaveError: If no changes are detected to be staged (either overall or in
+                              specified `include_paths`).
+        MergeConflictError: If MERGE_HEAD exists and there are unresolved conflicts in the index.
+        RevertConflictError: If REVERT_HEAD exists and there are unresolved conflicts in the index.
+        GitWriteError: For other general Git-related errors during the save process.
+    """
+    import time # Import time for fallback signature
+    from .exceptions import NoChangesToSaveError, RevertConflictError, RepositoryEmptyError # Ensure these are available
+
+    try:
+        repo_discovered_path = pygit2.discover_repository(repo_path_str)
+        if repo_discovered_path is None:
+            raise RepositoryNotFoundError(f"Repository not found at or above '{repo_path_str}'.")
+        repo = pygit2.Repository(repo_discovered_path)
+    except pygit2.GitError as e:
+        # Catching generic GitError during discovery/init and re-raising
+        raise RepositoryNotFoundError(f"Error discovering or initializing repository at '{repo_path_str}': {e}")
+
+    if repo.is_bare:
+        raise GitWriteError("Cannot save changes in a bare repository.")
+
+    is_merge_commit = False
+    is_revert_commit = False
+    parents = []
+    final_message = message # Default to user-provided message
+
+    try:
+        author = repo.default_signature
+        committer = repo.default_signature
+    except pygit2.GitError: # Fallback if .gitconfig has no user.name/user.email
+        current_time = int(time.time())
+        # Offset is 0 for UTC, but pygit2.Signature expects it in minutes.
+        # Using local time offset might be better if available, but 0 (UTC) is a safe default.
+        offset = 0
+        try:
+            # Try to get local timezone offset
+            local_tz = datetime.now(timezone.utc).astimezone().tzinfo
+            if local_tz:
+                offset_delta = local_tz.utcoffset(datetime.now())
+                if offset_delta:
+                    offset = int(offset_delta.total_seconds() / 60)
+        except Exception: # pragma: no cover
+            pass # Stick to UTC if local timezone fails
+        author = pygit2.Signature("GitWrite User", "user@example.com", current_time, offset)
+        committer = pygit2.Signature("GitWrite User", "user@example.com", current_time, offset)
+
+
+    # 1. Handle special states: Merge/Revert
+    # These states mean an operation (merge or revert) was started and needs finalizing.
+    # In these cases, `include_paths` is usually ignored, and all changes related to
+    # resolving the merge/revert are committed.
+
+    try:
+        # Check for MERGE_HEAD
+        merge_head_ref = repo.lookup_reference("MERGE_HEAD")
+        if merge_head_ref and merge_head_ref.target:
+            if include_paths:
+                raise GitWriteError("Selective staging with --include is not allowed during an active merge operation.")
+
+            merge_head_oid = merge_head_ref.target
+            repo.index.read() # Ensure index is up-to-date before add_all
+            repo.index.add_all() # Stage all changes to finalize the merge
+            repo.index.write()   # Persist staged changes to the index file
+
+            if repo.index.conflicts:
+                conflicting_files = get_conflicting_files(repo.index.conflicts)
+                raise MergeConflictError(
+                    "Unresolved conflicts detected during merge. Please resolve them before saving.",
+                    conflicting_files=conflicting_files
+                )
+
+            if repo.head_is_unborn: # Should not happen during a merge
+                raise GitWriteError("Repository HEAD is unborn during a merge operation, which is unexpected.")
+            parents = [repo.head.target, merge_head_oid]
+            is_merge_commit = True
+            # `final_message` will be the user-provided message.
+            # Standard merge commits often have messages like "Merge branch 'X' into 'Y'".
+            # Users of this function are expected to provide such a message if desired.
+
+    except pygit2.KeyError: # MERGE_HEAD not found, so not a merge
+        pass
+    except pygit2.GitError as e: # Other git errors during merge head lookup
+        raise GitWriteError(f"Error checking for MERGE_HEAD: {e}")
+
+
+    if not is_merge_commit: # Only check for REVERT_HEAD if not already handling a merge
+        try:
+            revert_head_ref = repo.lookup_reference("REVERT_HEAD")
+            if revert_head_ref and revert_head_ref.target:
+                if include_paths:
+                    raise GitWriteError("Selective staging with --include is not allowed during an active revert operation.")
+
+                revert_head_oid = revert_head_ref.target
+                repo.index.read() # Ensure index is up-to-date
+                repo.index.add_all() # Stage all changes to finalize the revert
+                repo.index.write()   # Persist staged changes
+
+                if repo.index.conflicts:
+                    conflicting_files = get_conflicting_files(repo.index.conflicts)
+                    raise RevertConflictError(
+                        "Unresolved conflicts detected during revert. Please resolve them before saving.",
+                        conflicting_files=conflicting_files
+                    )
+
+                if repo.head_is_unborn: # Should not happen during a revert
+                     raise GitWriteError("Repository HEAD is unborn during a revert operation, which is unexpected.")
+                parents = [repo.head.target] # A revert commit typically has one parent (current HEAD)
+
+                # Construct standard revert message format
+                try:
+                    reverted_commit = repo.get(revert_head_oid)
+                    if reverted_commit and reverted_commit.message:
+                        first_line_of_reverted_msg = reverted_commit.message.splitlines()[0]
+                        final_message = f"Revert \"{first_line_of_reverted_msg}\"\n\nThis reverts commit {revert_head_oid}.\n\n{message}"
+                    else: # pragma: no cover
+                        final_message = f"Revert commit {revert_head_oid}.\n\n{message}" # Fallback if reverted commit message is weird
+                except Exception: # pragma: no cover
+                     final_message = f"Revert commit {revert_head_oid}.\n\n{message}" # General fallback
+
+                is_revert_commit = True
+
+        except pygit2.KeyError: # REVERT_HEAD not found
+            pass # Not a revert
+        except pygit2.GitError as e: # Other git errors
+            raise GitWriteError(f"Error checking for REVERT_HEAD: {e}")
+
+    # 2. Handle Normal Save (No Merge/Revert in Progress)
+    if not is_merge_commit and not is_revert_commit:
+        repo.index.read() # Load current index state
+
+        if repo.head_is_unborn: # This is going to be the initial commit
+            if not include_paths: # Stage all if no specific paths given
+                repo.index.add_all()
+            else: # Stage only specified paths
+                for path_str in include_paths:
+                    try:
+                        repo.index.add(path_str)
+                    except pygit2.GitError as e: # Pathspec error, etc.
+                        # Optionally, collect warnings about paths not added
+                        print(f"Warning: Could not add path '{path_str}': {e}") # Or use a logging framework
+                        pass
+            repo.index.write()
+            if not list(repo.index): # Check if anything was actually staged
+                raise NoChangesToSaveError(
+                    "Cannot create an initial commit: no files were staged. "
+                    "If include_paths were specified, they might be invalid or ignored."
+                )
+            parents = [] # Initial commit has no parents
+
+        else: # Not an initial commit, regular commit
+            if include_paths:
+                # Stage only specified paths
+                # We need to see if these paths actually result in a change to the index
+                # Get the tree of the current index *before* adding new paths
+                # This helps determine if the subsequent add operations actually changed anything.
+                # However, repo.index.write_tree() clears the index in memory (ステージングエリアをクリアする)
+                # So we should not use it here before `repo.index.add`.
+                # Instead, we can diff the index against HEAD *after* adding.
+
+                # Store current index state by writing to a temporary tree
+                # This is problematic as write_tree() clears the index if used directly on repo.index.
+                # A better way for `include_paths` is to check `repo.status()` for those paths,
+                # or simply add them and then check if the resulting index diff to HEAD is non-empty.
+
+                # Simpler approach: add specified paths, then check if index changed from HEAD.
+                for path_str in include_paths:
+                    try:
+                        repo.index.add(path_str)
+                    except pygit2.GitError as e:
+                        # Pathspec may not exist, or is gitignored and not forced.
+                        # Collect warnings if desired.
+                        print(f"Warning: Could not add path '{path_str}': {e}")
+                        pass
+                repo.index.write() # Persist the changes to the index from add() operations
+
+                # Now, check if the updated index has any changes compared to HEAD tree
+                # If there are no changes, it means the specified files either didn't exist,
+                # were ignored, or had no modifications to stage.
+                diff_to_head = repo.diff_to_tree(repo.head.peel(pygit2.Tree))
+                if not diff_to_head:
+                    raise NoChangesToSaveError(
+                        "No specified files had changes to stage relative to HEAD. "
+                        "Files might be unchanged, non-existent, or gitignored."
+                    )
+            else: # Stage all changes in the working directory
+                repo.index.add_all()
+                repo.index.write()
+
+                # Check repo status to see if there's anything to commit
+                status = repo.status()
+                if not status: # Empty status dict means no changes from HEAD
+                    # This applies if working dir is clean AND index matches HEAD.
+                    # If `add_all` was called, differences between working dir and index are now staged.
+                    # So, we need to check if the index (now written) differs from HEAD.
+                    if repo.head_is_unborn: # Should be caught by initial commit logic
+                        if not list(repo.index): # Double check for empty index
+                           raise NoChangesToSaveError("No changes to save for initial commit.")
+                    elif not repo.diff_to_tree(repo.head.peel(pygit2.Tree)):
+                        raise NoChangesToSaveError("No changes to save (working directory and index are clean or match HEAD).")
+
+            if repo.head_is_unborn: # Should be caught by initial commit logic already.
+                # This case indicates an issue if reached here, as 'initial commit' path should handle it.
+                 raise RepositoryEmptyError("Repository is empty and this is not an initial commit flow.")
+            parents = [repo.head.target]
+
+
+    # 3. Create Commit object
+    try:
+        # The index must have been written by this point by one of the branches above.
+        tree_oid = repo.index.write_tree()
+    except pygit2.GitError as e:
+        # This can happen if the index is empty (e.g., initial commit with no files)
+        # or somehow corrupted. The checks above should prevent an empty index here.
+        if repo.head_is_unborn and not list(repo.index): # list(repo.index) checks current in-memory index
+            raise NoChangesToSaveError("Cannot create an initial commit with no files staged. Index is empty before tree write.")
+        raise GitWriteError(f"Failed to write index tree: {e}")
+
+    # Ensure parents list is correctly set for non-initial commits
+    if not repo.head_is_unborn and not parents:
+        # This implies a non-initial commit is about to be made without parents.
+        # This shouldn't happen if logic above is correct (merge, revert, or normal commit paths).
+        # It might indicate HEAD is detached and points to a non-existent commit,
+        # or some other inconsistent repository state.
+        # For safety, re-fetch HEAD target if parents list is empty for a non-unborn HEAD.
+        # However, pygit2.Repository.create_commit will likely fail if parents are incorrect.
+        # The parent calculation logic in each branch (initial, merge, revert, normal)
+        # should correctly set `parents`. This is a safeguard or indicates a logic flaw if hit.
+        # Defaulting to current HEAD if it was missed:
+        parents = [repo.head.target]
+
+
+    try:
+        commit_oid = repo.create_commit(
+            "HEAD",          # Update HEAD to point to the new commit
+            author,
+            committer,
+            final_message,   # Use the potentially modified message (e.g., for reverts)
+            tree_oid,
+            parents
+        )
+    except pygit2.GitError as e:
+        # Example: empty message if git config disallows it, or bad parent OIDs.
+        raise GitWriteError(f"Failed to create commit object: {e}")
+    except ValueError as e: # E.g. if message is empty and not allowed
+        raise GitWriteError(f"Failed to create commit due to invalid value (e.g. empty message): {e}")
+
+
+    # 4. Post-Commit Actions
+    if is_merge_commit or is_revert_commit:
+        try:
+            repo.state_cleanup() # Remove MERGE_HEAD, REVERT_HEAD, etc.
+        except pygit2.GitError as e: # pragma: no cover
+            # This is not ideal, but the commit was made. Log or notify about cleanup failure.
+            print(f"Warning: Commit was successful, but failed to cleanup repository state (e.g., MERGE_HEAD/REVERT_HEAD): {e}")
+            pass # Continue to return success as commit is made.
+
+    # Determine current branch name
+    branch_name = None
+    if not repo.head_is_detached:
+        try:
+            branch_name = repo.head.shorthand
+        except pygit2.GitError: # pragma: no cover
+            branch_name = "UNKNOWN_BRANCH" # Should be rare if not detached
+    else: # head_is_detached is True
+        branch_name = "DETACHED_HEAD"
+        # Could try to find branches pointing to this commit_oid for more info if needed
+
+    # 5. Return Success
+    return {
+        'status': 'success',
+        'oid': str(commit_oid),
+        'short_oid': str(commit_oid)[:7],
+        'branch_name': branch_name,
+        'message': final_message,
+        'is_merge_commit': is_merge_commit,
+        'is_revert_commit': is_revert_commit,
+    }
+</file>
+
 <file path="tests/test_core_versioning.py">
 import unittest
+import unittest.mock as mock
 import pygit2
 import shutil
 import tempfile
@@ -7913,999 +8906,6 @@ class TestSaveChangesCore(unittest.TestCase):
 
         status = self.repo.status()
         self.assertEqual(len(status), 0, f"Working directory should be clean. Status: {status}")
-</file>
-
-<file path=".gitignore">
-__pycache__
-*__pycache__*
-*.pyc
-</file>
-
-<file path="Jules_Commands.md">
-- Now run the unit tests and fix any issues you find and make a new commit to the same branch if there are changes. Remember to install all the necessary Python package first.
-- Can you update Memory_Bank.md and Implementation_Plan.md with the details of that and make a new commit. Then give me the prompt I should give for the next Jules session. I will be merging the current changes into main, so the next session should branch from main.
-- Read Memory_Bank.md and Implementation_Plan.md and do the next pending task. When you are done, update both of those files with the state of the project. Also give me a prompt for the next Jules session. I will be merging the current changes into main, so the next session should branch from main.
-</file>
-
-<file path="README.md">
-# GitWrite
-
-**Git-based version control for writers and writing teams**
-
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Python 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org/downloads/)
-[![TypeScript](https://img.shields.io/badge/TypeScript-4.9+-blue.svg)](https://www.typescriptlang.org/)
-[![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](http://makeapullrequest.com)
-
-GitWrite brings Git's powerful version control to writers through an intuitive, writer-friendly interface. Built on top of Git's proven technology, it maintains full compatibility with existing Git repositories and hosting services while making version control accessible to non-technical writers.
-
-## 🎯 Why GitWrite?
-
-**For Writers:**
-- Track every revision of your manuscript with meaningful history
-- Experiment with different versions without fear of losing work
-- Collaborate seamlessly with editors, beta readers, and co-authors
-- Get feedback through an intuitive annotation system
-- Export to multiple formats (EPUB, PDF, DOCX) at any point in your writing journey
-
-**For Editors & Publishers:**
-- Review and suggest changes using familiar editorial workflows
-- Maintain version control throughout the publishing process
-- Enable beta readers to provide structured feedback
-- Integrate with existing Git-based development workflows
-
-**For Developers:**
-- All GitWrite repositories are standard Git repositories
-- Use GitWrite alongside existing Git tools and workflows
-- Integrate with any Git hosting service (GitHub, GitLab, Bitbucket)
-- No vendor lock-in - repositories remain Git-compatible
-
-## ✨ Key Features
-
-### 📝 Writer-Friendly Interface
-- **Simple Commands**: `gitwrite save "Finished chapter 3"` instead of `git add . && git commit -m "..."`
-- **Intuitive Terminology**: "explorations" instead of "branches", "save" instead of "commit"
-- **Word-by-Word Comparison**: See exactly what changed between versions at the word level
-- **Visual Diff Viewer**: Compare versions side-by-side with highlighting
-
-### 🤝 Collaborative Writing
-- **Author Control**: Repository owners maintain ultimate control over the main manuscript
-- **Editorial Workflows**: Role-based permissions for editors, copy editors, and proofreaders
-- **Selective Integration**: Cherry-pick individual changes from editors using Git's proven mechanisms
-- **Beta Reader Feedback**: Export to EPUB, collect annotations, sync back as Git commits
-
-### 🔧 Multiple Interfaces
-- **Command Line**: Full-featured CLI for power users
-- **Web Application**: Modern browser-based interface
-- **Mobile App**: EPUB reader with annotation capabilities
-- **REST API**: Integration with writing tools and services
-- **TypeScript SDK**: Easy integration for developers
-
-### 🌐 Git Ecosystem Integration
-- **Full Git Compatibility**: Works with any Git hosting service
-- **Standard Git Operations**: Use `git` commands alongside `gitwrite` commands
-- **Hosting Service Features**: Leverage GitHub/GitLab pull requests, branch protection, and more
-- **Developer Friendly**: Integrate with existing development workflows
-
-## 🚀 Quick Start
-
-### Installation
-
-```bash
-# Install GitWrite CLI (when available)
-pip install git-write
-
-# Or install from source
-git clone https://github.com/eristoddle/git-write.git
-cd git-write
-pip install -e .
-```
-
-*Note: GitWrite is currently in development. Installation instructions will be updated as the project progresses.*
-
-### Your First Writing Project
-
-```bash
-# Start a new writing project
-gitwrite init "my-novel"
-cd my-novel
-
-# Create your first file
-echo "# Chapter 1\n\nIt was a dark and stormy night..." > chapter1.md
-
-# Save your progress
-gitwrite save "Started Chapter 1"
-
-# See your history
-gitwrite history
-
-# Create an alternative version to experiment
-gitwrite explore "alternate-opening"
-echo "# Chapter 1\n\nThe sun was shining brightly..." > chapter1.md
-gitwrite save "Trying a different opening"
-
-# Switch back to main version
-gitwrite switch main
-
-# Compare the versions
-gitwrite compare main alternate-opening
-```
-
-### Working with Editors
-
-```bash
-# Editor creates their own branch for suggestions
-git checkout -b editor-suggestions
-# Editor makes changes and commits them
-
-# Author reviews editor's changes individually
-gitwrite review editor-suggestions
-
-# Author selectively accepts changes
-gitwrite cherry-pick abc1234  # Accept this specific change
-gitwrite cherry-pick def5678 --modify  # Accept this change with modifications
-
-# Merge accepted changes
-gitwrite merge editor-suggestions
-```
-
-### Beta Reader Workflow
-
-```bash
-# Export manuscript for beta readers
-gitwrite export epub --version v1.0
-
-# Beta reader annotations automatically create commits in their branch
-# Author reviews and integrates feedback
-gitwrite review beta-reader-jane
-gitwrite cherry-pick selected-feedback-commits
-```
-
-## 📚 Documentation
-
-- **[User Guide](docs/user-guide.md)** - Complete guide for writers
-- **[Editorial Workflows](docs/editorial-workflows.md)** - Guide for editors and publishers
-- **[API Documentation](docs/api.md)** - REST API reference
-- **[SDK Documentation](docs/sdk.md)** - TypeScript SDK guide
-- **[Git Integration](docs/git-integration.md)** - How GitWrite leverages Git
-- **[Contributing](CONTRIBUTING.md)** - How to contribute to GitWrite
-
-## 🏗️ Architecture
-
-GitWrite is built as a multi-component platform:
-
-```
-┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
-│   Web Client    │    │  Mobile Reader  │    │  Writing Tools  │
-│   (React/TS)    │    │ (React Native)  │    │   (3rd Party)   │
-└─────────┬───────┘    └─────────┬───────┘    └─────────┬───────┘
-          │                      │                      │
-          └──────────────────────┼──────────────────────┘
-                                 │
-                     ┌───────────▼───────────┐
-                     │    TypeScript SDK     │
-                     │   (npm package)       │
-                     └───────────┬───────────┘
-                                 │
-                     ┌───────────▼───────────┐
-                     │      REST API         │
-                     │   (FastAPI/Python)    │
-                     └───────────┬───────────┘
-                                 │
-                     ┌───────────▼───────────┐
-                     │    GitWrite CLI       │
-                     │   (Python Click)      │
-                     └───────────┬───────────┘
-                                 │
-                     ┌───────────▼───────────┐
-                     │       Git Core        │
-                     │   (libgit2/pygit2)    │
-                     └───────────────────────┘
-```
-
-## 🛠️ Development
-
-### Prerequisites
-
-- Python 3.9+
-- Node.js 16+
-- Git 2.20+
-- Docker (for development environment)
-
-### Setup Development Environment
-
-```bash
-# Clone the repository
-git clone https://github.com/eristoddle/git-write.git
-cd git-write
-
-# Set up Python environment
-python -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
-
-# Install dependencies (when available)
-pip install -r requirements.txt  # or requirements-dev.txt for development
-
-# Run tests (when available)
-pytest
-
-# Start development (project-specific commands will be documented as they're implemented)
-```
-
-*Note: Development setup instructions will be updated as the project structure is finalized.*
-
-### Project Structure
-
-```
-git-write/
-├── README.md              # This file
-├── LICENSE                # MIT License
-├── .gitignore            # Git ignore rules
-├── requirements.txt       # Python dependencies
-├── setup.py              # Package setup
-├── src/                  # Source code
-│   └── gitwrite/         # Main package
-├── tests/                # Test files
-├── docs/                 # Documentation
-└── examples/             # Example projects and usage
-```
-
-*Note: The actual project structure may differ. Please check the repository directly for the current organization.*
-
-## 🤝 Contributing
-
-We welcome contributions! Please see our [Contributing Guide](CONTRIBUTING.md) for details.
-
-### Ways to Contribute
-
-- **🐛 Bug Reports**: Found a bug? [Open an issue](https://github.com/eristoddle/git-write/issues)
-- **💡 Feature Requests**: Have an idea? [Start a discussion](https://github.com/eristoddle/git-write/discussions)
-- **📝 Documentation**: Help improve our docs
-- **🔧 Code**: Submit pull requests for bug fixes or features
-- **🧪 Testing**: Help test new features and report issues
-- **🎨 Design**: Improve user interface and experience
-
-## 🌟 Use Cases
-
-### Fiction Writers
-- **Novel Writing**: Track character development, plot changes, and multiple endings
-- **Short Stories**: Maintain collections with version history
-- **Collaborative Fiction**: Co-author stories with real-time collaboration
-
-### Academic Writers
-- **Research Papers**: Track citations, methodology changes, and revisions
-- **Dissertations**: Manage chapters, advisor feedback, and committee suggestions
-- **Grant Proposals**: Version control for funding applications
-
-### Professional Writers
-- **Content Marketing**: Track blog posts, whitepapers, and marketing copy
-- **Technical Documentation**: Maintain software documentation with code integration
-- **Journalism**: Version control for articles and investigative pieces
-
-### Publishers & Editors
-- **Manuscript Management**: Track submissions through editorial process
-- **Multi-Author Projects**: Coordinate anthology and collection projects
-- **Quality Control**: Systematic review and approval workflows
-
-## 🔗 Integrations
-
-GitWrite integrates with popular writing and development tools:
-
-- **Writing Tools**: Scrivener, Ulysses, Bear, Notion
-- **Git Hosting**: GitHub, GitLab, Bitbucket, SourceForge
-- **Export Formats**: Pandoc integration for EPUB, PDF, DOCX, HTML
-- **Editorial Tools**: Track Changes, Google Docs, Microsoft Word
-- **Publishing Platforms**: Integration APIs for self-publishing platforms
-
-## 📊 Roadmap
-
-### Core Features (In Development)
-- [ ] Core Git integration and CLI
-- [ ] Word-by-word diff engine
-- [ ] Basic project management commands
-- [ ] Git repository compatibility
-- [ ] Writer-friendly command interface
-
-### Planned Features
-- [ ] Web interface
-- [ ] Mobile EPUB reader
-- [ ] Beta reader workflow
-- [ ] TypeScript SDK
-- [ ] Git hosting service integration
-- [ ] Advanced selective merge interface
-- [ ] Plugin system for writing tools
-- [ ] Real-time collaboration features
-- [ ] Advanced export options
-- [ ] Workflow automation
-
-### Future Enhancements
-- [ ] AI-powered writing assistance integration
-- [ ] Advanced analytics and insights
-- [ ] Team management features
-- [ ] Enterprise deployment options
-
-*Note: This project is in early development. Features and timelines may change based on community feedback and development progress.*
-
-## 📄 License
-
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
-
-## 🙏 Acknowledgments
-
-- **Git Community**: For creating the foundational technology that makes GitWrite possible
-- **Writing Community**: For feedback and guidance on writing workflows
-- **Open Source Contributors**: For libraries and tools that power GitWrite
-- **Beta Testers**: For helping refine the user experience
-
----
-
-**Made with ❤️ for writers everywhere**
-
-*GitWrite: Where every word matters, and every change is remembered.*
-</file>
-
-<file path="gitwrite_cli/pyproject.toml">
-[project]
-name = "gitwrite-cli"
-version = "0.1.0"
-description = "CLI for GitWrite"
-authors = [
-    {name = "Agent_CLI_Dev",email = "agent@example.com"}
-]
-readme = "README.md"
-requires-python = ">=3.10"
-dependencies = [
-    "click (>=8.2.1,<9.0.0)",
-    "rich (>=14.0.0,<15.0.0)",
-    "pygit2 (>=1.18.0,<2.0.0)"
-]
-
-[tool.poetry]
-packages = [
-    { include = "gitwrite_cli" },
-]
-
-[tool.poetry.group.dev.dependencies]
-pytest = "^8.0.0"  # Or a version compatible with what was seen (8.3.5)
-pytest-cov = "^5.0.0" # Or a recent compatible version
-
-[build-system]
-requires = ["poetry-core>=2.0.0,<3.0.0"]
-build-backend = "poetry.core.masonry.api"
-</file>
-
-<file path="gitwrite_core/versioning.py">
-import pygit2
-# import pygit2.ops # No longer attempting to use pygit2.ops
-from datetime import datetime, timezone, timedelta
-from typing import Optional, List, Dict, Any
-
-from gitwrite_core.exceptions import RepositoryNotFoundError, CommitNotFoundError, NotEnoughHistoryError, MergeConflictError, GitWriteError
-
-def _get_commit_summary(commit: pygit2.Commit) -> str:
-    """Helper function to get the first line of a commit message."""
-    return commit.message.splitlines()[0]
-
-def get_commit_history(repo_path_str: str, count: Optional[int] = None) -> List[Dict]:
-    """
-    Retrieves the commit history for a Git repository.
-
-    Args:
-        repo_path_str: Path to the repository.
-        count: Optional number of commits to return.
-
-    Returns:
-        A list of dictionaries, where each dictionary contains details of a commit.
-
-    Raises:
-        RepositoryNotFoundError: If the repository is not found at the given path.
-    """
-    try:
-        # Discover the repository path
-        repo_path = pygit2.discover_repository(repo_path_str)
-        if repo_path is None:
-            raise RepositoryNotFoundError(f"No repository found at or above '{repo_path_str}'")
-
-        repo = pygit2.Repository(repo_path)
-    except pygit2.GitError as e:
-        raise RepositoryNotFoundError(f"Error opening repository at '{repo_path_str}': {e}")
-
-    if repo.is_bare:
-        return []
-
-    if repo.is_empty or repo.head_is_unborn:
-        return []
-
-    history = []
-    commits_processed = 0
-
-    walker = repo.walk(repo.head.target, pygit2.GIT_SORT_TIME)
-
-    for commit_obj in walker:
-        if count is not None and commits_processed >= count:
-            break
-
-        author_tz = timezone(timedelta(minutes=commit_obj.author.offset))
-        committer_tz = timezone(timedelta(minutes=commit_obj.committer.offset))
-
-        history.append({
-            "short_hash": str(commit_obj.id)[:7],
-            "author_name": commit_obj.author.name,
-            "author_email": commit_obj.author.email,
-            "date": datetime.fromtimestamp(commit_obj.author.time, tz=author_tz).strftime('%Y-%m-%d %H:%M:%S %z'),
-            "committer_name": commit_obj.committer.name,
-            "committer_email": commit_obj.committer.email,
-            "committer_date": datetime.fromtimestamp(commit_obj.committer.time, tz=committer_tz).strftime('%Y-%m-%d %H:%M:%S %z'),
-            "message": commit_obj.message.strip(),
-            "message_short": commit_obj.message.splitlines()[0].strip(),
-            "oid": str(commit_obj.id),
-        })
-        commits_processed += 1
-
-    return history
-
-def get_diff(repo_path_str: str, ref1_str: Optional[str] = None, ref2_str: Optional[str] = None) -> Dict[str, Any]:
-    """
-    Compares two references in a Git repository and returns the diff.
-
-    Args:
-        repo_path_str: Path to the repository.
-        ref1_str: The first reference (e.g., commit hash, branch, tag). Defaults to HEAD~1.
-        ref2_str: The second reference. Defaults to HEAD.
-
-    Returns:
-        A dictionary containing resolved OIDs, display names, and the patch text.
-        {
-            "ref1_oid": str,
-            "ref2_oid": str,
-            "ref1_display_name": str,
-            "ref2_display_name": str,
-            "patch_text": str
-        }
-
-    Raises:
-        RepositoryNotFoundError: If the repository is not found.
-        CommitNotFoundError: If a specified reference cannot be resolved to a commit.
-        NotEnoughHistoryError: If the comparison cannot be made due to lack of history (e.g., initial commit).
-        ValueError: If an invalid combination of references is provided.
-    """
-    try:
-        repo_discovered_path = pygit2.discover_repository(repo_path_str)
-        if repo_discovered_path is None:
-            raise RepositoryNotFoundError(f"No repository found at or above '{repo_path_str}'")
-        repo = pygit2.Repository(repo_discovered_path)
-    except pygit2.GitError as e:
-        raise RepositoryNotFoundError(f"Error opening repository at '{repo_path_str}': {e}")
-
-    commit1_obj: Optional[pygit2.Commit] = None
-    commit2_obj: Optional[pygit2.Commit] = None
-
-    ref1_resolved_name = ref1_str
-    ref2_resolved_name = ref2_str
-
-    if ref1_str is None and ref2_str is None: # Default: HEAD~1 vs HEAD
-        if repo.is_empty or repo.head_is_unborn:
-            raise NotEnoughHistoryError("Repository is empty or HEAD is unborn.")
-        try:
-            commit2_obj = repo.head.peel(pygit2.Commit)
-        except (pygit2.GitError, KeyError) as e:
-            raise CommitNotFoundError(f"Could not resolve HEAD: {e}")
-
-        if not commit2_obj.parents:
-            raise NotEnoughHistoryError("HEAD is the initial commit and has no parent to compare with.")
-        commit1_obj = commit2_obj.parents[0]
-
-        ref1_resolved_name = f"{str(commit1_obj.id)[:7]} (HEAD~1)"
-        ref2_resolved_name = f"{str(commit2_obj.id)[:7]} (HEAD)"
-
-    elif ref1_str is not None and ref2_str is None: # Compare ref1_str vs HEAD
-        if repo.is_empty or repo.head_is_unborn:
-            raise NotEnoughHistoryError("Repository is empty or HEAD is unborn, cannot compare with HEAD.")
-        try:
-            commit1_obj = repo.revparse_single(ref1_str).peel(pygit2.Commit)
-        except (pygit2.GitError, KeyError, TypeError) as e: # TypeError if peel is on wrong type
-            raise CommitNotFoundError(f"Reference '{ref1_str}' not found or not a commit: {e}")
-        try:
-            commit2_obj = repo.head.peel(pygit2.Commit)
-        except (pygit2.GitError, KeyError) as e:
-            raise CommitNotFoundError(f"Could not resolve HEAD: {e}")
-
-        # ref1_resolved_name is already ref1_str
-        ref2_resolved_name = f"{str(commit2_obj.id)[:7]} (HEAD)"
-
-
-    elif ref1_str is not None and ref2_str is not None: # Compare ref1_str vs ref2_str
-        try:
-            commit1_obj = repo.revparse_single(ref1_str).peel(pygit2.Commit)
-        except (pygit2.GitError, KeyError, TypeError) as e:
-            raise CommitNotFoundError(f"Reference '{ref1_str}' not found or not a commit: {e}")
-        try:
-            commit2_obj = repo.revparse_single(ref2_str).peel(pygit2.Commit)
-        except (pygit2.GitError, KeyError, TypeError) as e:
-            raise CommitNotFoundError(f"Reference '{ref2_str}' not found or not a commit: {e}")
-
-        # ref1_resolved_name and ref2_resolved_name are already the input strings
-
-    else: # ref1_str is None and ref2_str is not None -- invalid combination
-        raise ValueError("Invalid reference combination for diff. Cannot specify ref2 without ref1 unless both are None.")
-
-    if not commit1_obj or not commit2_obj:
-        # This should ideally be caught by earlier checks, but as a safeguard:
-        raise CommitNotFoundError("Could not resolve one or both references to commits.")
-
-    tree1 = commit1_obj.tree
-    tree2 = commit2_obj.tree
-
-    diff_obj = repo.diff(tree1, tree2, context_lines=3, interhunk_lines=1)
-
-    return {
-        "ref1_oid": str(commit1_obj.id),
-        "ref2_oid": str(commit2_obj.id),
-        "ref1_display_name": ref1_resolved_name if ref1_resolved_name else str(commit1_obj.id), # Fallback if somehow None
-        "ref2_display_name": ref2_resolved_name if ref2_resolved_name else str(commit2_obj.id), # Fallback if somehow None
-        "patch_text": diff_obj.patch if diff_obj else ""
-    }
-
-def revert_commit(repo_path_str: str, commit_ish_to_revert: str) -> dict:
-    """
-    Reverts a specified commit.
-
-    Args:
-        repo_path_str: Path to the repository.
-        commit_ish_to_revert: The commit reference (hash, branch, tag) to revert.
-
-    Returns:
-        A dictionary indicating success and the new commit OID if the revert was clean.
-        {'status': 'success', 'new_commit_oid': str(new_commit_oid), 'message': 'Commit reverted successfully.'}
-
-    Raises:
-        RepositoryNotFoundError: If the repository is not found.
-        CommitNotFoundError: If the commit to revert is not found.
-        MergeConflictError: If the revert results in conflicts.
-        GitWriteError: For other Git-related errors.
-    """
-    try:
-        repo_discovered_path = pygit2.discover_repository(repo_path_str)
-        if repo_discovered_path is None:
-            raise RepositoryNotFoundError(f"No repository found at or above '{repo_path_str}'")
-        repo = pygit2.Repository(repo_discovered_path)
-    except pygit2.GitError as e:
-        raise RepositoryNotFoundError(f"Error opening repository at '{repo_path_str}': {e}")
-
-    try:
-        commit_to_revert = repo.revparse_single(commit_ish_to_revert).peel(pygit2.Commit)
-    except (pygit2.GitError, KeyError, TypeError) as e: # TypeError if peel on wrong type
-        raise CommitNotFoundError(f"Commit '{commit_ish_to_revert}' not found or not a commit: {e}")
-
-    try:
-        # For reverting regular commits, mainline_index is typically 1.
-        # pygit2's revert defaults to mainline 1 if not specified (mainline_opts=0).
-        # which is usually correct for reverting a merge commit by
-        # Manual revert logic using three-way merge.
-        # The goal is to apply the inverse of 'commit_to_revert' onto the current HEAD.
-        # This is equivalent to merging the parent of 'commit_to_revert' into HEAD,
-        # using 'commit_to_revert' as the common ancestor.
-
-        if not commit_to_revert.parents:
-            raise GitWriteError(f"Cannot revert commit {commit_to_revert.short_id} as it has no parents (initial commit).")
-
-        # For non-merge commits, there's one parent.
-        # For merge commits, mainline_opts=0 (default for repo.revert) usually means reverting
-        # the changes brought by the second parent. So, P1 is current HEAD's line, P2 is merged line.
-        # Reverting a merge commit M(P1, P2) with mainline 1 (default) means applying changes from P1,
-        # effectively undoing what P2 brought. So, "their_tree" should be P1's tree.
-        # P1 is commit_to_revert.parents[0].
-        parent_to_revert_to = commit_to_revert.parents[0] # This is "mainline 1"
-
-        ancestor_tree = commit_to_revert.tree
-        current_head_commit = repo.head.peel(pygit2.Commit)
-        our_tree = current_head_commit.tree
-        their_tree = parent_to_revert_to.tree
-
-        # Store original HEAD in case of conflict and reset
-        original_head_oid = repo.head.target
-
-        # Perform the merge into a new index
-        # This index will represent the state of the working directory after the revert.
-        # The merge_trees function simulates merging 'their_tree' (parent of reverted commit)
-        # onto 'our_tree' (current HEAD), using 'ancestor_tree' (the commit being reverted)
-        # as the common base.
-        index = repo.merge_trees(ancestor_tree, our_tree, their_tree)
-
-        has_actual_conflicts = False # Initialize before checking
-        if index.conflicts is not None:
-            try:
-                next(iter(index.conflicts)) # Try to get the first conflict entry
-                has_actual_conflicts = True
-            except StopIteration:
-                has_actual_conflicts = False # Iterator was empty, so no conflicts
-
-        if has_actual_conflicts:
-            # Conflicts detected by merge_trees. Abort the revert.
-            repo.index.clear() # Clear any staged changes from the conflicted merge index if it affected repo.index
-            # Reset working directory and index to original HEAD
-            repo.reset(original_head_oid, pygit2.GIT_RESET_HARD)
-            raise MergeConflictError("Revert resulted in conflicts. The revert has been aborted and the working directory is clean.")
-
-        # No conflicts, write this new index to the actual repository's index
-        repo.index.read_tree(index.write_tree()) # Load the resolved tree into the main index
-        repo.index.write()
-
-        # Checkout the index to update the working directory
-        repo.checkout_index(strategy=pygit2.GIT_CHECKOUT_FORCE)
-
-    except MergeConflictError: # Specifically let MergeConflictError pass through
-        raise
-    except GitWriteError as e: # Catch our own specific errors first
-        if original_head_oid and str(original_head_oid) != str(repo.head.target): # Avoid reset if HEAD didn't change or error is from reset itself
-             repo.reset(original_head_oid, pygit2.GIT_RESET_HARD)
-        raise # Re-raise GitWriteError
-    except pygit2.GitError as e:
-        # In case of other GitErrors during the manual revert process
-        if original_head_oid and str(original_head_oid) != str(repo.head.target):
-             repo.reset(original_head_oid, pygit2.GIT_RESET_HARD)
-        raise GitWriteError(f"Error during revert operation: {e}. Working directory reset.")
-    except Exception as e: # Catch any other unexpected error
-        if original_head_oid and str(original_head_oid) != str(repo.head.target):
-            repo.reset(original_head_oid, pygit2.GIT_RESET_HARD)
-        raise GitWriteError(f"An unexpected error occurred during revert: {e}. Working directory reset.")
-
-
-    # If we reach here, the index and working directory should reflect the reverted state.
-    # Proceed to commit.
-
-    try:
-        user_signature = repo.default_signature
-        if not user_signature:
-            # Fallback if default signature is not set (e.g., in some CI environments)
-            # pygit2 requires author and committer to be set.
-            # Using a placeholder. Ideally, this should be configured in the git environment.
-            user_signature = pygit2.Signature("GitWrite", "gitwrite@example.com")
-
-        original_commit_summary = _get_commit_summary(commit_to_revert)
-        revert_commit_message = f"Revert \"{original_commit_summary}\"\n\nThis reverts commit {commit_to_revert.id}."
-
-        # Determine parents for the new commit
-        parents = [repo.head.target] if not repo.head_is_unborn else []
-
-        new_commit_oid = repo.index.write_tree()
-        new_commit_oid = repo.create_commit(
-            "HEAD",  # Update HEAD to point to the new commit
-            user_signature,
-            user_signature,
-            revert_commit_message,
-            new_commit_oid, # Tree OID
-            parents
-        )
-        repo.state_cleanup() # Clean up repository state after commit
-
-        return {
-            'status': 'success',
-            'new_commit_oid': str(new_commit_oid),
-            'message': 'Commit reverted successfully.'
-        }
-    except pygit2.GitError as e:
-        # If commit fails after a successful revert, try to clean up.
-        # This situation is less common but good to handle.
-        repo.reset(repo.head.target, pygit2.GIT_RESET_HARD) # Reset to pre-revert state if possible
-        raise GitWriteError(f"Failed to create revert commit after a clean revert: {e}. Working directory reset.")
-    except Exception as e: # Catch any other unexpected error during commit
-        repo.reset(repo.head.target, pygit2.GIT_RESET_HARD)
-        raise GitWriteError(f"An unexpected error occurred while creating the revert commit: {e}. Working directory reset.")
-
-
-def get_conflicting_files(conflicts_iterator):
-    """Helper function to extract path names from conflicts iterator."""
-    conflicting_paths = []
-    if conflicts_iterator:
-        for conflict_entry in conflicts_iterator:
-            # Each conflict_entry can have ancestor, our, their.
-            # We need to pick one path that represents the conflict.
-            # Usually, 'our' or 'their' path is sufficient.
-            if conflict_entry.our:
-                conflicting_paths.append(conflict_entry.our.path)
-            elif conflict_entry.their: # Fallback if 'our' is not present for some reason
-                conflicting_paths.append(conflict_entry.their.path)
-            elif conflict_entry.ancestor: # Fallback if both 'our' and 'their' are not present
-                conflicting_paths.append(conflict_entry.ancestor.path)
-    return conflicting_paths
-
-
-def save_changes(repo_path_str: str, message: str, include_paths: Optional[List[str]] = None) -> Dict:
-    """
-    Saves changes in the repository by creating a new commit.
-
-    Args:
-        repo_path_str: Path to the repository.
-        message: The commit message.
-        include_paths: Optional list of file/directory paths to stage.
-                       If None, all changes in the working directory are staged.
-
-    Returns:
-        A dictionary with commit details on success.
-        Example: {'status': 'success', 'oid': '...', 'short_oid': '...', ...}
-
-    Raises:
-        RepositoryNotFoundError: If the repository is not found.
-        RepositoryEmptyError: If trying to save in an empty repository without an initial commit
-                              (unless this is the initial commit itself).
-        NoChangesToSaveError: If no changes are detected to be staged (either overall or in
-                              specified `include_paths`).
-        MergeConflictError: If MERGE_HEAD exists and there are unresolved conflicts in the index.
-        RevertConflictError: If REVERT_HEAD exists and there are unresolved conflicts in the index.
-        GitWriteError: For other general Git-related errors during the save process.
-    """
-    import time # Import time for fallback signature
-    from .exceptions import NoChangesToSaveError, RevertConflictError, RepositoryEmptyError # Ensure these are available
-
-    try:
-        repo_discovered_path = pygit2.discover_repository(repo_path_str)
-        if repo_discovered_path is None:
-            raise RepositoryNotFoundError(f"Repository not found at or above '{repo_path_str}'.")
-        repo = pygit2.Repository(repo_discovered_path)
-    except pygit2.GitError as e:
-        # Catching generic GitError during discovery/init and re-raising
-        raise RepositoryNotFoundError(f"Error discovering or initializing repository at '{repo_path_str}': {e}")
-
-    if repo.is_bare:
-        raise GitWriteError("Cannot save changes in a bare repository.")
-
-    is_merge_commit = False
-    is_revert_commit = False
-    parents = []
-    final_message = message # Default to user-provided message
-
-    try:
-        author = repo.default_signature
-        committer = repo.default_signature
-    except pygit2.GitError: # Fallback if .gitconfig has no user.name/user.email
-        current_time = int(time.time())
-        # Offset is 0 for UTC, but pygit2.Signature expects it in minutes.
-        # Using local time offset might be better if available, but 0 (UTC) is a safe default.
-        offset = 0
-        try:
-            # Try to get local timezone offset
-            local_tz = datetime.now(timezone.utc).astimezone().tzinfo
-            if local_tz:
-                offset_delta = local_tz.utcoffset(datetime.now())
-                if offset_delta:
-                    offset = int(offset_delta.total_seconds() / 60)
-        except Exception: # pragma: no cover
-            pass # Stick to UTC if local timezone fails
-        author = pygit2.Signature("GitWrite User", "user@example.com", current_time, offset)
-        committer = pygit2.Signature("GitWrite User", "user@example.com", current_time, offset)
-
-
-    # 1. Handle special states: Merge/Revert
-    # These states mean an operation (merge or revert) was started and needs finalizing.
-    # In these cases, `include_paths` is usually ignored, and all changes related to
-    # resolving the merge/revert are committed.
-
-    try:
-        # Check for MERGE_HEAD
-        merge_head_ref = repo.lookup_reference("MERGE_HEAD")
-        if merge_head_ref and merge_head_ref.target:
-            if include_paths:
-                raise GitWriteError("Selective staging with --include is not allowed during an active merge operation.")
-
-            merge_head_oid = merge_head_ref.target
-            repo.index.read() # Ensure index is up-to-date before add_all
-            repo.index.add_all() # Stage all changes to finalize the merge
-            repo.index.write()   # Persist staged changes to the index file
-
-            if repo.index.conflicts:
-                conflicting_files = get_conflicting_files(repo.index.conflicts)
-                raise MergeConflictError(
-                    "Unresolved conflicts detected during merge. Please resolve them before saving.",
-                    conflicting_files=conflicting_files
-                )
-
-            if repo.head_is_unborn: # Should not happen during a merge
-                raise GitWriteError("Repository HEAD is unborn during a merge operation, which is unexpected.")
-            parents = [repo.head.target, merge_head_oid]
-            is_merge_commit = True
-            # `final_message` will be the user-provided message.
-            # Standard merge commits often have messages like "Merge branch 'X' into 'Y'".
-            # Users of this function are expected to provide such a message if desired.
-
-    except pygit2.KeyError: # MERGE_HEAD not found, so not a merge
-        pass
-    except pygit2.GitError as e: # Other git errors during merge head lookup
-        raise GitWriteError(f"Error checking for MERGE_HEAD: {e}")
-
-
-    if not is_merge_commit: # Only check for REVERT_HEAD if not already handling a merge
-        try:
-            revert_head_ref = repo.lookup_reference("REVERT_HEAD")
-            if revert_head_ref and revert_head_ref.target:
-                if include_paths:
-                    raise GitWriteError("Selective staging with --include is not allowed during an active revert operation.")
-
-                revert_head_oid = revert_head_ref.target
-                repo.index.read() # Ensure index is up-to-date
-                repo.index.add_all() # Stage all changes to finalize the revert
-                repo.index.write()   # Persist staged changes
-
-                if repo.index.conflicts:
-                    conflicting_files = get_conflicting_files(repo.index.conflicts)
-                    raise RevertConflictError(
-                        "Unresolved conflicts detected during revert. Please resolve them before saving.",
-                        conflicting_files=conflicting_files
-                    )
-
-                if repo.head_is_unborn: # Should not happen during a revert
-                     raise GitWriteError("Repository HEAD is unborn during a revert operation, which is unexpected.")
-                parents = [repo.head.target] # A revert commit typically has one parent (current HEAD)
-
-                # Construct standard revert message format
-                try:
-                    reverted_commit = repo.get(revert_head_oid)
-                    if reverted_commit and reverted_commit.message:
-                        first_line_of_reverted_msg = reverted_commit.message.splitlines()[0]
-                        final_message = f"Revert \"{first_line_of_reverted_msg}\"\n\nThis reverts commit {revert_head_oid}.\n\n{message}"
-                    else: # pragma: no cover
-                        final_message = f"Revert commit {revert_head_oid}.\n\n{message}" # Fallback if reverted commit message is weird
-                except Exception: # pragma: no cover
-                     final_message = f"Revert commit {revert_head_oid}.\n\n{message}" # General fallback
-
-                is_revert_commit = True
-
-        except pygit2.KeyError: # REVERT_HEAD not found
-            pass # Not a revert
-        except pygit2.GitError as e: # Other git errors
-            raise GitWriteError(f"Error checking for REVERT_HEAD: {e}")
-
-    # 2. Handle Normal Save (No Merge/Revert in Progress)
-    if not is_merge_commit and not is_revert_commit:
-        repo.index.read() # Load current index state
-
-        if repo.head_is_unborn: # This is going to be the initial commit
-            if not include_paths: # Stage all if no specific paths given
-                repo.index.add_all()
-            else: # Stage only specified paths
-                for path_str in include_paths:
-                    try:
-                        repo.index.add(path_str)
-                    except pygit2.GitError as e: # Pathspec error, etc.
-                        # Optionally, collect warnings about paths not added
-                        print(f"Warning: Could not add path '{path_str}': {e}") # Or use a logging framework
-                        pass
-            repo.index.write()
-            if not list(repo.index): # Check if anything was actually staged
-                raise NoChangesToSaveError(
-                    "Cannot create an initial commit: no files were staged. "
-                    "If include_paths were specified, they might be invalid or ignored."
-                )
-            parents = [] # Initial commit has no parents
-
-        else: # Not an initial commit, regular commit
-            if include_paths:
-                # Stage only specified paths
-                # We need to see if these paths actually result in a change to the index
-                # Get the tree of the current index *before* adding new paths
-                # This helps determine if the subsequent add operations actually changed anything.
-                # However, repo.index.write_tree() clears the index in memory (ステージングエリアをクリアする)
-                # So we should not use it here before `repo.index.add`.
-                # Instead, we can diff the index against HEAD *after* adding.
-
-                # Store current index state by writing to a temporary tree
-                # This is problematic as write_tree() clears the index if used directly on repo.index.
-                # A better way for `include_paths` is to check `repo.status()` for those paths,
-                # or simply add them and then check if the resulting index diff to HEAD is non-empty.
-
-                # Simpler approach: add specified paths, then check if index changed from HEAD.
-                for path_str in include_paths:
-                    try:
-                        repo.index.add(path_str)
-                    except pygit2.GitError as e:
-                        # Pathspec may not exist, or is gitignored and not forced.
-                        # Collect warnings if desired.
-                        print(f"Warning: Could not add path '{path_str}': {e}")
-                        pass
-                repo.index.write() # Persist the changes to the index from add() operations
-
-                # Now, check if the updated index has any changes compared to HEAD tree
-                # If there are no changes, it means the specified files either didn't exist,
-                # were ignored, or had no modifications to stage.
-                diff_to_head = repo.diff_to_tree(repo.head.peel(pygit2.Tree))
-                if not diff_to_head:
-                    raise NoChangesToSaveError(
-                        "No specified files had changes to stage relative to HEAD. "
-                        "Files might be unchanged, non-existent, or gitignored."
-                    )
-            else: # Stage all changes in the working directory
-                repo.index.add_all()
-                repo.index.write()
-
-                # Check repo status to see if there's anything to commit
-                status = repo.status()
-                if not status: # Empty status dict means no changes from HEAD
-                    # This applies if working dir is clean AND index matches HEAD.
-                    # If `add_all` was called, differences between working dir and index are now staged.
-                    # So, we need to check if the index (now written) differs from HEAD.
-                    if repo.head_is_unborn: # Should be caught by initial commit logic
-                        if not list(repo.index): # Double check for empty index
-                           raise NoChangesToSaveError("No changes to save for initial commit.")
-                    elif not repo.diff_to_tree(repo.head.peel(pygit2.Tree)):
-                        raise NoChangesToSaveError("No changes to save (working directory and index are clean or match HEAD).")
-
-            if repo.head_is_unborn: # Should be caught by initial commit logic already.
-                # This case indicates an issue if reached here, as 'initial commit' path should handle it.
-                 raise RepositoryEmptyError("Repository is empty and this is not an initial commit flow.")
-            parents = [repo.head.target]
-
-
-    # 3. Create Commit object
-    try:
-        # The index must have been written by this point by one of the branches above.
-        tree_oid = repo.index.write_tree()
-    except pygit2.GitError as e:
-        # This can happen if the index is empty (e.g., initial commit with no files)
-        # or somehow corrupted. The checks above should prevent an empty index here.
-        if repo.head_is_unborn and not list(repo.index): # list(repo.index) checks current in-memory index
-            raise NoChangesToSaveError("Cannot create an initial commit with no files staged. Index is empty before tree write.")
-        raise GitWriteError(f"Failed to write index tree: {e}")
-
-    # Ensure parents list is correctly set for non-initial commits
-    if not repo.head_is_unborn and not parents:
-        # This implies a non-initial commit is about to be made without parents.
-        # This shouldn't happen if logic above is correct (merge, revert, or normal commit paths).
-        # It might indicate HEAD is detached and points to a non-existent commit,
-        # or some other inconsistent repository state.
-        # For safety, re-fetch HEAD target if parents list is empty for a non-unborn HEAD.
-        # However, pygit2.Repository.create_commit will likely fail if parents are incorrect.
-        # The parent calculation logic in each branch (initial, merge, revert, normal)
-        # should correctly set `parents`. This is a safeguard or indicates a logic flaw if hit.
-        # Defaulting to current HEAD if it was missed:
-        parents = [repo.head.target]
-
-
-    try:
-        commit_oid = repo.create_commit(
-            "HEAD",          # Update HEAD to point to the new commit
-            author,
-            committer,
-            final_message,   # Use the potentially modified message (e.g., for reverts)
-            tree_oid,
-            parents
-        )
-    except pygit2.GitError as e:
-        # Example: empty message if git config disallows it, or bad parent OIDs.
-        raise GitWriteError(f"Failed to create commit object: {e}")
-    except ValueError as e: # E.g. if message is empty and not allowed
-        raise GitWriteError(f"Failed to create commit due to invalid value (e.g. empty message): {e}")
-
-
-    # 4. Post-Commit Actions
-    if is_merge_commit or is_revert_commit:
-        try:
-            repo.state_cleanup() # Remove MERGE_HEAD, REVERT_HEAD, etc.
-        except pygit2.GitError as e: # pragma: no cover
-            # This is not ideal, but the commit was made. Log or notify about cleanup failure.
-            print(f"Warning: Commit was successful, but failed to cleanup repository state (e.g., MERGE_HEAD/REVERT_HEAD): {e}")
-            pass # Continue to return success as commit is made.
-
-    # Determine current branch name
-    branch_name = None
-    if not repo.head_is_detached:
-        try:
-            branch_name = repo.head.shorthand
-        except pygit2.GitError: # pragma: no cover
-            branch_name = "UNKNOWN_BRANCH" # Should be rare if not detached
-    else: # head_is_detached is True
-        branch_name = "DETACHED_HEAD"
-        # Could try to find branches pointing to this commit_oid for more info if needed
-
-    # 5. Return Success
-    return {
-        'status': 'success',
-        'oid': str(commit_oid),
-        'short_oid': str(commit_oid)[:7],
-        'branch_name': branch_name,
-        'message': final_message,
-        'is_merge_commit': is_merge_commit,
-        'is_revert_commit': is_revert_commit,
-    }
 </file>
 
 <file path="gitwrite_core/exceptions.py">
