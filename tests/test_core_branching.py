@@ -20,6 +20,7 @@ from gitwrite_core.exceptions import (
     MergeConflictError, # Added for merge tests
     GitWriteError
 )
+from .conftest import make_commit_on_path
 
 # Helper functions (make_commit_on_path, make_initial_commit) are in conftest.py
 # Fixtures (test_repo, empty_test_repo, bare_test_repo, configure_git_user,

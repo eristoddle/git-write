@@ -307,3 +307,9 @@ This sequence of operations proved more reliable.
 **Next Steps (Optional):**
 Proceed with any further development tasks, now that the project structure and Poetry configuration are stable.
 ---
+Fixed widespread `NameError` test failures by adding the necessary helper function imports from `conftest.py` to the relevant test files:
+- `tests/test_cli_history_compare.py`
+- `tests/test_cli_init_ignore.py`
+- `tests/test_cli_save_revert.py`
+- `tests/test_cli_sync_merge.py`
+- `tests/test_core_branching.py`

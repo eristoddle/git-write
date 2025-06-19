@@ -4,6 +4,7 @@ import os # Used directly in some tests
 # shutil was for fixtures, now in conftest
 from pathlib import Path # Used directly in some tests
 from click.testing import CliRunner # For type hinting runner fixture from conftest
+from .conftest import make_commit, _assert_gitwrite_structure, _assert_common_gitignore_patterns
 
 from gitwrite_cli.main import cli
 # COMMON_GITIGNORE_PATTERNS is now imported in conftest.py for helpers.

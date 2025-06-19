@@ -5,6 +5,7 @@ import os # Used directly in tests
 from pathlib import Path # Used directly in tests
 from click.testing import CliRunner # For type hinting runner fixture from conftest
 from gitwrite_cli.main import cli
+from .conftest import make_commit, create_file, stage_file, resolve_conflict
 
 # Helper functions (make_commit, create_file, stage_file, resolve_conflict) are in conftest.py
 # Fixtures (repo_with_unstaged_changes, repo_with_staged_changes, repo_with_merge_conflict, repo_with_revert_conflict) are in conftest.py

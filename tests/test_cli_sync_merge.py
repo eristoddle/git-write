@@ -6,6 +6,7 @@ import re # Used by TestMergeCommandCLI
 from pathlib import Path # Used by test methods directly
 from click.testing import CliRunner # For type hinting runner fixture from conftest
 from unittest.mock import patch # Used by TestSyncCommandCLI
+from .conftest import make_commit
 
 from gitwrite_cli.main import cli
 # It's good practice to import specific exceptions if they are explicitly caught or expected.

@@ -4,6 +4,7 @@ import os # Still used by tests directly
 import re # For TestHistoryCommandCLI
 from pathlib import Path # Still used by tests directly
 from click.testing import CliRunner # For type hinting runner fixture from conftest
+from .conftest import make_commit
 # shutil was for local_repo fixture, now in conftest
 
 from gitwrite_cli.main import cli
