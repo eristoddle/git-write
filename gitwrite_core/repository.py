@@ -597,3 +597,179 @@ def sync_repository(repo_path_str: str, remote_name: str = "origin", branch_name
             result_summary["status"] = "error_in_sub_operation" # Some part failed but didn't raise fully
 
     return result_summary
+
+
+def list_branches(repo_path_str: str) -> Dict[str, Any]:
+    """
+    Lists all local branches in the specified repository.
+
+    Args:
+        repo_path_str: String path to the root of the repository.
+
+    Returns:
+        A dictionary with 'status', 'branches' (list of branch names), and 'message'.
+    """
+    branches_list: List[str] = []
+    try:
+        # Attempt to discover the repository if repo_path_str is not the .git folder directly
+        try:
+            repo_path = pygit2.discover_repository(repo_path_str)
+            if repo_path is None:
+                return {'status': 'error', 'branches': [], 'message': f"No Git repository found at or above '{repo_path_str}'."}
+            repo = pygit2.Repository(repo_path)
+        except pygit2.GitError: # Fallback for cases where discover_repository might not be suitable e.g. bare repo
+             repo = pygit2.Repository(repo_path_str)
+
+
+        if repo.is_bare:
+            # For bare repositories, branches are listed directly.
+            # repo.branches.local might not work as expected or might be empty
+            # We can list all references under refs/heads/
+            for ref_name in repo.listall_references():
+                if ref_name.startswith("refs/heads/"):
+                    branches_list.append(ref_name.replace("refs/heads/", ""))
+        else:
+            branches_list = list(repo.branches.local)
+
+        if not branches_list and repo.is_empty: # Check if repo is empty and has no branches
+             return {'status': 'empty_repo', 'branches': [], 'message': 'Repository is empty and has no branches.'}
+
+        return {'status': 'success', 'branches': sorted(branches_list), 'message': 'Successfully retrieved local branches.'}
+    except pygit2.GitError as e:
+        return {'status': 'error', 'branches': [], 'message': f"Git error: {e}"}
+    except Exception as e:
+        return {'status': 'error', 'branches': [], 'message': f"An unexpected error occurred: {e}"}
+
+
+def list_tags(repo_path_str: str) -> Dict[str, Any]:
+    """
+    Lists all tags in the specified repository.
+
+    Args:
+        repo_path_str: String path to the root of the repository.
+
+    Returns:
+        A dictionary with 'status', 'tags' (list of tag names), and 'message'.
+    """
+    tags_list: List[str] = []
+    try:
+        try:
+            repo_path = pygit2.discover_repository(repo_path_str)
+            if repo_path is None:
+                return {'status': 'error', 'tags': [], 'message': f"No Git repository found at or above '{repo_path_str}'."}
+            repo = pygit2.Repository(repo_path)
+        except pygit2.GitError:
+            repo = pygit2.Repository(repo_path_str)
+
+        # repo.listall_tags() is deprecated, use repo.references.iterator with "refs/tags/"
+        for ref in repo.references.iterator():
+            if ref.name.startswith("refs/tags/"):
+                tags_list.append(ref.shorthand) # shorthand gives the tag name directly
+
+        if not tags_list and repo.is_empty:
+            return {'status': 'empty_repo', 'tags': [], 'message': 'Repository is empty and has no tags.'}
+        elif not tags_list:
+            return {'status': 'no_tags', 'tags': [], 'message': 'No tags found in the repository.'}
+
+        return {'status': 'success', 'tags': sorted(tags_list), 'message': 'Successfully retrieved tags.'}
+    except pygit2.GitError as e:
+        return {'status': 'error', 'tags': [], 'message': f"Git error: {e}"}
+    except Exception as e:
+        return {'status': 'error', 'tags': [], 'message': f"An unexpected error occurred: {e}"}
+
+
+def list_commits(repo_path_str: str, branch_name: Optional[str] = None, max_count: Optional[int] = None) -> Dict[str, Any]:
+    """
+    Lists commits for a given branch, or the current branch if branch_name is not provided.
+
+    Args:
+        repo_path_str: String path to the root of the repository.
+        branch_name: Optional name of the branch. Defaults to the current branch (HEAD).
+        max_count: Optional maximum number of commits to return.
+
+    Returns:
+        A dictionary with 'status', 'commits' (list of commit details), and 'message'.
+    """
+    commits_data: List[Dict[str, Any]] = []
+    try:
+        try:
+            repo_path = pygit2.discover_repository(repo_path_str)
+            if repo_path is None:
+                return {'status': 'error', 'commits': [], 'message': f"No Git repository found at or above '{repo_path_str}'."}
+            repo = pygit2.Repository(repo_path)
+        except pygit2.GitError:
+            repo = pygit2.Repository(repo_path_str)
+
+        if repo.is_empty or repo.head_is_unborn:
+            target_commit_oid = None
+            if not branch_name: # No branch specified and repo is empty/unborn
+                 return {'status': 'empty_repo', 'commits': [], 'message': 'Repository is empty or HEAD is unborn, and no branch specified.'}
+            # If branch_name is specified, we'll try to find it, it might exist even if HEAD is unborn (e.g. bare repo)
+        else:
+            target_commit_oid = repo.head.target
+
+
+        if branch_name:
+            try:
+                branch = repo.branches.get(branch_name) or repo.branches.get(f"origin/{branch_name}")
+                if not branch: # Check remote branches if local not found
+                    # Fallback for branches that might not be in `repo.branches` (e.g. some remote branches not fetched directly)
+                    ref_lookup_name = f"refs/heads/{branch_name}"
+                    if not repo.lookup_reference(ref_lookup_name): # try local first
+                        ref_lookup_name = f"refs/remotes/origin/{branch_name}" # then common remote name
+                        if not repo.lookup_reference(ref_lookup_name):
+                             return {'status': 'error', 'commits': [], 'message': f"Branch '{branch_name}' not found."}
+                    branch_ref = repo.lookup_reference(ref_lookup_name)
+                    target_commit_oid = branch_ref.target
+                else:
+                    target_commit_oid = branch.target
+
+            except KeyError:
+                 return {'status': 'error', 'commits': [], 'message': f"Branch '{branch_name}' not found."}
+            except pygit2.GitError: # Could be other GitError, e.g. ref is not direct
+                 return {'status': 'error', 'commits': [], 'message': f"Error accessing branch '{branch_name}'."}
+        elif repo.head_is_detached:
+            # HEAD is detached, use its target directly. list_commits on current (detached) HEAD.
+            target_commit_oid = repo.head.target
+
+        if not target_commit_oid: # If still no target_commit_oid (e.g. empty repo and specific branch not found)
+            # This case implies branch_name was given but not found in an empty/unborn repo.
+            return {'status': 'error', 'commits': [], 'message': f"Branch '{branch_name}' not found or repository is empty."}
+
+
+        count = 0
+        for commit in repo.walk(target_commit_oid, pygit2.GIT_SORT_TOPOLOGICAL | pygit2.GIT_SORT_TIME):
+            if max_count is not None and count >= max_count:
+                break
+
+            author_sig = commit.author
+            committer_sig = commit.committer
+
+            commits_data.append({
+                'sha': str(commit.id),
+                'message': commit.message.strip(),
+                'author_name': author_sig.name,
+                'author_email': author_sig.email,
+                'author_date': author_sig.time, # Unix timestamp
+                'committer_name': committer_sig.name,
+                'committer_email': committer_sig.email,
+                'committer_date': committer_sig.time, # Unix timestamp
+                'parents': [str(p) for p in commit.parent_ids]
+            })
+            count += 1
+
+        if not commits_data and (repo.is_empty or (branch_name and not commits_data)):
+            # If we found a branch but it has no commits (e.g. orphaned branch or just initialized)
+             message = f"No commits found for branch '{branch_name}'." if branch_name else "No commits found."
+             if repo.is_empty : message = "Repository is empty." # More specific message for empty repo
+             return {'status': 'no_commits', 'commits': [], 'message': message}
+
+
+        return {'status': 'success', 'commits': commits_data, 'message': f'Successfully retrieved {len(commits_data)} commits.'}
+    except pygit2.GitError as e:
+        # Specific check for unborn head if no branch is specified
+        if "unborn HEAD" in str(e).lower() and not branch_name:
+             return {'status': 'empty_repo', 'commits': [], 'message': "Repository HEAD is unborn. Specify a branch or make an initial commit."}
+        return {'status': 'error', 'commits': [], 'message': f"Git error: {e}"}
+    except Exception as e:
+        return {'status': 'error', 'commits': [], 'message': f"An unexpected error occurred: {e}"}
