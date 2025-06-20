@@ -47,12 +47,31 @@ Status: **Completed** - Implemented read-only API endpoints for branches, tags, 
 
 ### Task 5.4 - Agent_API_Dev: Design and Implement Large File Upload Strategy
 Objective: Implement the two-step upload mechanism to handle large files.
-Status: **Pending**
+Status: **Completed**
 
-1.  Create a new router file, e.g., `gitwrite_api/routers/uploads.py`.
-2.  Implement the first step: `POST /repositories/{repo_id}/save/initiate`. This endpoint takes metadata (commit message, file paths, hashes) and returns a list of secure, one-time upload URLs and a completion token.
-3.  Implement the upload handler: `PUT /upload-session/{upload_id}`. This endpoint will stream the raw request body to a temporary file on the server.
-4.  Implement the final step: `POST /repositories/{repo_id}/save/complete`. This endpoint takes the `completion_token`.
+Key Implemented Components:
+1.  **Pydantic Models**: Defined `FileMetadata`, `FileUploadInitiateRequest`, `FileUploadInitiateResponse`, `FileUploadCompleteRequest`, and `FileUploadCompleteResponse` in `gitwrite_api/models.py` for handling request and response data for the upload process.
+2.  **Upload Router Setup**: Created `gitwrite_api/routers/uploads.py` containing two `APIRouter` instances:
+    *   `router`: For main save operations, prefixed with `/repositories/{repo_id}/save`.
+    *   `session_upload_router`: For handling individual file uploads, without a repository-specific prefix.
+3.  **Initiation Endpoint**: Implemented `POST /repositories/{repo_id}/save/initiate` on `router`. This endpoint:
+    *   Accepts a commit message and a list of files (path and hash).
+    *   Generates unique upload IDs and a completion token.
+    *   Stores session metadata (repo ID, user ID, commit message, file details) in an in-memory dictionary `upload_sessions`.
+    *   Returns upload URLs (relative paths like `/upload-session/{upload_id}`) and the completion token.
+4.  **File Upload Handler Endpoint**: Implemented `PUT /upload-session/{upload_id}` on `session_upload_router`. This endpoint:
+    *   Accepts a file via `UploadFile`.
+    *   Finds the corresponding session using `upload_id`.
+    *   Saves the uploaded file to a temporary location (`TEMP_UPLOAD_DIR`).
+    *   Updates the session to mark the file as uploaded and records its temporary path.
+5.  **Completion Endpoint**: Implemented `POST /repositories/{repo_id}/save/complete` on `router`. This endpoint:
+    *   Accepts a `completion_token`.
+    *   Validates the token, user ownership, repository ID, and ensures all declared files have been uploaded.
+    *   Currently simulates a commit (actual Git operations deferred to Task 5.5).
+    *   Clears the session from `upload_sessions`.
+    *   Returns a simulated commit ID.
+6.  **Main App Integration**: Updated `gitwrite_api/main.py` to include both `uploads.router` and `uploads.session_upload_router` in the FastAPI application.
+7.  **Unit Tests**: Created `tests/test_api_uploads.py` with comprehensive unit tests for the initiate, upload, and complete endpoints, covering success and various error scenarios using `TestClient` and authentication mocking.
 
 ### Task 5.5 - Agent_API_Dev: Implement the `save` Endpoint Logic
 Objective: Connect the upload mechanism to the core `save_changes` function.

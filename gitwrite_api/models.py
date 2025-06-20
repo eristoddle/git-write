@@ -1,6 +1,6 @@
-from typing import Optional
+from typing import Optional, List, Dict
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class User(BaseModel):
@@ -21,3 +21,22 @@ class Token(BaseModel):
 
 class TokenData(BaseModel):
     username: Optional[str] = None
+
+class FileMetadata(BaseModel):
+    file_path: str = Field(..., description="The relative path of the file in the repository.")
+    file_hash: str = Field(..., description="SHA256 hash of the file content for integrity checking.")
+
+class FileUploadInitiateRequest(BaseModel):
+    commit_message: str = Field(..., description="The commit message for the save operation.")
+    files: List[FileMetadata] = Field(..., description="A list of files to be uploaded.")
+
+class FileUploadInitiateResponse(BaseModel):
+    upload_urls: Dict[str, str] = Field(..., description="A dictionary mapping file paths to their unique, one-time upload URLs.")
+    completion_token: str = Field(..., description="A token to be used to finalize the upload process.")
+
+class FileUploadCompleteRequest(BaseModel):
+    completion_token: str = Field(..., description="The completion token obtained from the initiation step.")
+
+class FileUploadCompleteResponse(BaseModel):
+    commit_id: str = Field(..., description="The ID of the new commit created after successful upload and save.")
+    message: str = Field(..., description="A message indicating the outcome of the operation.")
