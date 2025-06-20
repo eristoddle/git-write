@@ -14,70 +14,99 @@ Summary: All tasks related to refactoring the CLI application and establishing t
 ---
 
 ## Phase 5: REST API Development
-Status: **Pending**
-Architectural Notes: The API will be built using FastAPI and containerized with Docker. It will use a two-step upload process to handle large files securely and efficiently, preventing API server bottlenecks.
+Status: **Completed**
+Architectural Notes: The API was built using FastAPI and containerized with Docker. It uses a two-step upload process to handle large files securely and efficiently, preventing API server bottlenecks.
 
 ### Task 5.1 - Agent_API_Dev: Initial API and Docker Setup
 Objective: Create the `gitwrite_api` directory, set up the basic FastAPI application, and create a `Dockerfile` for containerization.
 Status: **Completed**
 
-1.  Create the `gitwrite_api/` directory at the project root.
-2.  Update the root `pyproject.toml` to include `gitwrite_api` in the `[tool.poetry.packages]` section. Add `fastapi`, `uvicorn[standard]`, and `python-jose[cryptography]` as new dependencies. Run `poetry lock` and `poetry install`.
-3.  Create `gitwrite_api/main.py` with a basic FastAPI app instance and a `/` health-check endpoint.
-4.  Create a `Dockerfile` at the project root that correctly copies all source directories (`gitwrite_api`, `gitwrite_core`), installs dependencies via Poetry, and runs the API using `uvicorn`.
-
 ### Task 5.2 - Agent_API_Dev: Implement Security and Authentication
 Objective: Set up JWT-based authentication and basic security helpers.
 Status: **Completed**
 
-1.  Create a `gitwrite_api/security.py` module for JWT creation and decoding functions.
-2.  Implement a `get_current_user` dependency to protect endpoints.
-3.  Create `User` models in a `gitwrite_api/models.py` file using Pydantic.
-4.  Create a `/token` endpoint in `gitwrite_api/routers/auth.py` for issuing JWTs based on a temporary in-memory user store.
-
 ### Task 5.3 - Agent_API_Dev: Implement Read-Only Repository Endpoints
 Objective: Create secure endpoints for non-mutating operations to validate the API structure.
-Status: **Completed** - Implemented read-only API endpoints for branches, tags, and commits. Includes core functions and API router. Unit tests added. Developed on branch `feature/api-readonly-repo-endpoints`.
-
-1.  Create a new router file, e.g., `gitwrite_api/routers/repository.py`.
-2.  Create a `GET /repositories/{repo_id}/history` endpoint. This will call `gitwrite_core.versioning.get_commit_history` and return the list of commits as JSON.
-3.  Create a `GET /repositories/{repo_id}/tags` endpoint that calls `gitwrite_core.tagging.list_tags`.
-4.  Protect these endpoints with the `get_current_user` dependency from Task 5.2.
-5.  Add unit tests for these endpoints.
+Status: **Completed**
 
 ### Task 5.4 - Agent_API_Dev: Design and Implement Large File Upload Strategy
 Objective: Implement the two-step upload mechanism to handle large files.
 Status: **Completed**
 
-Key Implemented Components:
-1.  **Pydantic Models**: Defined `FileMetadata`, `FileUploadInitiateRequest`, `FileUploadInitiateResponse`, `FileUploadCompleteRequest`, and `FileUploadCompleteResponse` in `gitwrite_api/models.py` for handling request and response data for the upload process.
-2.  **Upload Router Setup**: Created `gitwrite_api/routers/uploads.py` containing two `APIRouter` instances:
-    *   `router`: For main save operations, prefixed with `/repositories/{repo_id}/save`.
-    *   `session_upload_router`: For handling individual file uploads, without a repository-specific prefix.
-3.  **Initiation Endpoint**: Implemented `POST /repositories/{repo_id}/save/initiate` on `router`. This endpoint:
-    *   Accepts a commit message and a list of files (path and hash).
-    *   Generates unique upload IDs and a completion token.
-    *   Stores session metadata (repo ID, user ID, commit message, file details) in an in-memory dictionary `upload_sessions`.
-    *   Returns upload URLs (relative paths like `/upload-session/{upload_id}`) and the completion token.
-4.  **File Upload Handler Endpoint**: Implemented `PUT /upload-session/{upload_id}` on `session_upload_router`. This endpoint:
-    *   Accepts a file via `UploadFile`.
-    *   Finds the corresponding session using `upload_id`.
-    *   Saves the uploaded file to a temporary location (`TEMP_UPLOAD_DIR`).
-    *   Updates the session to mark the file as uploaded and records its temporary path.
-5.  **Completion Endpoint**: Implemented `POST /repositories/{repo_id}/save/complete` on `router`. This endpoint:
-    *   Accepts a `completion_token`.
-    *   Validates the token, user ownership, repository ID, and ensures all declared files have been uploaded.
-    *   Currently simulates a commit (actual Git operations deferred to Task 5.5).
-    *   Clears the session from `upload_sessions`.
-    *   Returns a simulated commit ID.
-6.  **Main App Integration**: Updated `gitwrite_api/main.py` to include both `uploads.router` and `uploads.session_upload_router` in the FastAPI application.
-7.  **Unit Tests**: Created `tests/test_api_uploads.py` with comprehensive unit tests for the initiate, upload, and complete endpoints, covering success and various error scenarios using `TestClient` and authentication mocking.
-
 ### Task 5.5 - Agent_API_Dev: Implement the `save` Endpoint Logic
 Objective: Connect the upload mechanism to the core `save_changes` function.
 Status: **Completed**
 
-Implemented the `POST /repository/save` endpoint and the core function `save_and_commit_file` in `gitwrite_core/repository.py`. This allows saving file content with a commit message. Added Pydantic models `SaveFileRequest` and `SaveFileResponse`. Included comprehensive unit tests for both API and core logic.
+---
+
+## Phase 6: TypeScript SDK Development
+Status: **Pending**
+Architectural Notes:
+*   **Location:** The SDK will be developed in a new, top-level directory: `gitwrite_sdk/`. This keeps the TypeScript project and its tooling (`package.json`, etc.) separate from the Python components.
+*   **Technology:** The SDK will be a TypeScript-first library, packaged for use in both Node.js and browser environments. It will use a modern build toolchain and provide a clean, promise-based API that mirrors the REST API's functionality.
+
+### Task 6.1 - Agent_SDK_Dev: Initial SDK Setup & Project Configuration
+Objective: Set up the project structure, dependencies, and build configuration for the TypeScript SDK.
+Status: **Pending**
+
+1.  Create a new directory `gitwrite_sdk/` at the project root.
+2.  Initialize a `package.json` file. Add dependencies like `axios` (for HTTP requests) and dev dependencies like `typescript`, `jest` (or `vitest`), `ts-jest`, and a bundler like `rollup` or `vite`.
+3.  Create a `tsconfig.json` file with appropriate settings for library development (e.g., declaration file generation).
+4.  Set up the build scripts in `package.json` to compile TypeScript and generate different module formats (e.g., ESM, CJS).
+
+### Task 6.2 - Agent_SDK_Dev: Implement Authentication and API Client
+Objective: Create a base API client to handle authentication and requests to the GitWrite API.
+Status: **Pending**
+
+1.  Create a main client class (e.g., `GitWriteClient`).
+2.  Implement methods for authentication (`login`, `logout`, `setToken`). The client should store the JWT and automatically include it in subsequent requests.
+3.  Create a thin wrapper around `axios` to handle base URL configuration, headers, and error handling for API responses.
+
+### Task 6.3 - Agent_SDK_Dev: Implement Read-Only Repository Methods
+Objective: Create SDK methods for read-only repository operations.
+Status: **Pending**
+
+1.  Create a `repository` module or property on the main client.
+2.  Implement `repository.listBranches()`, `repository.listTags()`, and `repository.listCommits(options)`.
+3.  These methods will call the corresponding endpoints on the API (`/repository/branches`, etc.) using the base API client.
+4.  Define TypeScript interfaces for the response data to ensure type safety.
+
+### Task 6.4 - Agent_SDK_Dev: Implement `save` Method
+Objective: Create an SDK method for the direct save functionality.
+Status: **Pending**
+
+1.  Implement a `repository.save(filePath, content, commitMessage)` method.
+2.  This method will call the `POST /repository/save` endpoint.
+3.  Define TypeScript interfaces for the request and response bodies.
+
+### Task 6.5 - Agent_SDK_Dev: Implement Multi-Part Upload Methods
+Objective: Create a high-level SDK method to simplify the two-step upload process.
+Status: **Pending**
+
+1.  Design a method like `repository.saveFiles(files, commitMessage)`.
+2.  `files` would be an array of objects, each containing a file path and its content (e.g., as a `Blob` or `Buffer`).
+3.  This method will internally handle the entire workflow:
+    -   (Optional, client-side) Calculate file hashes.
+    -   Call the `/initiate` endpoint.
+    -   Use the returned URLs to upload each file's content in parallel.
+    -   Once all uploads are complete, call the `/complete` endpoint with the token.
+4.  Return a promise that resolves with the final commit ID upon success.
+
+### Task 6.6 - Agent_SDK_Dev: Add Unit and Integration Tests
+Objective: Ensure the SDK is reliable and correctly interacts with the API.
+Status: **Pending**
+
+1.  Set up the chosen testing framework (Jest/Vitest).
+2.  Write unit tests for individual methods, mocking the API client (`axios`) to test logic in isolation.
+3.  (Optional but recommended) Write integration tests that run against a live instance of the GitWrite API (e.g., running in Docker).
+
+### Task 6.7 - Agent_SDK_Dev: Documentation and Packaging
+Objective: Prepare the SDK for consumption by other developers.
+Status: **Pending**
+
+1.  Add TSDoc comments to all public classes and methods.
+2.  Create a `README.md` file within the `gitwrite_sdk/` directory explaining how to install and use the SDK.
+3.  Configure the `package.json` with all necessary fields for publishing to a package registry like npm.
 
 ---
 ## Note on Handover Protocol

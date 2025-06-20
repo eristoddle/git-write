@@ -136,3 +136,54 @@ None for this task. The actual integration with `gitwrite_core.versioning.save_c
 
 **Next Steps (Optional):**
 Proceed with Phase 5, Task 5.5: Implement the `save` Endpoint Logic.
+---
+**Agent:** Jules (Implementation Agent)
+**Task Reference:** Phase 5, Task 5.5: Implement the `save` Endpoint Logic
+
+**Summary:**
+Implemented the `POST /repository/save` endpoint and the core function `save_and_commit_file` to allow programmatically saving file content and creating a Git commit.
+
+**Details:**
+- Implemented `gitwrite_core/repository.py::save_and_commit_file` to handle the low-level logic of writing a file, staging it, and creating a Git commit with a specified message and author. It creates parent directories as needed and returns the new commit ID.
+- Implemented the `POST /repository/save` API endpoint in `gitwrite_api/routers/repository.py`. This endpoint is authenticated and uses the active user's details for commit authorship. It validates the request using a Pydantic model and calls the core function.
+- Created `SaveFileRequest` and `SaveFileResponse` Pydantic models in `gitwrite_api/models.py` to define the schema for the API endpoint.
+- Added comprehensive unit tests in `tests/test_core_repository.py` and `tests/test_api_repository.py` to cover both the core logic and the API endpoint's functionality, including success cases and error handling.
+
+**Output/Result:**
+- Modified file: `gitwrite_core/repository.py`
+- Modified file: `gitwrite_api/routers/repository.py`
+- Modified file: `gitwrite_api/models.py`
+- Modified file: `tests/test_core_repository.py`
+- Modified file: `tests/test_api_repository.py`
+
+**Status:** Completed
+
+**Issues/Blockers:**
+None. The use of `PLACEHOLDER_REPO_PATH` in the API router is a known item for future dynamic resolution.
+
+**Next Steps (Optional):**
+None for this task.
+---
+**Agent:** Manager Agent
+**Task Reference:** Finalize API Epic and Plan Next Epic
+
+**Summary:**
+Phase 5, REST API Development, is now complete. All tasks, including the implementation of read-only endpoints, the multi-part upload strategy, and the direct save endpoint, have been successfully implemented and tested. The project is now ready to begin the next major phase: the development of the TypeScript SDK.
+
+**Details:**
+- **API Epic Complete:** All tasks in Phase 5 of the `Implementation_Plan.md` are now marked as "Completed". The API provides a solid foundation for client applications.
+- **Next Epic - TypeScript SDK:** A new "Phase 6: TypeScript SDK Development" has been added to the `Implementation_Plan.md`.
+- **SDK Goals:** The SDK will provide a developer-friendly way to interact with the GitWrite API from JavaScript/TypeScript environments. It will abstract away the direct HTTP calls and provide a clean, typed interface for all API functionalities.
+- The `Implementation_Plan.md` has been updated with a detailed, actionable plan for building the SDK.
+
+**Output/Result:**
+- Updated `Implementation_Plan.md`.
+- This log entry.
+
+**Status:** Completed
+
+**Issues/Blockers:**
+None.
+
+**Next Steps (Optional):**
+Proceed with Phase 6, Task 6.1: Initial SDK Setup & Project Configuration.
