@@ -85,20 +85,11 @@ class TestRevertCommandCLI:
         assert initial_file_path.exists()
 
         result = runner.invoke(cli, ["revert", str(initial_commit_hash)])
-        # Assuming this is currently a failing case in the CLI
+        # This is an expected failure case for reverting an initial commit.
         assert result.exit_code != 0, f"CLI should have failed but returned success: {result.output}"
-        assert "An unexpected error occurred: cannot access local variable 'original_head_oid' where it is not associated with a value" in result.output
-
-        # Since the operation is expected to fail, the following assertions about success are removed/commented out.
-        # revert_commit_hash_short = result.output.strip().split("New commit: ")[-1][:7]
-        # revert_commit = local_repo.revparse_single(revert_commit_hash_short)
-        # assert revert_commit is not None
-        # assert local_repo.head.target == revert_commit.id
-        # expected_revert_msg_start = f"Revert \"{initial_commit_obj.message.splitlines()[0]}\""
-        # assert revert_commit.message.startswith(expected_revert_msg_start)
-        # assert not initial_file_path.exists()
-        # revert_commit_tree = revert_commit.tree
-        # assert len(revert_commit_tree) == 0, "Tree of revert commit should be empty"
+        assert "Cannot revert commit" in result.output and "as it has no parents (initial commit)" in result.output
+        # Verify no new commit was made
+        assert local_repo.head.target == initial_commit_hash, "HEAD should not have changed"
 
 
     def test_revert_a_revert_commit(self, local_repo: pygit2.Repository, runner: CliRunner): # Fixtures from conftest
@@ -521,11 +512,10 @@ class TestSaveCommandCLI:
         create_file(repo, "actual_file.txt", "content") # create_file from conftest
         initial_head = repo.head.target
         result = runner.invoke(cli, ["save", "-i", "", "Empty include path test"])
-        assert result.exit_code == 0, f"CLI Error: {result.output}"
-        assert "An unexpected error occurred during save: '.git/HEAD'" in result.output
-        # The following assertion is no longer valid given the unexpected error
-        # assert "No specified files had changes to stage relative to HEAD." in result.output
-        assert repo.head.target == initial_head # Check if commit was still prevented
+        assert result.exit_code == 0, f"CLI Error: {result.output}" # Expect 0 as CLI reports 'no changes' as info, not error.
+        assert "No specified files had changes to stage relative to HEAD." in result.output
+        # Check that no new commit was made
+        assert repo.head.target == initial_head, "HEAD should not have changed after attempting to save with empty include path."
 
     def test_save_include_ignored_file_cli(self, runner: CliRunner, local_repo: pygit2.Repository): # Fixtures from conftest
         repo = local_repo

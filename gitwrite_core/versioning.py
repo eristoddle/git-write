@@ -205,6 +205,7 @@ def revert_commit(repo_path_str: str, commit_ish_to_revert: str) -> dict:
     except (pygit2.GitError, KeyError, TypeError) as e: # TypeError if peel on wrong type
         raise CommitNotFoundError(f"Commit '{commit_ish_to_revert}' not found or not a commit: {e}")
 
+    original_head_oid = None # Initialize before try block
     try:
         # For reverting regular commits, mainline_index is typically 1.
         # pygit2's revert defaults to mainline 1 if not specified (mainline_opts=0).
@@ -500,6 +501,8 @@ def save_changes(repo_path_str: str, message: str, include_paths: Optional[List[
                 repo.index.add_all()
             else: # Stage only specified paths
                 for path_str in include_paths:
+                    if not path_str.strip():
+                        continue # Skip empty/whitespace-only paths
                     path_obj = Path(repo.workdir) / path_str
                     if not path_obj.exists():
                         print(f"Warning: Path '{path_str}' (in initial commit) does not exist and was not added.")
@@ -550,6 +553,8 @@ def save_changes(repo_path_str: str, message: str, include_paths: Optional[List[
             # ---- NEW LOGIC FOR include_paths AND add_all ----
             if include_paths:
                 for path_str in include_paths:
+                    if not path_str.strip():
+                        continue # Skip empty/whitespace-only paths
                     path_obj = Path(repo.workdir) / path_str
                     if not path_obj.exists():
                         print(f"Warning: Path '{path_str}' does not exist and was not added.")
