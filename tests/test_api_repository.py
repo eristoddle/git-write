@@ -300,6 +300,8 @@ def test_list_commits_no_commits(mock_list_commits):
 # so it can be imported directly for overriding.
 
 from gitwrite_api.routers.repository import get_current_active_user as actual_repo_auth_dependency
+from gitwrite_api.models import SaveFileRequest # For the /save endpoint tests
+from http import HTTPStatus # For status codes, optional
 
 @patch('gitwrite_api.routers.repository.list_branches')
 def test_list_branches_unauthorized_explicit_override(mock_list_branches):
@@ -311,4 +313,124 @@ def test_list_branches_unauthorized_explicit_override(mock_list_branches):
     response = client.get("/repository/branches")
     assert response.status_code == 401
     assert response.json()["detail"] == "Not authenticated via override"
+    app.dependency_overrides = {} # Clear overrides
+
+
+# --- Tests for /repository/save ---
+
+@patch('gitwrite_api.routers.repository.save_and_commit_file')
+def test_api_save_file_success(mock_core_save_file):
+    mock_core_save_file.return_value = {
+        'status': 'success',
+        'message': 'File saved and committed successfully.',
+        'commit_id': 'fakecommit123'
+    }
+    app.dependency_overrides[actual_repo_auth_dependency] = mock_get_current_active_user
+
+    payload = SaveFileRequest(
+        file_path="test_file.txt",
+        content="Hello world",
+        commit_message="Add test_file.txt"
+    )
+    response = client.post("/repository/save", json=payload.model_dump())
+
+    assert response.status_code == HTTPStatus.OK # 200
+    data = response.json()
+    assert data["status"] == "success"
+    assert data["message"] == "File saved and committed successfully."
+    assert data["commit_id"] == "fakecommit123"
+
+    mock_core_save_file.assert_called_once_with(
+        repo_path_str=MOCK_REPO_PATH,
+        file_path=payload.file_path,
+        content=payload.content,
+        commit_message=payload.commit_message,
+        author_name=MOCK_USER.username,
+        author_email=MOCK_USER.email
+    )
+    app.dependency_overrides = {}
+
+
+@patch('gitwrite_api.routers.repository.save_and_commit_file')
+def test_api_save_file_core_function_error(mock_core_save_file):
+    mock_core_save_file.return_value = {
+        'status': 'error',
+        'message': 'Core function failed spectacularly.',
+        'commit_id': None
+    }
+    app.dependency_overrides[actual_repo_auth_dependency] = mock_get_current_active_user
+
+    payload = SaveFileRequest(
+        file_path="another_test.txt",
+        content="Some content",
+        commit_message="A commit message"
+    )
+    response = client.post("/repository/save", json=payload.model_dump())
+
+    # The API endpoint has logic to return 400 or 500.
+    # If message contains "Repository not found", "Error committing file", or "Error staging file", it's 500.
+    # Otherwise, it's 400. "Core function failed spectacularly." should result in 400.
+    assert response.status_code == HTTPStatus.BAD_REQUEST # 400
+    data = response.json()
+    assert data["detail"] == "Core function failed spectacularly."
+    app.dependency_overrides = {}
+
+
+@patch('gitwrite_api.routers.repository.save_and_commit_file')
+def test_api_save_file_core_function_internal_error(mock_core_save_file):
+    # Test a case where the error message implies an internal server error
+    mock_core_save_file.return_value = {
+        'status': 'error',
+        'message': 'Error committing file due to internal git problem.',
+        'commit_id': None
+    }
+    app.dependency_overrides[actual_repo_auth_dependency] = mock_get_current_active_user
+
+    payload = SaveFileRequest(file_path="internal_error.txt", content="content", commit_message="msg")
+    response = client.post("/repository/save", json=payload.model_dump())
+
+    assert response.status_code == HTTPStatus.INTERNAL_SERVER_ERROR # 500
+    data = response.json()
+    assert data["detail"] == "Error committing file due to internal git problem."
+    app.dependency_overrides = {}
+
+
+def test_api_save_file_invalid_request_payload():
+    app.dependency_overrides[actual_repo_auth_dependency] = mock_get_current_active_user
+    # Missing 'file_path', 'content', 'commit_message'
+    invalid_payload = {
+        "file_path": "test.txt"
+        # 'content' and 'commit_message' are missing
+    }
+    response = client.post("/repository/save", json=invalid_payload)
+
+    assert response.status_code == HTTPStatus.UNPROCESSABLE_ENTITY # 422
+    data = response.json()
+    assert "detail" in data
+    # Check if detail mentions the missing fields (FastAPI provides this)
+    assert any("content" in error["loc"] for error in data["detail"])
+    assert any("commit_message" in error["loc"] for error in data["detail"])
+    app.dependency_overrides = {}
+
+
+def test_api_save_file_not_authenticated():
+    # Ensure no auth override for this test
+    app.dependency_overrides = {}
+
+    # Temporarily override the actual_repo_auth_dependency to simulate raising 401
+    async def mock_raise_401_for_save():
+        from fastapi import HTTPException
+        raise HTTPException(status_code=HTTPStatus.UNAUTHORIZED, detail="Not authenticated for save")
+
+    app.dependency_overrides[actual_repo_auth_dependency] = mock_raise_401_for_save
+
+    payload = SaveFileRequest(
+        file_path="test_file.txt",
+        content="Hello world",
+        commit_message="Add test_file.txt"
+    )
+    response = client.post("/repository/save", json=payload.model_dump())
+
+    assert response.status_code == HTTPStatus.UNAUTHORIZED # 401
+    assert response.json()["detail"] == "Not authenticated for save"
     app.dependency_overrides = {} # Clear overrides

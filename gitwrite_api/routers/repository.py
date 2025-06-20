@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Body
 from typing import Any, Dict, Optional, List
 from pydantic import BaseModel, Field
 import datetime # For commit date serialization
@@ -7,7 +7,7 @@ import datetime # For commit date serialization
 PLACEHOLDER_REPO_PATH = "/path/to/user/repo"
 
 # Import core functions
-from gitwrite_core.repository import list_branches, list_tags, list_commits
+from gitwrite_core.repository import list_branches, list_tags, list_commits, save_and_commit_file
 
 # Import security dependency (assuming path based on project structure)
 # Adjust the import path if your security module is located differently.
@@ -18,6 +18,8 @@ from gitwrite_core.repository import list_branches, list_tags, list_commits
 # Placeholder for security dependency - replace with actual import
 # from gitwrite_api.security import get_current_active_user
 # from gitwrite_api.models import User # Example, if User model is needed by get_current_active_user
+from ..models import SaveFileRequest, SaveFileResponse # Added for the new save endpoint
+
 
 # For now, let's define a placeholder dependency to make the code runnable without the actual security module
 async def get_current_active_user(): # Placeholder
@@ -141,6 +143,55 @@ async def api_list_commits(
     #         commit["committer_date"] = datetime.datetime.fromtimestamp(commit["committer_date"], tz=datetime.timezone.utc)
 
     return handle_core_response(result)
+
+
+@router.post("/save", response_model=SaveFileResponse)
+async def api_save_file(
+    save_request: SaveFileRequest = Body(...),
+    current_user: User = Depends(get_current_active_user)
+):
+    """
+    Saves a file to the repository and commits the change.
+    Requires authentication.
+    """
+    repo_path = PLACEHOLDER_REPO_PATH
+
+    # Ensure current_user fields are available; provide defaults if placeholder returns dict
+    user_email = current_user.email if hasattr(current_user, 'email') else "defaultuser@example.com"
+    user_name = current_user.username if hasattr(current_user, 'username') else "Default User"
+
+
+    result = save_and_commit_file(
+        repo_path_str=repo_path,
+        file_path=save_request.file_path,
+        content=save_request.content,
+        commit_message=save_request.commit_message,
+        author_name=user_name,
+        author_email=user_email
+    )
+
+    if result['status'] == 'success':
+        return SaveFileResponse(
+            status='success',
+            message=result['message'],
+            commit_id=result.get('commit_id') # Use .get() for safety
+        )
+    else: # 'error' status
+        # Determine status code: 400 for client-side errors (e.g., bad path, validation), 500 for server-side.
+        # The core function's message might give clues. For now, default to 400 as per prompt.
+        # More specific error types from core would allow better mapping here.
+        status_code = 400
+        if "Repository not found" in result.get("message", ""):
+            status_code = 500 # This indicates a server configuration issue with PLACEHOLDER_REPO_PATH
+        elif "Error committing file" in result.get("message", "") and "Repository not found" not in result.get("message",""):
+             status_code = 500 # Internal git operation error
+        elif "Error staging file" in result.get("message", ""):
+            status_code = 500 # Internal git operation error
+
+        raise HTTPException(
+            status_code=status_code,
+            detail=result.get('message', "An error occurred while saving the file.")
+        )
 
 # Example of how to include this router in your main FastAPI application:
 # from fastapi import FastAPI

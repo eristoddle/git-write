@@ -769,3 +769,192 @@ class TestSyncRepositoryCore(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+# --- Tests for save_and_commit_file ---
+
+# Helper function to read file content
+def _read_file_content(file_path: Path) -> str:
+    with open(file_path, "r") as f:
+        return f.read()
+
+@pytest.fixture
+def tmp_repo_for_save(tmp_path: Path) -> Path:
+    repo_dir = tmp_path / "test_save_repo"
+    # We use initialize_repository to set up a basic .git folder and potentially GitWrite structure
+    # which also handles initial commit, so the repo is not unborn.
+    # Pass project_name=None to use repo_dir directly as the repository root.
+    init_result = initialize_repository(path_str=str(repo_dir))
+    assert init_result["status"] == "success", f"Fixture setup failed: {init_result['message']}"
+
+    # initialize_repository returns the path to the created repository.
+    initialized_repo_path = Path(init_result["path"])
+
+    # Configure user for the repository to avoid issues with global git config in tests
+    repo = pygit2.Repository(str(initialized_repo_path))
+    config = repo.config
+    config["user.name"] = "Test Author"
+    config["user.email"] = "testauthor@example.com"
+
+    return initialized_repo_path
+
+
+def test_save_new_file_success(tmp_repo_for_save: Path):
+    repo_path = tmp_repo_for_save
+    file_path_rel = "new_file.txt"
+    content = "This is a new file."
+    commit_message = "Add new_file.txt"
+
+    result = save_and_commit_file(
+        repo_path_str=str(repo_path),
+        file_path=file_path_rel,
+        content=content,
+        commit_message=commit_message
+    )
+
+    assert result["status"] == "success"
+    assert result["commit_id"] is not None
+    assert (repo_path / file_path_rel).exists()
+    assert _read_file_content(repo_path / file_path_rel) == content
+
+    repo = pygit2.Repository(str(repo_path))
+    last_commit = repo.head.peel(pygit2.Commit)
+    assert last_commit.message.strip() == commit_message
+    assert str(last_commit.id) == result["commit_id"]
+
+
+def test_save_update_existing_file_success(tmp_repo_for_save: Path):
+    repo_path = tmp_repo_for_save
+    file_path_rel = "existing_file.txt"
+    initial_content = "Initial version."
+    initial_commit_msg = "Add existing_file.txt"
+
+    # First save
+    save_and_commit_file(str(repo_path), file_path_rel, initial_content, initial_commit_msg)
+
+    updated_content = "Updated version."
+    updated_commit_msg = "Update existing_file.txt"
+
+    result = save_and_commit_file(
+        repo_path_str=str(repo_path),
+        file_path=file_path_rel,
+        content=updated_content,
+        commit_message=updated_commit_msg
+    )
+
+    assert result["status"] == "success"
+    assert result["commit_id"] is not None
+    assert _read_file_content(repo_path / file_path_rel) == updated_content
+
+    repo = pygit2.Repository(str(repo_path))
+    last_commit = repo.head.peel(pygit2.Commit)
+    assert last_commit.message.strip() == updated_commit_msg
+    assert str(last_commit.id) == result["commit_id"]
+    # Ensure it's a new commit
+    assert last_commit.parents[0].message.strip() == initial_commit_msg
+
+
+def test_save_file_with_author_details(tmp_repo_for_save: Path):
+    repo_path = tmp_repo_for_save
+    file_path_rel = "authored_file.txt"
+    author_name = "Specific Author"
+    author_email = "specific@example.com"
+
+    result = save_and_commit_file(
+        repo_path_str=str(repo_path),
+        file_path=file_path_rel,
+        content="Content by specific author.",
+        commit_message="Commit with specific author",
+        author_name=author_name,
+        author_email=author_email
+    )
+
+    assert result["status"] == "success"
+    repo = pygit2.Repository(str(repo_path))
+    commit = repo.get(result["commit_id"])
+    assert isinstance(commit, pygit2.Commit)
+    assert commit.author.name == author_name
+    assert commit.author.email == author_email
+    # Committer details will be the default from repo config or fallback in save_and_commit_file
+    # if not overridden by specific committer args (which we are not testing here)
+    assert commit.committer.name == "Test Author" # From fixture repo config
+    assert commit.committer.email == "testauthor@example.com"
+
+
+def test_save_file_creates_subdirectories(tmp_repo_for_save: Path):
+    repo_path = tmp_repo_for_save
+    file_path_rel = "new_dir/another_dir/my_file.txt"
+    content = "File in subdirectory."
+
+    result = save_and_commit_file(
+        repo_path_str=str(repo_path),
+        file_path=file_path_rel,
+        content=content,
+        commit_message="Add file in nested dirs"
+    )
+
+    assert result["status"] == "success"
+    full_file_path = repo_path / file_path_rel
+    assert full_file_path.exists()
+    assert full_file_path.parent.exists()
+    assert full_file_path.parent.name == "another_dir"
+    assert full_file_path.parent.parent.name == "new_dir"
+    assert _read_file_content(full_file_path) == content
+
+
+def test_save_file_repo_not_found(tmp_path: Path): # Use tmp_path directly, not the repo fixture
+    non_repo_path = tmp_path / "not_a_repo"
+    non_repo_path.mkdir() # Create the directory, but don't init as repo
+
+    result = save_and_commit_file(
+        repo_path_str=str(non_repo_path),
+        file_path="file.txt",
+        content="content",
+        commit_message="test commit"
+    )
+
+    assert result["status"] == "error"
+    assert "Repository not found or invalid" in result["message"]
+
+
+def test_save_file_invalid_path_outside_repo(tmp_repo_for_save: Path):
+    repo_path = tmp_repo_for_save
+    # This path attempts to go above the repo_path.
+    # The core function's check `str(resolved_file_path).startswith(str(resolved_repo_path))`
+    # should catch this.
+    invalid_file_path = "../../outside_file.txt"
+
+    result = save_and_commit_file(
+        repo_path_str=str(repo_path),
+        file_path=invalid_file_path,
+        content="Attempt to write outside.",
+        commit_message="Malicious attempt"
+    )
+
+    assert result["status"] == "error"
+    # The exact message depends on the implementation of the check in save_and_commit_file
+    assert "File path is outside the repository" in result["message"] or \
+           "path is outside the repository" in result["message"] # Adjusted for actual message
+
+
+def test_save_file_empty_commit_message_allowed(tmp_repo_for_save: Path):
+    repo_path = tmp_repo_for_save
+    file_path_rel = "file_with_empty_msg.txt"
+    content = "Content for empty commit message."
+    # pygit2 allows empty commit messages by default.
+    # If save_and_commit_file added custom validation, this test would change.
+
+    result = save_and_commit_file(
+        repo_path_str=str(repo_path),
+        file_path=file_path_rel,
+        content=content,
+        commit_message="" # Empty commit message
+    )
+
+    assert result["status"] == "success"
+    assert result["commit_id"] is not None
+
+    repo = pygit2.Repository(str(repo_path))
+    last_commit = repo.head.peel(pygit2.Commit)
+    # pygit2 might store it as empty or add a newline. Let's check if it's essentially empty.
+    assert last_commit.message.strip() == ""

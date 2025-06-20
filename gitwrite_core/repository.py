@@ -773,3 +773,108 @@ def list_commits(repo_path_str: str, branch_name: Optional[str] = None, max_coun
         return {'status': 'error', 'commits': [], 'message': f"Git error: {e}"}
     except Exception as e:
         return {'status': 'error', 'commits': [], 'message': f"An unexpected error occurred: {e}"}
+
+
+def save_and_commit_file(repo_path_str: str, file_path: str, content: str, commit_message: str, author_name: Optional[str] = None, author_email: Optional[str] = None) -> Dict[str, Any]:
+    """
+    Saves a file's content to the specified path within a repository and commits it.
+
+    Args:
+        repo_path_str: The string representation of the repository's root path.
+        file_path: The relative path of the file within the repository.
+        content: The string content to be written to the file.
+        commit_message: The message for the commit.
+        author_name: Optional name of the commit author.
+        author_email: Optional email of the commit author.
+
+    Returns:
+        A dictionary with 'status', 'message', and 'commit_id' (if successful).
+    """
+    try:
+        repo_path = Path(repo_path_str)
+        absolute_file_path = repo_path / file_path
+
+        # Ensure file_path is treated as relative and does not try to escape the repo
+        # Resolve paths to compare them reliably
+        resolved_repo_path = repo_path.resolve()
+        resolved_file_path = absolute_file_path.resolve()
+
+        if not resolved_file_path.is_relative_to(resolved_repo_path):
+            # Check if the resolved file path starts with the resolved repo path,
+            # This is a more robust check for containment.
+            if not str(resolved_file_path).startswith(str(resolved_repo_path)):
+                 return {'status': 'error', 'message': 'File path is outside the repository.', 'commit_id': None}
+            # If it starts with, but is_relative_to is False, it might be the same path.
+            # Allow if it's the same (e.g. repo_path is a file itself, though unlikely for a repo root)
+            # However, typical usage is file_path is a file *within* repo_path directory.
+            # The check `str(resolved_file_path).startswith(str(resolved_repo_path))` handles most cases.
+            # A direct equality check for resolved paths can be added if files can be repos.
+            # For now, if `is_relative_to` fails, we double check with startswith.
+
+        # Create parent directories if they don't exist
+        try:
+            absolute_file_path.parent.mkdir(parents=True, exist_ok=True)
+        except OSError as e:
+            return {'status': 'error', 'message': f"Error creating directories: {e}", 'commit_id': None}
+
+        # Write the content to the file
+        try:
+            with open(absolute_file_path, "w") as f:
+                f.write(content)
+        except IOError as e:
+            return {'status': 'error', 'message': f"Error writing file: {e}", 'commit_id': None}
+
+        # Open the repository
+        try:
+            # Use resolved path for consistency, though pygit2 usually handles it.
+            repo = pygit2.Repository(str(resolved_repo_path))
+        except pygit2.GitError as e:
+            return {'status': 'error', 'message': f"Repository not found or invalid: {e}", 'commit_id': None}
+
+        # Stage the file
+        try:
+            # file_path must be relative to the repository workdir for add()
+            # os.path.relpath is safer for this.
+            relative_file_path = os.path.relpath(str(resolved_file_path), repo.workdir)
+            repo.index.add(relative_file_path)
+            repo.index.write()
+        except pygit2.GitError as e:
+            return {'status': 'error', 'message': f"Error staging file: {e}", 'commit_id': None}
+        except Exception as e:
+            return {'status': 'error', 'message': f"An unexpected error occurred during staging: {e}", 'commit_id': None}
+
+        # Create the commit
+        try:
+            sig_name = author_name if author_name else "GitWrite System"
+            sig_email = author_email if author_email else "gitwrite@example.com"
+            current_time = int(time.time())
+
+            # Get local timezone offset in minutes
+            # time.timezone gives offset in seconds WEST of UTC (negative for EAST)
+            # pygit2.Signature expects offset in minutes EAST of UTC (positive for EAST)
+            local_offset_seconds = -time.timezone if not time.daylight else -time.altzone
+            tz_offset_minutes = local_offset_seconds // 60
+
+            author = pygit2.Signature(sig_name, sig_email, current_time, tz_offset_minutes)
+            committer = pygit2.Signature(sig_name, sig_email, current_time, tz_offset_minutes)
+
+            tree_id = repo.index.write_tree() # Get OID of tree from index
+            parents = [] if repo.head_is_unborn else [repo.head.target]
+
+            commit_oid = repo.create_commit(
+                "HEAD",          # Update the current branch (ref_name)
+                author,
+                committer,
+                commit_message,
+                tree_id,         # Tree OID
+                parents
+            )
+            return {'status': 'success', 'message': 'File saved and committed successfully.', 'commit_id': str(commit_oid)}
+        except pygit2.GitError as e:
+            return {'status': 'error', 'message': f"Error committing file: {e}", 'commit_id': None}
+        except Exception as e:
+            return {'status': 'error', 'message': f"An unexpected error occurred during commit: {e}", 'commit_id': None}
+
+    except Exception as e:
+        # Catch-all for unexpected errors at the function level
+        return {'status': 'error', 'message': f"An unexpected error occurred: {e}", 'commit_id': None}
