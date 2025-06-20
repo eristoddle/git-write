@@ -697,7 +697,7 @@ def add(ctx, name, message, force, commit_ish): # Function signature updated
 
     except (RepositoryNotFoundError, CommitNotFoundError, TagAlreadyExistsError, GitWriteError) as e:
         click.echo(f"Error: {e}", err=True)
-        # if ctx: ctx.exit(1) # Removed as per request
+        if ctx: ctx.exit(1) # Ensure non-zero exit for these handled errors
     except Exception as e:
         click.echo(f"An unexpected error occurred: {e}", err=True)
         if ctx: ctx.exit(1)

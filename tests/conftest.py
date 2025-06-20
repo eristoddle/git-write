@@ -459,12 +459,14 @@ def mock_repo() -> MagicMock: # Type hint for clarity
 
     mock_head_commit = MagicMock(spec=pygit2.Commit)
     # Create a valid Oid for tests that might need it
+    # Changed .id to .oid to match attribute access in core code (e.g. create_tag)
     try:
-        mock_head_commit.id = pygit2.Oid(hex="0123456789abcdef0123456789abcdef01234567")
+        mock_head_commit.oid = pygit2.Oid(hex="0123456789abcdef0123456789abcdef01234567")
     except Exception: # Fallback if pygit2.Oid is not available
-        mock_head_commit.id = "0123456789abcdef0123456789abcdef01234567"
+        mock_head_commit.oid = "0123456789abcdef0123456789abcdef01234567" # Ensure this is also .oid
 
-    mock_head_commit.short_id = "0123456"
+    # short_id is often derived from id/oid, ensure consistency or mock if used directly
+    mock_head_commit.short_id = "0123456" # This is fine if short_id is independently mocked
     mock_head_commit.type = pygit2.GIT_OBJECT_COMMIT # Use actual constant if available
     mock_head_commit.peel.return_value = mock_head_commit # peel() on a commit returns itself
 

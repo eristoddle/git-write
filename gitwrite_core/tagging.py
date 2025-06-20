@@ -25,6 +25,9 @@ def create_tag(repo_path_str: str, tag_name: str, target_commit_ish: str = 'HEAD
     except pygit2.GitError:
         raise RepositoryNotFoundError(f"Repository not found at '{repo_path_str}'")
 
+    if repo.is_bare:
+        raise GitWriteError("Cannot create tags in a bare repository.")
+
     try:
         target_oid = repo.revparse_single(target_commit_ish).oid
     except (pygit2.GitError, KeyError): # KeyError for non-existent reference
@@ -54,8 +57,11 @@ def create_tag(repo_path_str: str, tag_name: str, target_commit_ish: str = 'HEAD
             repo.create_reference(tag_ref_name, target_oid)
             return {'name': tag_name, 'type': 'lightweight', 'target': str(target_oid)}
         except pygit2.GitError as e:
+            if "already exists" in str(e).lower():
+                # Provide a more specific error message for this race condition
+                raise TagAlreadyExistsError(f"Tag '{tag_name}' already exists (race condition detected during create: {e})")
             # This might happen if the tag name is invalid or other git related issues
-            raise GitWriteError(f"Failed to create lightweight tag '{tag_name}': {e}") # Ensure GitWriteError is imported
+            raise GitWriteError(f"Failed to create lightweight tag '{tag_name}': {e}")
 
 
 def list_tags(repo_path_str: str):
