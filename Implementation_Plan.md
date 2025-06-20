@@ -1,117 +1,68 @@
-# Implementation Plan: Core Logic Refactoring
+# Implementation Plan: GitWrite Platform
 
-Project Goal: Refactor the GitWrite CLI to separate core business logic from the presentation layer (Click commands) into a reusable `gitwrite_core` library. This will improve maintainability, testability, and enable future reuse by the planned REST API.
+Project Goal: Develop a comprehensive, Git-based version control ecosystem for writers, starting with a core library, a CLI, and a REST API.
 
 ## General Project Notes
 *   **Memory Bank System:** Single file `Memory_Bank.md`.
-*   **Architectural Goal:** The `gitwrite_cli/main.py` script will become a "thin wrapper." Its functions will handle command-line input/output and call the appropriate functions in `gitwrite_core` to perform the actual work.
-*   **Core Library Design:** Functions within `gitwrite_core` will not use `click.echo` or print to the console. They will return data (dictionaries, lists, custom objects) on success and raise specific custom exceptions on failure.
+*   **Architectural Goal:** A central `gitwrite_core` library will contain all business logic. The `gitwrite_cli` and `gitwrite_api` will be thin wrappers around this core library.
+
+---
+## Phase 1-4: CLI Refactoring
+Status: **Completed**
+Summary: All tasks related to refactoring the CLI application and establishing the `gitwrite_core` library have been successfully completed. The project is ready for the next epic.
 
 ---
 
-## Phase 1: Foundation and Initial Refactoring
+## Phase 5: REST API Development
+Status: **Pending**
+Architectural Notes: The API will be built using FastAPI and containerized with Docker. It will use a two-step upload process to handle large files securely and efficiently, preventing API server bottlenecks.
 
-### Task 1.1 - Agent_CLI_Dev: Project Structure and Core Files Setup
-Objective: Create the new `gitwrite_core` directory and foundational files, including a module for custom exceptions.
+### Task 5.1 - Agent_API_Dev: Initial API and Docker Setup
+Objective: Create the `gitwrite_api` directory, set up the basic FastAPI application, and create a `Dockerfile` for containerization.
 Status: **Pending**
 
-1.  Create the `gitwrite_core/` directory at the project root.
-2.  Add an `__init__.py` file inside `gitwrite_core/`.
-3.  Create a new file: `gitwrite_core/exceptions.py`.
-    - Define a base exception: `class GitWriteError(Exception): pass`.
-    - Define specific exceptions that will be needed, inheriting from the base:
-        - `class RepositoryNotFoundError(GitWriteError): pass`
-        - `class DirtyWorkingDirectoryError(GitWriteError): pass`
-        - `class CommitNotFoundError(GitWriteError): pass`
-        - `class BranchNotFoundError(GitWriteError): pass`
-        - `class MergeConflictError(GitWriteError): pass`
-4.  Create empty placeholder files for the upcoming logic modules:
-    - `gitwrite_core/repository.py`
-    - `gitwrite_core/versioning.py`
-    - `gitwrite_core/branching.py`
-    - `gitwrite_core/tagging.py`
+1.  Create the `gitwrite_api/` directory at the project root.
+2.  Update the root `pyproject.toml` to include `gitwrite_api` in the `[tool.poetry.packages]` section. Add `fastapi`, `uvicorn[standard]`, and `python-jose[cryptography]` as new dependencies. Run `poetry lock` and `poetry install`.
+3.  Create `gitwrite_api/main.py` with a basic FastAPI app instance and a `/` health-check endpoint.
+4.  Create a `Dockerfile` at the project root that correctly copies all source directories (`gitwrite_api`, `gitwrite_core`), installs dependencies via Poetry, and runs the API using `uvicorn`.
 
-### Task 1.2 - Agent_CLI_Dev: Refactor `init` and `ignore` commands
-Objective: Move the logic for the `init` and `ignore` commands into the new core library and update the CLI and tests.
-Status: **Completed**
-
-1.  **`init` command:**
-    - Create a function `initialize_repository(path)` in `gitwrite_core/repository.py`.
-    - Move all `pygit2` and file system logic from the `init` Click command into this new function.
-    - The function should return a status dictionary (e.g., `{'status': 'success', 'path': '...'}`).
-    - Update the `init` command in `gitwrite_cli/main.py` to call `initialize_repository` and print results based on the return value.
-    - Refactor tests in `tests/test_main.py` to unit test `initialize_repository` directly and have a smaller integration test for the CLI wrapper.
-2.  **`ignore` command:**
-    - Create functions `add_ignore_pattern(pattern)` and `list_ignore_patterns()` in `gitwrite_core/repository.py`.
-    - Move the file I/O logic for `.gitignore` into these functions. `list_ignore_patterns` should return a list of strings. `add_ignore_pattern` can return a boolean indicating success.
-    - Update the `ignore add` and `ignore list` commands in `gitwrite_cli/main.py` to use these new core functions.
-    - Refactor tests for `ignore`.
-
----
-
-## Phase 2: Refactoring Standard Read/Write Commands
-
-### Task 2.1 - Agent_CLI_Dev: Refactor `tag` Command
-Objective: Move the logic for the `tag` command into the core library.
-Status: **Completed**
-
-1.  Create functions `create_tag(...)` and `list_tags()` in `gitwrite_core/tagging.py`.
-2.  Move all `pygit2` logic for creating lightweight and annotated tags, and for listing them, into these functions.
-3.  `list_tags` should return a list of data objects (e.g., list of dictionaries), not a formatted table.
-4.  Update the `tag add` and `tag list` commands in `main.py` to be thin wrappers. The `tag list` command will be responsible for formatting the data from `list_tags()` into a `rich.Table`.
-5.  Refactor tests for `tag`.
-
-### Task 2.2 - Agent_CLI_Dev: Refactor `history` and `compare` Commands
-Objective: Move the logic for read-only history and comparison commands.
-Status: **Completed**
-
-1.  **`history` command:**
-    - Create a function `get_history(count)` in `gitwrite_core/versioning.py`.
-    - This function should walk the commit history and return a list of data objects, each representing a commit.
-    - The `history` command in `main.py` will take this list and format it with `rich.Table`.
-2.  **`compare` command:**
-    - Create a function `compare_refs(ref1, ref2)` in `gitwrite_core/versioning.py`.
-    - This function will perform the diff and return a structured representation of the diff data (e.g., a list of patch objects).
-    - The `compare` command in `main.py` will be responsible for the word-level analysis and `rich` presentation.
-3.  Refactor tests for both commands.
-
----
-
-## Phase 3: Refactoring Complex State-Based Commands
-
-### Task 3.1 - Agent_CLI_Dev: Refactor `explore`, `switch`, `merge`, and `revert`
-Objective: Move the logic for commands that modify repository state and handle conflicts.
-Status: **Completed**
-Note: `explore`, `switch`, `merge`, and `revert` commands have all been refactored.
-
-1.  Create appropriate functions in `gitwrite_core/branching.py` for `explore`, `switch`, and `merge`.
-2.  Create appropriate functions in `gitwrite_core/versioning.py` for `revert`.
-3.  These functions will contain all `pygit2` logic for branch creation, checkout, merging, and reverting.
-4.  For `merge` and `revert`, if conflicts occur, the core function should raise a `MergeConflictError` that contains information about the conflicted files.
-5.  Update the Click commands in `main.py` to call these functions and handle the custom exceptions gracefully.
-6.  Refactor tests to cover the core logic and the CLI's exception handling.
-
-### Task 3.2 - Agent_CLI_Dev: Refactor `save` and `sync` Commands
-Objective: Refactor the final, most complex commands that interact with repository state.
-Status: **Completed**
-
-1.  Moved the logic for `save` (including selective staging, commit creation, and finalizing merge/revert operations) into `gitwrite_core.versioning.save_changes`.
-2.  Moved the logic for `sync` (fetch, local update analysis & execution - ff/merge/conflict, and push) into `gitwrite_core.repository.sync_repository`.
-3.  Updated the Click commands for `save` and `sync` in `gitwrite_cli/main.py` to be thin wrappers around their respective core functions.
-4.  Added comprehensive unit tests for the new core functions in `tests/test_core_versioning.py` and `tests/test_core_repository.py`.
-5.  Refactored and added integration tests for the `save` and `sync` CLI commands in `tests/test_main.py`.
-
----
-
-## Phase 4: Finalization
-
-### Task 4.1 - Agent_CLI_Dev: Final Code Review and Cleanup
-Objective: Review the entire refactored codebase for consistency and clarity.
+### Task 5.2 - Agent_API_Dev: Implement Security and Authentication
+Objective: Set up JWT-based authentication and basic security helpers.
 Status: **Pending**
 
-1.  Ensure all logic has been moved out of `gitwrite_cli/main.py`.
-2.  Verify that all core functions have docstrings and type hints.
-3.  Clean up any unused imports or variables.
+1.  Create a `gitwrite_api/security.py` module for JWT creation and decoding functions.
+2.  Implement a `get_current_user` dependency to protect endpoints.
+3.  Create `User` models in a `gitwrite_api/models.py` file using Pydantic.
+4.  Create a `/token` endpoint in `gitwrite_api/routers/auth.py` for issuing JWTs based on a temporary in-memory user store.
+
+### Task 5.3 - Agent_API_Dev: Implement Read-Only Repository Endpoints
+Objective: Create secure endpoints for non-mutating operations to validate the API structure.
+Status: **Pending**
+
+1.  Create a new router file, e.g., `gitwrite_api/routers/repository.py`.
+2.  Create a `GET /repositories/{repo_id}/history` endpoint. This will call `gitwrite_core.versioning.get_commit_history` and return the list of commits as JSON.
+3.  Create a `GET /repositories/{repo_id}/tags` endpoint that calls `gitwrite_core.tagging.list_tags`.
+4.  Protect these endpoints with the `get_current_user` dependency from Task 5.2.
+5.  Add unit tests for these endpoints.
+
+### Task 5.4 - Agent_API_Dev: Design and Implement Large File Upload Strategy
+Objective: Implement the two-step upload mechanism to handle large files.
+Status: **Pending**
+
+1.  Create a new router file, e.g., `gitwrite_api/routers/uploads.py`.
+2.  Implement the first step: `POST /repositories/{repo_id}/save/initiate`. This endpoint takes metadata (commit message, file paths, hashes) and returns a list of secure, one-time upload URLs and a completion token.
+3.  Implement the upload handler: `PUT /upload-session/{upload_id}`. This endpoint will stream the raw request body to a temporary file on the server.
+4.  Implement the final step: `POST /repositories/{repo_id}/save/complete`. This endpoint takes the `completion_token`.
+
+### Task 5.5 - Agent_API_Dev: Implement the `save` Endpoint Logic
+Objective: Connect the upload mechanism to the core `save_changes` function.
+Status: **Pending**
+
+1.  Modify the `/save/complete` endpoint from Task 5.4.
+2.  After receiving the completion signal, the endpoint will gather all files from the temporary storage location associated with the token.
+3.  It will then call `gitwrite_core.versioning.save_changes` with the commit message and the paths to the temporary files.
+4.  Upon successful commit, it will delete the temporary files and return the new commit information.
+5.  Add integration tests that simulate the full three-step `save` process.
 
 ---
 ## Note on Handover Protocol
