@@ -490,7 +490,8 @@ def process_hunk_lines_for_word_diff(hunk_lines: list, console: Console):
 @click.option("--remote", "remote_name", default="origin", help="The remote to sync with.")
 @click.option("--branch", "branch_name_opt", default=None, help="The branch to sync. Defaults to the current branch.")
 @click.option("--no-push", "no_push_flag", is_flag=True, default=False, help="Do not push changes to the remote.")
-def sync(remote_name, branch_name_opt, no_push_flag):
+@click.pass_context
+def sync(ctx, remote_name, branch_name_opt, no_push_flag):
     """Fetches changes from a remote, integrates them, and pushes local changes."""
     try:
         repo_path_str = pygit2.discover_repository(str(Path.cwd()))
@@ -546,20 +547,28 @@ def sync(remote_name, branch_name_opt, no_push_flag):
 
     except pygit2.GitError as e: # Should be caught by more specific exceptions from core
         click.echo(f"GitError during sync: {e}", err=True)
+        if ctx: ctx.exit(1)
     except KeyError as e: # Should be caught by specific exceptions like RemoteNotFoundError now
         click.echo(f"Error during sync setup (KeyError): {e}", err=True)
+        if ctx: ctx.exit(1)
     except RepositoryNotFoundError:
         click.echo("Error: Not a Git repository (or any of the parent directories).", err=True)
+        if ctx: ctx.exit(1)
     except RepositoryEmptyError as e:
         click.echo(f"Error: {e}", err=True) # Core message is usually good
+        if ctx: ctx.exit(1)
     except DetachedHeadError as e:
         click.echo(f"Error: {e}. Please switch to a branch to sync or specify a branch name.", err=True)
+        if ctx: ctx.exit(1)
     except RemoteNotFoundError as e:
         click.echo(f"Error: {e}", err=True)
+        if ctx: ctx.exit(1)
     except BranchNotFoundError as e:
         click.echo(f"Error: {e}", err=True)
+        if ctx: ctx.exit(1)
     except FetchError as e:
         click.echo(f"Error during fetch: {e}", err=True)
+        if ctx: ctx.exit(1)
     except MergeConflictError as e: # This exception is raised by sync_repository if conflicts occur and are not resolved by it.
         click.echo(f"Error: {e}", err=True)
         if hasattr(e, 'conflicting_files') and e.conflicting_files:
@@ -567,12 +576,16 @@ def sync(remote_name, branch_name_opt, no_push_flag):
             for f_path in sorted(e.conflicting_files):
                 click.echo(f"  {f_path}", err=True)
         click.echo("Please resolve conflicts and then use 'gitwrite save <message>' to commit the merge.", err=True)
+        if ctx: ctx.exit(1)
     except PushError as e:
         click.echo(f"Error during push: {e}", err=True)
+        if ctx: ctx.exit(1)
     except GitWriteError as e: # Catch-all for other gitwrite core errors
         click.echo(f"Error during sync: {e}", err=True)
+        if ctx: ctx.exit(1)
     except Exception as e: # General unexpected errors
         click.echo(f"An unexpected error occurred during sync: {e}", err=True)
+        if ctx: ctx.exit(1)
 
 
 @cli.command()
