@@ -225,7 +225,7 @@ async def handle_file_upload(
 
     return {
         "message": f"File '{uploaded_file.filename}' for upload_id '{upload_id}' uploaded successfully.",
-        "temporary_path": temp_file_path
+        "temporary_path": str(saved_temp_file_abs_path)
     }
 
 

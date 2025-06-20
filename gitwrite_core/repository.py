@@ -846,28 +846,49 @@ def save_and_commit_file(repo_path_str: str, file_path: str, content: str, commi
 
         # Create the commit
         try:
-            sig_name = author_name if author_name else "GitWrite System"
-            sig_email = author_email if author_email else "gitwrite@example.com"
             current_time = int(time.time())
-
             # Get local timezone offset in minutes
             # time.timezone gives offset in seconds WEST of UTC (negative for EAST)
             # pygit2.Signature expects offset in minutes EAST of UTC (positive for EAST)
             local_offset_seconds = -time.timezone if not time.daylight else -time.altzone
             tz_offset_minutes = local_offset_seconds // 60
 
-            author = pygit2.Signature(sig_name, sig_email, current_time, tz_offset_minutes)
-            committer = pygit2.Signature(sig_name, sig_email, current_time, tz_offset_minutes)
+            # Determine committer details
+            try:
+                committer_signature_obj = repo.default_signature
+                # If default_signature exists, use its name, email, and time (but override time with current_time for consistency)
+                # pygit2.Signature time is a combination of timestamp and offset.
+                # We'll use current_time and the system's current tz_offset_minutes for the committer.
+                # This ensures the committer timestamp is always "now".
+                # The offset from default_signature is repo-configured, which is good to respect.
+                committer_name = committer_signature_obj.name
+                committer_email = committer_signature_obj.email
+                # Use default_signature's offset if available, otherwise current system's
+                committer_offset = committer_signature_obj.offset if hasattr(committer_signature_obj, 'offset') else tz_offset_minutes
+                committer_signature = pygit2.Signature(committer_name, committer_email, current_time, committer_offset)
+            except pygit2.GitError: # Default signature not set in git config
+                committer_name = "GitWrite System"
+                committer_email = "gitwrite@example.com"
+                committer_signature = pygit2.Signature(committer_name, committer_email, current_time, tz_offset_minutes)
+
+            # Determine author details
+            if author_name and author_email:
+                # Use provided author details with current time and system's current timezone offset
+                author_signature = pygit2.Signature(author_name, author_email, current_time, tz_offset_minutes)
+            else:
+                # Fallback to committer details for author
+                author_signature = committer_signature
+
 
             tree_id = repo.index.write_tree() # Get OID of tree from index
             parents = [] if repo.head_is_unborn else [repo.head.target]
 
             commit_oid = repo.create_commit(
-                "HEAD",          # Update the current branch (ref_name)
-                author,
-                committer,
+                "HEAD",                    # Update the current branch (ref_name)
+                author_signature,          # Author
+                committer_signature,       # Committer
                 commit_message,
-                tree_id,         # Tree OID
+                tree_id,                   # Tree OID
                 parents
             )
             return {'status': 'success', 'message': 'File saved and committed successfully.', 'commit_id': str(commit_oid)}
