@@ -63,3 +63,41 @@ None.
 
 **Next Steps (Optional):**
 Proceed with Phase 5, Task 5.2: Implement Security and Authentication.
+---
+**Agent:** Jules (Implementation Agent)
+**Task Reference:** Phase 5, Task 5.3: Agent_API_Dev: Implement Read-Only Repository Endpoints
+
+**Summary:**
+Completed the implementation of read-only repository-related API endpoints. This involved adding core Git logic functions, creating a new API router, defining the endpoints, and adding corresponding unit tests.
+
+**Details:**
+- **Core Functions Added to `gitwrite_core/repository.py`**:
+    - `list_branches(repo_path_str: str) -> Dict[str, Any]`: Lists local branches.
+    - `list_tags(repo_path_str: str) -> Dict[str, Any]`: Lists tags.
+    - `list_commits(repo_path_str: str, branch_name: Optional[str] = None, max_count: Optional[int] = None) -> Dict[str, Any]`: Lists commits for a branch (or current HEAD), with optional filtering.
+- **New API Router**: Created `gitwrite_api/routers/repository.py` to handle repository-specific API calls.
+- **Implemented Endpoints**:
+    - `GET /repository/branches`: Lists all branches.
+    - `GET /repository/tags`: Lists all tags.
+    - `GET /repository/commits`: Lists commits, accepting optional query parameters `branch_name` (string) and `max_count` (integer).
+- **Authentication**: All new endpoints require authentication (currently using a placeholder `get_current_active_user` dependency).
+- **Repository Path**: A placeholder `PLACEHOLDER_REPO_PATH` is used in the router, indicating a need for dynamic path determination in future tasks.
+- **Unit Tests**: Added `tests/test_api_repository.py` with Pytest tests covering successful responses, unauthorized access (mocked), query parameter handling, and error scenarios by mocking core function return values.
+- **Branch**: All development for this task was done on the branch `feature/api-readonly-repo-endpoints`.
+- Updated `Implementation_Plan.md` to mark Task 5.3 as "Completed".
+
+**Output/Result:**
+- Modified file: `gitwrite_core/repository.py` (added new functions)
+- New file: `gitwrite_api/routers/repository.py`
+- Modified file: `gitwrite_api/main.py` (included new router)
+- New file: `tests/test_api_repository.py`
+- Modified file: `Implementation_Plan.md` (Task 5.3 status updated)
+- This log entry in `Memory_Bank.md`.
+
+**Status:** Completed
+
+**Issues/Blockers:**
+None identified. The placeholder for repository path and authentication are known items for future refinement as per the overall plan.
+
+**Next Steps (Optional):**
+Proceed with the next planned task in Phase 5.

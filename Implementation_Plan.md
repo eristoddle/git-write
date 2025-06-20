@@ -37,7 +37,7 @@ Status: **Completed**
 
 ### Task 5.3 - Agent_API_Dev: Implement Read-Only Repository Endpoints
 Objective: Create secure endpoints for non-mutating operations to validate the API structure.
-Status: **Pending**
+Status: **Completed** - Implemented read-only API endpoints for branches, tags, and commits. Includes core functions and API router. Unit tests added. Developed on branch `feature/api-readonly-repo-endpoints`.
 
 1.  Create a new router file, e.g., `gitwrite_api/routers/repository.py`.
 2.  Create a `GET /repositories/{repo_id}/history` endpoint. This will call `gitwrite_core.versioning.get_commit_history` and return the list of commits as JSON.
