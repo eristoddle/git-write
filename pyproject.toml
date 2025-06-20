@@ -18,7 +18,13 @@ dependencies = [
 packages = [
     { include = "gitwrite_cli" },
     { include = "gitwrite_core" },
+    { include = "gitwrite_api" },
 ]
+
+[tool.poetry.dependencies]
+fastapi = "^0.111.0"
+uvicorn = {extras = ["standard"], version = "^0.29.0"}
+python-jose = {extras = ["cryptography"], version = "^3.3.0"}
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^8.0.0"
