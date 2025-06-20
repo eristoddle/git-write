@@ -182,16 +182,24 @@ async def handle_file_upload(
     os.makedirs(TEMP_UPLOAD_DIR, exist_ok=True)
 
     # Create a unique temporary file name based on upload_id to prevent collisions
-    temp_file_name = f"{upload_id}_{uploaded_file.filename}"
-    temp_file_path = os.path.join(TEMP_UPLOAD_DIR, temp_file_name)
+    # Use only the filename part of uploaded_file.filename to avoid creating unwanted subdirectories
+    # Path is imported at the module level now
+    file_basename = Path(uploaded_file.filename).name
+    temp_file_name = f"{upload_id}_{file_basename}"
+    temp_file_path_obj = Path(TEMP_UPLOAD_DIR) / temp_file_name # Use Path object for operations
 
     try:
-        with open(temp_file_path, "wb") as buffer:
+        with open(temp_file_path_obj, "wb") as buffer:
             shutil.copyfileobj(uploaded_file.file, buffer)
+
+        # Resolve the path and get its size after successful save
+        saved_temp_file_abs_path = temp_file_path_obj.resolve()
+        uploaded_size = saved_temp_file_abs_path.stat().st_size
+
     except Exception as e:
         # Clean up partial file if error occurs
-        if os.path.exists(temp_file_path):
-            os.remove(temp_file_path)
+        if temp_file_path_obj.exists(): # Use Path object here
+            os.remove(temp_file_path_obj)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Could not save uploaded file: {str(e)}"
@@ -201,7 +209,8 @@ async def handle_file_upload(
 
     # Update session metadata
     found_file_session["uploaded"] = True
-    found_file_session["temp_path"] = temp_file_path
+    found_file_session["temp_path"] = str(saved_temp_file_abs_path) # Store as absolute string path
+    found_file_session["uploaded_size"] = uploaded_size
     # Optional: Verify hash here if needed.
     # actual_hash = hashlib.sha256()
     # with open(temp_file_path, "rb") as f:
@@ -259,14 +268,22 @@ async def complete_file_upload(
     uploaded_file_paths = [] # Will store temp paths for Task 5.5
 
     for file_path, file_details in session_data.get("files", {}).items():
+        temp_file_path_str = file_details.get("temp_path")
+
         if not file_details.get("uploaded"):
             all_files_uploaded = False
-            break
-        if file_details.get("temp_path"):
-            uploaded_file_paths.append(file_details["temp_path"])
-        else: # Should not happen if "uploaded" is true, but as a safeguard
+            break # File not marked as uploaded
+
+        if not temp_file_path_str:
             all_files_uploaded = False
-            break
+            break # Temp path not stored
+
+        if not Path(temp_file_path_str).exists():
+            all_files_uploaded = False
+            # Consider logging this specific issue: temp_path recorded but file missing
+            break # Temp file does not exist at the stored path
+
+        uploaded_file_paths.append(temp_file_path_str) # Store for later use
 
     if not all_files_uploaded:
         raise HTTPException(

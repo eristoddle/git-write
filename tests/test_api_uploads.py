@@ -26,10 +26,11 @@ async def override_get_current_user_two():
     return mock_user_two
 
 # Apply the override to the app instance for all tests in this module
-# We will switch this dynamically in tests if needed, or use specific overrides per test.
-app.dependency_overrides[get_current_user] = override_get_current_user_one
-
 client = TestClient(app)
+
+# The main override will be managed by the clear_upload_state_and_temp_files fixture now.
+# Remove the module-level application:
+# app.dependency_overrides[get_current_user] = override_get_current_user_one
 
 # Define constants used in tests
 TEST_REPO_ID = "test_repo"
@@ -46,12 +47,25 @@ TEST_TEMP_UPLOAD_DIR = uploads.TEMP_UPLOAD_DIR
 
 @pytest.fixture(autouse=True)
 def clear_upload_state_and_temp_files():
-    """ Clears upload_sessions and temporary files before and after each test. """
+    """ Clears upload_sessions, temporary files, and manages auth override for each test. """
+
+    # Save the original state of overrides (if any specific test needs to further modify)
+    original_overrides = app.dependency_overrides.copy()
+    # Apply the default authentication override for upload tests
+    app.dependency_overrides[get_current_user] = override_get_current_user_one
+
+    # Original fixture logic for clearing state
     uploads.upload_sessions.clear()
     if os.path.exists(TEST_TEMP_UPLOAD_DIR):
         shutil.rmtree(TEST_TEMP_UPLOAD_DIR)
     os.makedirs(TEST_TEMP_UPLOAD_DIR, exist_ok=True)
+
     yield # Test runs here
+
+    # Restore original overrides after the test
+    app.dependency_overrides = original_overrides
+
+    # Original fixture logic for cleaning up state
     uploads.upload_sessions.clear()
     if os.path.exists(TEST_TEMP_UPLOAD_DIR):
         shutil.rmtree(TEST_TEMP_UPLOAD_DIR)

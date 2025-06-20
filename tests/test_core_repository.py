@@ -18,6 +18,7 @@ from gitwrite_core.exceptions import (
 
 # Constants TEST_USER_NAME and TEST_USER_EMAIL are now in conftest.py
 from .conftest import TEST_USER_NAME, TEST_USER_EMAIL
+from gitwrite_core.repository import initialize_repository, save_and_commit_file
 
 
 class TestSyncRepositoryCore(unittest.TestCase):
@@ -781,6 +782,7 @@ def _read_file_content(file_path: Path) -> str:
 @pytest.fixture
 def tmp_repo_for_save(tmp_path: Path) -> Path:
     repo_dir = tmp_path / "test_save_repo"
+    repo_dir.mkdir(parents=True, exist_ok=True) # Ensure repo_dir exists
     # We use initialize_repository to set up a basic .git folder and potentially GitWrite structure
     # which also handles initial commit, so the repo is not unborn.
     # Pass project_name=None to use repo_dir directly as the repository root.
