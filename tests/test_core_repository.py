@@ -530,7 +530,6 @@ class TestSyncRepositoryCore(unittest.TestCase):
         self.assertIn("Nothing to push", result["push_status"]["message"])
 
     @mock.patch('pygit2.Remote.push') # Corrected: pygit2.Remote.push
-    @pytest.mark.xfail(reason="Fix later: This test simulates a non-fast-forward push failure.")
     def test_sync_push_failure_non_fast_forward(self, mock_push_method):
         # 1. Local C1, pushed to remote
         c1_local_oid = self._make_commit(self.local_repo, "file.txt", "v1", "C1")
@@ -542,7 +541,7 @@ class TestSyncRepositoryCore(unittest.TestCase):
         self._push_to_remote(self.local_repo, "origin", "main") # Reverted to using push
 
         # After first push to bare repo, set its HEAD to make 'main' the default branch
-        if "refs/heads/main" in self.remote_repo.references: # Check if push created the ref
+        if "refs/heads/main" in self.remote_repo.listall_references(): # Check if push created the ref
             self.remote_repo.set_head("refs/heads/main")
         else:
             # If push didn't create it, this indicates a deeper issue with the push to empty bare repo.

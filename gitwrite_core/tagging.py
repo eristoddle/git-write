@@ -46,7 +46,7 @@ def create_tag(repo_path_str: str, tag_name: str, target_commit_ish: str = 'HEAD
         # Create an annotated tag
         tagger_signature = tagger if tagger else pygit2.Signature('GitWrite Core', 'core@gitwrite.com')
         try:
-            repo.create_tag(tag_name, target_oid, pygit2.GIT_OBJ_COMMIT, tagger_signature, message)
+            repo.create_tag(tag_name, target_oid, pygit2.GIT_OBJECT_COMMIT, tagger_signature, message)
             return {'name': tag_name, 'type': 'annotated', 'target': str(target_oid), 'message': message}
         except pygit2.GitError as e:
             # This might happen if the tag name is invalid or other git related issues

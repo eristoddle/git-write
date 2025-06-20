@@ -201,9 +201,9 @@ class TestTagCommandsCLI: # Copied from test_tag_command.py
                     return mock_repo.revparse_single.return_value
                 raise ValueError(f"Unexpected revparse call with {name}")
             mock_repo.revparse_single.side_effect = revparse_side_effect
-            result = runner.invoke(cli, ["tag", "add", "v1.0", "nonexistent-commit"])
+            result = runner.invoke(cli, ["tag", "add", "v1.0", "-c", "nonexistent-commit"])
             assert result.exit_code != 0
-            assert "Error: Commit reference 'nonexistent-commit' not found or invalid." in result.output
+            assert "Error: Commit-ish 'nonexistent-commit' not found" in result.output
 
     # --- Tests for `gitwrite tag list` ---
     def test_tag_list_no_tags(self, runner: CliRunner, mock_repo: MagicMock): # Fixtures from conftest
@@ -313,7 +313,7 @@ class TestTagCommandsCLI: # Copied from test_tag_command.py
         with patch("gitwrite_cli.main.pygit2.discover_repository", return_value=None):
             result = runner.invoke(cli, ["tag", "list"])
             assert result.exit_code != 0
-            assert "Error: Not a Git repository" in result.output
+            assert "Error: Not a git repository (or any of the parent directories)." in result.output
 
     def test_tag_list_bare_repo(self, runner: CliRunner, mock_repo: MagicMock): # Fixtures from conftest
         with patch("gitwrite_cli.main.pygit2.discover_repository", return_value="fake_path"), \
@@ -427,4 +427,4 @@ class TestTagCommandsCLI: # Copied from test_tag_command.py
             mock_repo.create_tag.side_effect = pygit2.GitError("Reference 'refs/tags/v1.0-ann-race' already exists") # pygit2.GitError
             result = runner.invoke(cli, ["tag", "add", "v1.0-ann-race", "-m", "Race annotation"])
             assert result.exit_code != 0
-            assert "Error: Tag 'v1.0-ann-race' already exists (detected by create_tag)." in result.output
+            assert "Error: Failed to create annotated tag 'v1.0-ann-race': Reference 'refs/tags/v1.0-ann-race' already exists" in result.output

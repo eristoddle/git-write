@@ -324,7 +324,6 @@ class TestSwitchToBranch:
 
 
 class TestMergeBranch:
-    @pytest.mark.xfail(reason="Repo state not GIT_REPOSITORY_STATE_NONE after merge, suspected pygit2 subtlety.")
     def test_merge_success_normal(self, repo_for_merge: Path, configure_git_user): # Fixtures from conftest
         # repo_for_merge is already on 'main'
         # configure_git_user has already been applied to repo_for_merge fixture
@@ -335,12 +334,17 @@ class TestMergeBranch:
         assert result['current_branch'] == "main"  # branch merged into
         assert 'commit_oid' in result
 
-        repo = pygit2.Repository(str(repo_for_merge))
-        merge_commit = repo.get(result['commit_oid'])
+        # Verify merge commit details
+        merge_commit_oid = pygit2.Oid(hex=result['commit_oid'])
+        repo_check_commit = pygit2.Repository(str(repo_for_merge))
+        merge_commit = repo_check_commit.get(merge_commit_oid)
         assert isinstance(merge_commit, pygit2.Commit)
         assert len(merge_commit.parents) == 2
         assert f"Merge branch 'feature' into main" in merge_commit.message
-        assert repo.state == pygit2.GIT_REPOSITORY_STATE_NONE # Check repo state is clean
+
+        # Re-instantiate repo object to check state
+        repo_after_merge = pygit2.Repository(str(repo_for_merge))
+        assert repo_after_merge.state == pygit2.GIT_REPOSITORY_STATE_NONE # Check repo state is clean
 
     def test_merge_success_fast_forward(self, repo_for_ff_merge: Path, configure_git_user): # Fixtures from conftest
         # repo_for_ff_merge is on 'main', 'feature' is ahead.
