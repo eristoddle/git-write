@@ -19,7 +19,7 @@ Architectural Notes: The API will be built using FastAPI and containerized with 
 
 ### Task 5.1 - Agent_API_Dev: Initial API and Docker Setup
 Objective: Create the `gitwrite_api` directory, set up the basic FastAPI application, and create a `Dockerfile` for containerization.
-Status: **Pending**
+Status: **Completed**
 
 1.  Create the `gitwrite_api/` directory at the project root.
 2.  Update the root `pyproject.toml` to include `gitwrite_api` in the `[tool.poetry.packages]` section. Add `fastapi`, `uvicorn[standard]`, and `python-jose[cryptography]` as new dependencies. Run `poetry lock` and `poetry install`.
