@@ -1,3 +1,17 @@
+## Test Suite Update: XFail Failing Tests
+
+Date: 2025-06-20
+
+The initial targeted fixes for `test_merge_success_normal` (merge state cleanup) and `test_sync_push_failure_non_fast_forward` (initial push to bare repository) did not resolve the test failures.
+
+As per user instruction, the following persistently failing tests have been marked with `@pytest.mark.xfail`:
+
+- `tests/test_core_branching.py::TestMergeBranch::test_merge_success_normal`
+- `tests/test_core_repository.py::TestSyncRepositoryCore::test_sync_push_failure_non_fast_forward`
+
+The test suite now reports 199 tests passed and 2 xfailed. Further investigation will be needed to fully resolve the underlying issues for these two tests.
+
+---
 **Agent:** Manager Agent
 **Task Reference:** Project Refactoring Strategy
 
