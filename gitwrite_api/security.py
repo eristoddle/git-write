@@ -4,7 +4,7 @@ from typing import Optional
 from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
 from jose import JWTError, jwt # Already imported
-# from passlib.context import CryptContext # Already imported
+from passlib.context import CryptContext # Already imported
 
 from .models import User, TokenData, UserInDB # Assuming models.py is in the same directory
 

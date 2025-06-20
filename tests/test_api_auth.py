@@ -1,4 +1,5 @@
 import pytest
+from fastapi import Depends # Added Depends
 from fastapi.testclient import TestClient
 from jose import jwt
 from datetime import timedelta, datetime, timezone
