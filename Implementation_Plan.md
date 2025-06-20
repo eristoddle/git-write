@@ -28,7 +28,7 @@ Status: **Completed**
 
 ### Task 5.2 - Agent_API_Dev: Implement Security and Authentication
 Objective: Set up JWT-based authentication and basic security helpers.
-Status: **Pending**
+Status: **Completed**
 
 1.  Create a `gitwrite_api/security.py` module for JWT creation and decoding functions.
 2.  Implement a `get_current_user` dependency to protect endpoints.
