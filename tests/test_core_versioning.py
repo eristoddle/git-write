@@ -993,3 +993,439 @@ class TestSaveChangesCore(GitWriteCoreTestCaseBase):
             str(cm.exception),
             "No changes to save (working directory and index are clean or match HEAD)."
         )
+
+
+class TestCherryPickCommitCore(GitWriteCoreTestCaseBase):
+    def setUp(self):
+        super().setUp()
+        # Ensure 'main' branch exists and is checked out for consistent test setup
+        # The _make_commit in base class commits to HEAD. If HEAD is unborn,
+        # pygit2's default initial branch might be 'master'.
+        # We want 'main' for consistency.
+        if self.repo.head_is_unborn:
+            # Make a dummy initial commit to establish 'main'
+            self._make_commit(self.repo, "Initial commit for setup", {"initial.txt": "initial"})
+            if self.repo.head.shorthand != "main":
+                # If pygit2 default is 'master', rename to 'main'
+                if self.repo.head.shorthand == "master":
+                    master_branch = self.repo.lookup_branch("master")
+                    if master_branch:
+                        master_branch.rename("main", force=True)
+                        self.repo.set_head(f"refs/heads/main") # Point HEAD to new main
+                else: # Create main if some other default was used or if unborn logic needs it
+                    main_branch = self.repo.branches.local.create("main", self.repo.head.peel(pygit2.Commit))
+                    self.repo.set_head(main_branch.name)
+        elif self.repo.head.shorthand != "main":
+            # If not unborn but not on main, try to checkout or create main
+            main_branch = self.repo.branches.local.get("main")
+            if not main_branch:
+                main_branch = self.repo.branches.local.create("main", self.repo.head.peel(pygit2.Commit))
+            self.repo.checkout(main_branch)
+            self.repo.set_head(main_branch.name)
+
+        self.assertTrue(self.repo.head.shorthand == "main" or not self.repo.branches.local, "Should be on main branch or repo has no branches yet")
+
+
+    def test_cherry_pick_successful_clean(self):
+        # Setup:
+        # main: C1 -> C3
+        # feat: C1 -> C2 (C2 is what we'll pick)
+
+        # C1 on main
+        c1_oid = self._make_commit(self.repo, "C1: Base", {"file_a.txt": "Content A from C1\nShared Line\n"})
+        c1_commit = self.repo.get(c1_oid)
+
+        # Create 'feat' branch from C1
+        feat_branch = self.repo.branches.local.create("feature/pick-test", c1_commit)
+        self.repo.checkout(feat_branch)
+        self.repo.set_head(feat_branch.name)
+
+        # C2 on 'feat' branch - this is the commit to pick
+        c2_feat_oid = self._make_commit(self.repo, "C2: Feature changes", {"file_a.txt": "Content A modified by C2\nShared Line\n", "file_b.txt": "File B from C2"})
+        commit_to_pick_obj = self.repo.get(c2_feat_oid)
+
+        # Switch back to 'main' branch
+        main_branch = self.repo.branches.local["main"]
+        self.repo.checkout(main_branch)
+        self.repo.set_head(main_branch.name)
+
+        # C3 on 'main' (diverging from C1, but compatible for cherry-pick of C2's changes)
+        self._make_commit(self.repo, "C3: Main changes", {"file_c.txt": "File C from main"})
+
+        # Perform cherry-pick of C2 from 'feat' onto 'main'
+        from gitwrite_core.versioning import cherry_pick_commit # Local import for test
+        result = cherry_pick_commit(self.repo_path_str, str(c2_feat_oid))
+
+        self.assertEqual(result['status'], 'success')
+        self.assertIn('new_commit_oid', result)
+        new_commit_oid_str = result['new_commit_oid']
+        picked_commit_on_main = self.repo.get(new_commit_oid_str)
+        self.assertIsNotNone(picked_commit_on_main)
+
+        # Verify commit details
+        self.assertEqual(picked_commit_on_main.message, commit_to_pick_obj.message)
+        self.assertEqual(picked_commit_on_main.author.name, commit_to_pick_obj.author.name)
+        self.assertEqual(picked_commit_on_main.author.email, commit_to_pick_obj.author.email)
+        # Original author time should be preserved
+        self.assertEqual(picked_commit_on_main.author.time, commit_to_pick_obj.author.time)
+        self.assertEqual(picked_commit_on_main.author.offset, commit_to_pick_obj.author.offset)
+
+        # Committer should be the current repo user, time should be recent
+        self.assertEqual(picked_commit_on_main.committer.name, self.signature.name) # self.signature from base setup
+        self.assertEqual(picked_commit_on_main.committer.email, self.signature.email)
+        self.assertAlmostEqual(picked_commit_on_main.committer.time, self.signature.time, delta=5) # Recent time
+
+        # Verify parent (should be C3)
+        self.assertEqual(len(picked_commit_on_main.parents), 1)
+        self.assertEqual(picked_commit_on_main.parents[0].id, self.repo.head.target) # Before cherry-pick, HEAD was C3
+
+        # Verify HEAD points to the new cherry-picked commit
+        # Note: The cherry_pick_commit function itself updates HEAD. So, after it runs,
+        # self.repo.head.target is already the new_commit_oid.
+        # So, picked_commit_on_main.parents[0].id should be the commit *before* the cherry-pick.
+        # Let's capture HEAD before the cherry-pick for clarity.
+        head_before_cherry_pick = self.repo.head.target # This was C3
+        # After cherry_pick_commit, HEAD is new_commit_oid_str
+        self.assertEqual(self.repo.head.target, picked_commit_on_main.id)
+        self.assertEqual(picked_commit_on_main.parents[0].id, head_before_cherry_pick)
+
+
+        # Verify file content in the new commit and working directory
+        # file_a.txt should have C2's changes
+        # file_b.txt should exist (from C2)
+        # file_c.txt should exist (from C3 on main)
+
+        # Check working directory first (as commit updates it)
+        path_a = self.repo_path_obj / "file_a.txt"
+        path_b = self.repo_path_obj / "file_b.txt"
+        path_c = self.repo_path_obj / "file_c.txt"
+
+        self.assertTrue(path_a.exists())
+        self.assertEqual(path_a.read_text(), "Content A modified by C2\nShared Line\n")
+        self.assertTrue(path_b.exists())
+        self.assertEqual(path_b.read_text(), "File B from C2")
+        self.assertTrue(path_c.exists())
+        self.assertEqual(path_c.read_text(), "File C from main")
+
+        # Verify tree of the new commit
+        tree = picked_commit_on_main.tree
+        self.assertEqual(tree['file_a.txt'].data.decode(), "Content A modified by C2\nShared Line\n")
+        self.assertEqual(tree['file_b.txt'].data.decode(), "File B from C2")
+        self.assertEqual(tree['file_c.txt'].data.decode(), "File C from main")
+
+        # Verify index is clean
+        status = self.repo.status()
+        self.assertEqual(len(status), 0, f"Repository should be clean after cherry-pick. Status: {status}")
+
+    def test_cherry_pick_results_in_conflict(self):
+        # Setup:
+        # main: C1 (file_x.txt: "line1\nline2\nline3") -> C3 (file_x.txt: "line1\nMODIFIED_BY_MAIN_C3\nline3")
+        # feat: C1 -> C2 (file_x.txt: "line1\nMODIFIED_BY_FEAT_C2\nline3")
+        # Picking C2 onto main (at C3) should conflict on line2 of file_x.txt.
+
+        # C1 on main
+        c1_content = "line1\nline2\nline3\n"
+        c1_oid = self._make_commit(self.repo, "C1: Base for conflict", {"file_x.txt": c1_content})
+        c1_commit = self.repo.get(c1_oid)
+
+        # Create 'feat' branch from C1
+        feat_branch = self.repo.branches.local.create("feature/conflict-pick", c1_commit)
+        self.repo.checkout(feat_branch)
+        self.repo.set_head(feat_branch.name)
+
+        # C2 on 'feat' branch - this is the commit to pick, modifies line2
+        c2_feat_content = "line1\nMODIFIED_BY_FEAT_C2\nline3\n"
+        c2_feat_oid = self._make_commit(self.repo, "C2: Feature conflicting change", {"file_x.txt": c2_feat_content})
+
+        # Switch back to 'main' branch
+        main_branch = self.repo.branches.local["main"]
+        self.repo.checkout(main_branch)
+        self.repo.set_head(main_branch.name)
+
+        # C3 on 'main' - also modifies line2, creating the conflict basis
+        c3_main_content = "line1\nMODIFIED_BY_MAIN_C3\nline3\n"
+        c3_main_oid = self._make_commit(self.repo, "C3: Main conflicting change", {"file_x.txt": c3_main_content})
+        head_before_cherry_pick = self.repo.head.target # Should be C3's OID
+
+        # Perform cherry-pick of C2 from 'feat' onto 'main'
+        from gitwrite_core.versioning import cherry_pick_commit # Local import for test
+        with self.assertRaises(MergeConflictError) as cm:
+            cherry_pick_commit(self.repo_path_str, str(c2_feat_oid))
+
+        # Verify exception details
+        self.assertIn(f"Cherry-pick of commit {str(c2_feat_oid)[:7]} resulted in conflicts.", str(cm.exception))
+        self.assertIsNotNone(cm.exception.conflicting_files)
+        self.assertIn("file_x.txt", cm.exception.conflicting_files)
+
+        # Verify repository state after conflict:
+        # - HEAD should be reset to its pre-cherry-pick state (C3).
+        # - Index should be clean (no conflicts).
+        # - Working directory should be clean (reflecting C3's content).
+        # - No CHERRY_PICK_HEAD should exist.
+
+        self.assertEqual(self.repo.head.target, head_before_cherry_pick, "HEAD should be reset to pre-cherry-pick state.")
+
+        # Check index is clean (no conflicts persisted in index by our function)
+        self.assertEqual(self.repo.index.conflicts, None, "Index should have no conflicts after function handles error.")
+
+        # Check working directory content is that of C3 (pre-cherry-pick HEAD)
+        file_x_path = self.repo_path_obj / "file_x.txt"
+        self.assertTrue(file_x_path.exists())
+        self.assertEqual(file_x_path.read_text(), c3_main_content, "Working directory should be reset to pre-cherry-pick HEAD's content.")
+
+        # Verify repository status is clean
+        status = self.repo.status()
+        self.assertEqual(len(status), 0, f"Repository should be clean after conflicting cherry-pick was handled. Status: {status}")
+
+        # Verify no CHERRY_PICK_HEAD exists (cleaned up by the function)
+        self.assertIsNone(self.repo.references.get("CHERRY_PICK_HEAD"), "CHERRY_PICK_HEAD should not exist after function handles error.")
+        self.assertIsNone(self.repo.references.get("MERGE_HEAD"), "MERGE_HEAD should not exist.") # Just in case
+
+    def test_cherry_pick_commit_not_found(self):
+        # C1 on main
+        self._make_commit(self.repo, "C1: Base", {"file_a.txt": "Content A"})
+        from gitwrite_core.versioning import cherry_pick_commit # Local import
+
+        non_existent_sha = "abcdef1234567890abcdef1234567890abcdef12"
+        with self.assertRaisesRegex(CommitNotFoundError, f"Commit '{non_existent_sha}' not found or not a commit"):
+            cherry_pick_commit(self.repo_path_str, non_existent_sha)
+
+    def test_cherry_pick_on_non_repository_path(self):
+        from gitwrite_core.versioning import cherry_pick_commit # Local import
+        non_repo_dir = tempfile.mkdtemp(prefix="gitwrite_test_non_repo_pick_")
+        try:
+            with self.assertRaisesRegex(RepositoryNotFoundError, "No repository found at or above"):
+                cherry_pick_commit(non_repo_dir, "HEAD") # Commit SHA doesn't matter here
+        finally:
+            shutil.rmtree(non_repo_dir)
+
+    def test_cherry_pick_onto_unborn_head_error(self):
+        # Create a new empty repo for this test, setUp creates one with a commit.
+        empty_repo_path_obj = Path(tempfile.mkdtemp(prefix="gitwrite_test_empty_pick_"))
+        empty_repo_path_str = str(empty_repo_path_obj)
+        pygit2.init_repository(empty_repo_path_str, bare=False)
+        # We need a commit somewhere to pick, so use the main test repo for the commit to pick
+        # C1 on self.repo (main test repo)
+        c1_oid_to_pick = self._make_commit(self.repo, "C1: To be picked", {"file_pick.txt": "pick me"})
+
+        from gitwrite_core.versioning import cherry_pick_commit # Local import
+        try:
+            with self.assertRaisesRegex(GitWriteError, "Cannot cherry-pick onto an unborn HEAD. Please make an initial commit."):
+                cherry_pick_commit(empty_repo_path_str, str(c1_oid_to_pick))
+        finally:
+            shutil.rmtree(empty_repo_path_obj)
+
+    def test_cherry_pick_in_bare_repository_error(self):
+        # Create a bare repo
+        bare_repo_path_obj = Path(tempfile.mkdtemp(prefix="gitwrite_test_bare_pick_"))
+        bare_repo_path_str = str(bare_repo_path_obj)
+        pygit2.init_repository(bare_repo_path_str, bare=True)
+        # We need a commit OID to attempt to pick. It doesn't really matter where it's from
+        # as the bare check should happen first. Use one from self.repo.
+        c1_oid_to_pick = self._make_commit(self.repo, "C1: For bare pick test", {"file_bare.txt": "bare"})
+
+        from gitwrite_core.versioning import cherry_pick_commit # Local import
+        try:
+            with self.assertRaisesRegex(GitWriteError, "Cannot cherry-pick in a bare repository."):
+                cherry_pick_commit(bare_repo_path_str, str(c1_oid_to_pick))
+        finally:
+            shutil.rmtree(bare_repo_path_obj)
+
+    def test_cherry_pick_merge_commit_mainline_default(self):
+        # Setup:
+        # main: C1 -> M (merge of F1 and F2)
+        # Pick M onto a different branch 'dev' which is also based on C1.
+        # M = merge commit of F1 and F2 onto C1_main_prime (which is same as C1)
+
+        # C1 on main (base)
+        c1_oid = self._make_commit(self.repo, "C1: Base", {"base.txt": "Base content"})
+        c1_commit = self.repo.get(c1_oid)
+
+        # Branch F1 from C1
+        self.repo.branches.local.create("branch-f1", c1_commit)
+        self.repo.checkout("refs/heads/branch-f1")
+        self._make_commit(self.repo, "F1: Change on branch-f1", {"f1.txt": "F1 content", "base.txt": "Base content\nF1 modification"})
+        f1_commit_oid = self.repo.head.target
+
+        # Branch F2 from C1 (checkout main first, then branch off C1)
+        self.repo.checkout("refs/heads/main") # Back to main to branch F2 from C1
+        self.repo.branches.local.create("branch-f2", c1_commit)
+        self.repo.checkout("refs/heads/branch-f2")
+        self._make_commit(self.repo, "F2: Change on branch-f2", {"f2.txt": "F2 content", "base.txt": "Base content\nF2 modification"})
+        f2_commit_oid = self.repo.head.target
+
+        # Go back to main (which is at C1) and merge F1 and F2
+        self.repo.checkout("refs/heads/main")
+        self.repo.merge(f1_commit_oid) # Merge F1 into main
+        # Resolve potential conflict on base.txt (F1 vs C1's original state if no other changes on main)
+        # For this test, let's assume base.txt merged cleanly or we resolve it.
+        # If base.txt was changed by F1, and main is still at C1, this merge might be FF or require commit.
+        # Let's resolve by taking F1's version of base.txt
+        self._create_file(self.repo, "base.txt", "Base content\nF1 modification")
+        self._create_file(self.repo, "f1.txt", "F1 content") # Ensure f1.txt is there
+        self.repo.index.add("base.txt")
+        self.repo.index.add("f1.txt")
+        self.repo.index.write()
+        merge_tree_f1 = self.repo.index.write_tree()
+        merge_commit_f1_oid = self.repo.create_commit("HEAD", self.signature, self.signature, "M1: Merge F1 into main", merge_tree_f1, [c1_oid, f1_commit_oid])
+        self.repo.state_cleanup()
+
+        # Now merge F2 into main (which is at M1)
+        self.repo.merge(f2_commit_oid)
+        # Resolve potential conflict on base.txt (M1's version vs F2's version)
+        # M1's base.txt: "Base content\nF1 modification"
+        # F2's base.txt: "Base content\nF2 modification"
+        # Let's resolve to include both changes for uniqueness.
+        self._create_file(self.repo, "base.txt", "Base content\nF1 modification\nF2 modification")
+        self._create_file(self.repo, "f2.txt", "F2 content") # Ensure f2.txt is there
+        self.repo.index.add("base.txt")
+        self.repo.index.add("f2.txt")
+        self.repo.index.write()
+        merge_tree_f2 = self.repo.index.write_tree()
+
+        # This is the merge commit (M) we want to cherry-pick later
+        merge_commit_to_pick_oid = self.repo.create_commit("HEAD", self.signature, self.signature, "M2: Merge F2 into main (after M1)", merge_tree_f2, [merge_commit_f1_oid, f2_commit_oid])
+        self.repo.state_cleanup()
+        merge_commit_to_pick = self.repo.get(merge_commit_to_pick_oid)
+
+        # Create a 'dev' branch from C1
+        dev_branch = self.repo.branches.local.create("dev", c1_commit)
+        self.repo.checkout(dev_branch)
+        self.repo.set_head(dev_branch.name)
+        # Add a commit to dev to make its HEAD different from C1
+        self._make_commit(self.repo, "C-dev: Commit on dev", {"dev_file.txt": "Dev content"})
+
+        from gitwrite_core.versioning import cherry_pick_commit # Local import
+        # Cherry-pick the merge commit M2. Default mainline for pygit2.Repository.cherrypick is 0 (no mainline).
+        # However, libgit2's git_cherrypick_commit (which pygit2 likely wraps more directly than repo.cherrypick)
+        # requires a mainline to be specified if it's a merge commit.
+        # pygit2.Repository.cherrypick() might default to mainline=1 if not specified.
+        # Let's test with no mainline specified first, then with mainline=1.
+
+        # Test default mainline behavior (mainline=None for a merge commit)
+        # This should now raise a GitWriteError due to the explicit check.
+        with self.assertRaisesRegex(GitWriteError,
+                                     f"Commit {merge_commit_to_pick.short_id} is a merge commit. "
+                                     "Please specify the 'mainline' parameter .* to choose which parent's changes to pick."):
+            cherry_pick_commit(self.repo_path_str, str(merge_commit_to_pick_oid)) # mainline=None (default)
+
+
+    def test_cherry_pick_merge_commit_mainline_specified(self):
+        # C1 on main (base)
+        c1_oid = self._make_commit(self.repo, "C1: Base", {"base.txt": "Base content"})
+        c1_commit = self.repo.get(c1_oid)
+
+        # Branch F1 from C1
+        self.repo.branches.local.create("branch-f1-mainline", c1_commit)
+        self.repo.checkout("refs/heads/branch-f1-mainline")
+        self._make_commit(self.repo, "F1: Change on branch-f1", {"f1.txt": "F1 content", "base.txt": "Base content\nF1 modification"})
+        f1_commit_oid = self.repo.head.target
+
+        # Branch F2 from C1
+        self.repo.checkout("refs/heads/main")
+        self.repo.branches.local.create("branch-f2-mainline", c1_commit)
+        self.repo.checkout("refs/heads/branch-f2-mainline")
+        self._make_commit(self.repo, "F2: Change on branch-f2", {"f2.txt": "F2 content", "base.txt": "Base content\nF2 modification"})
+        f2_commit_oid = self.repo.head.target
+
+        # Go back to main (at C1) and merge F1
+        self.repo.checkout("refs/heads/main")
+        self.repo.merge(f1_commit_oid)
+        self._create_file(self.repo, "base.txt", "Base content\nF1 modification")
+        self._create_file(self.repo, "f1.txt", "F1 content")
+        self.repo.index.addall(["base.txt", "f1.txt"]) # Use addall for simplicity
+        self.repo.index.write()
+        m1_tree = self.repo.index.write_tree()
+        m1_oid = self.repo.create_commit("HEAD", self.signature, self.signature, "M1: Merge F1 to main", m1_tree, [c1_oid, f1_commit_oid])
+        self.repo.state_cleanup()
+
+        # Merge F2 into main (now at M1)
+        # This M2 is the merge commit we will cherry-pick.
+        self.repo.merge(f2_commit_oid)
+        self._create_file(self.repo, "base.txt", "Base content\nF1 modification\nF2 modification") # Resolution
+        self._create_file(self.repo, "f2.txt", "F2 content")
+        self.repo.index.addall(["base.txt", "f2.txt"])
+        self.repo.index.write()
+        m2_tree = self.repo.index.write_tree()
+        m2_merge_oid = self.repo.create_commit("HEAD", self.signature, self.signature, "M2: Merge F2 to main", m2_tree, [m1_oid, f2_commit_oid])
+        self.repo.state_cleanup()
+
+        # 'dev' branch from C1
+        dev_branch = self.repo.branches.local.create("dev-mainline", c1_commit)
+        self.repo.checkout(dev_branch)
+        self.repo.set_head(dev_branch.name)
+        self._make_commit(self.repo, "C-dev: Commit on dev", {"dev_file.txt": "Dev content"})
+
+        from gitwrite_core.versioning import cherry_pick_commit # Local import
+
+        # Cherry-pick M2 with mainline=1 (changes from F2 relative to M1)
+        result_m1 = cherry_pick_commit(self.repo_path_str, str(m2_merge_oid), mainline=1)
+        self.assertEqual(result_m1['status'], 'success')
+        picked_m1_commit = self.repo.get(pygit2.Oid(hex=result_m1['new_commit_oid']))
+
+        # Verify files: dev_file.txt, base.txt (with F1+F2 changes), f2.txt. No f1.txt.
+        self.assertIn("dev_file.txt", picked_m1_commit.tree)
+        self.assertEqual(picked_m1_commit.tree['base.txt'].data.decode(), "Base content\nF1 modification\nF2 modification")
+        self.assertEqual(picked_m1_commit.tree['f2.txt'].data.decode(), "F2 content")
+        self.assertNotIn("f1.txt", picked_m1_commit.tree)
+
+        # Reset dev branch back to "C-dev" state for next test
+        self.repo.checkout(dev_branch) # Checkout dev branch again
+        self.repo.reset(self.repo.revparse_single("HEAD~1").id, pygit2.GIT_RESET_HARD) # Go back one commit from picked_m1
+        self.assertEqual(self.repo.head.peel().message, "C-dev: Commit on dev")
+
+
+        # Cherry-pick M2 with mainline=2 (changes from M1 relative to F2)
+        # M2 parents are [m1_oid, f2_commit_oid]. Mainline 2 refers to f2_commit_oid.
+        # So this picks the changes that M1 introduced compared to F2.
+        # M1 introduced: f1.txt, and changed base.txt from "Base content" to "Base content\nF1 modification".
+        # F2's base.txt: "Base content\nF2 modification"
+        # Diff M1 vs F2 for base.txt: ("Base content\nF1 modification") vs ("Base content\nF2 modification")
+        # This is tricky. Cherry-pick applies the *diff* of the picked commit against its specified parent.
+        # If mainline=2, parent is f2_commit_oid.
+        # Diff is: merge_commit_to_pick (M2) vs f2_commit_oid.
+        # M2 tree: base.txt (F1+F2), f1.txt, f2.txt
+        # F2 tree: base.txt (F2), f2.txt
+        # Diff M2 vs F2:
+        # - base.txt changes from (F2) to (F1+F2) -> effectively adds "F1 modification" part
+        # - f1.txt is added
+        # - f2.txt is unchanged (present in both)
+        result_m2 = cherry_pick_commit(self.repo_path_str, str(m2_merge_oid), mainline=2)
+        self.assertEqual(result_m2['status'], 'success')
+        picked_m2_commit = self.repo.get(pygit2.Oid(hex=result_m2['new_commit_oid']))
+
+        # Verify files: dev_file.txt, base.txt (with F1+F2 changes), f1.txt. No f2.txt.
+        self.assertIn("dev_file.txt", picked_m2_commit.tree)
+        self.assertEqual(picked_m2_commit.tree['base.txt'].data.decode(), "Base content\nF1 modification\nF2 modification")
+        self.assertEqual(picked_m2_commit.tree['f1.txt'].data.decode(), "F1 content")
+        self.assertNotIn("f2.txt", picked_m2_commit.tree)
+
+    def test_cherry_pick_invalid_mainline_for_non_merge(self):
+        c1_oid = self._make_commit(self.repo, "C1", {"f.txt": "c1"})
+        c2_oid = self._make_commit(self.repo, "C2", {"f.txt": "c2"}) # Non-merge commit
+
+        from gitwrite_core.versioning import cherry_pick_commit
+        with self.assertRaisesRegex(GitWriteError, "Mainline option specified, but commit .* is not a merge commit."):
+            cherry_pick_commit(self.repo_path_str, str(c2_oid), mainline=1)
+
+    def test_cherry_pick_invalid_mainline_number_for_merge(self):
+        c1 = self._make_commit(self.repo, "C1", {"f.txt": "c1"})
+        self.repo.branches.local.create("other", self.repo.get(c1))
+        self.repo.checkout("refs/heads/other")
+        c_other = self._make_commit(self.repo, "C_other", {"f_other.txt": "other"})
+        self.repo.checkout("refs/heads/main")
+        c_main = self._make_commit(self.repo, "C_main", {"f_main.txt": "main"})
+
+        self.repo.merge(c_other)
+        self._create_file(self.repo, "f.txt", "merged") # Dummy resolution
+        self.repo.index.addall(["f.txt", "f_other.txt", "f_main.txt"])
+        self.repo.index.write()
+        merge_tree = self.repo.index.write_tree()
+        merge_commit_oid = self.repo.create_commit("HEAD", self.signature, self.signature, "Merge", merge_tree, [c_main, c_other])
+        self.repo.state_cleanup()
+
+        from gitwrite_core.versioning import cherry_pick_commit
+        with self.assertRaisesRegex(GitWriteError, "Invalid mainline number 0 for merge commit .* with 2 parents."):
+            cherry_pick_commit(self.repo_path_str, str(merge_commit_oid), mainline=0)
+        with self.assertRaisesRegex(GitWriteError, "Invalid mainline number 3 for merge commit .* with 2 parents."):
+            cherry_pick_commit(self.repo_path_str, str(merge_commit_oid), mainline=3)

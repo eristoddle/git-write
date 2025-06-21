@@ -686,3 +686,188 @@ def save_changes(repo_path_str: str, message: str, include_paths: Optional[List[
         'is_merge_commit': is_merge_commit,
         'is_revert_commit': is_revert_commit,
     }
+
+
+def cherry_pick_commit(repo_path_str: str, commit_oid_to_pick: str, mainline: Optional[int] = None) -> Dict[str, Any]:
+    """
+    Applies the changes introduced by a specific commit to the current branch.
+
+    Args:
+        repo_path_str: Path to the repository.
+        commit_oid_to_pick: The OID of the commit to cherry-pick.
+        mainline: Optional. If the commit to pick is a merge commit, this specifies
+                  which parent (1-indexed) to consider as the mainline.
+
+    Returns:
+        A dictionary indicating success and the new commit OID if the cherry-pick was clean and committed.
+        Example: {'status': 'success', 'new_commit_oid': '...', 'message': 'Commit cherry-picked successfully.'}
+        If conflicts occur, a MergeConflictError is raised.
+
+    Raises:
+        RepositoryNotFoundError: If the repository is not found.
+        CommitNotFoundError: If the commit to pick is not found.
+        MergeConflictError: If the cherry-pick results in conflicts.
+        GitWriteError: For other Git-related errors.
+    """
+    try:
+        repo_discovered_path = pygit2.discover_repository(repo_path_str)
+        if repo_discovered_path is None:
+            raise RepositoryNotFoundError(f"No repository found at or above '{repo_path_str}'")
+        repo = pygit2.Repository(repo_discovered_path)
+    except pygit2.GitError as e:
+        raise RepositoryNotFoundError(f"Error opening repository at '{repo_path_str}': {e}")
+
+    if repo.is_bare:
+        raise GitWriteError("Cannot cherry-pick in a bare repository.")
+    if repo.head_is_unborn:
+        raise GitWriteError("Cannot cherry-pick onto an unborn HEAD. Please make an initial commit.")
+
+    try:
+        commit_to_pick = repo.revparse_single(commit_oid_to_pick).peel(pygit2.Commit)
+    except (pygit2.GitError, KeyError, TypeError) as e:
+        raise CommitNotFoundError(f"Commit '{commit_oid_to_pick}' not found or not a commit: {e}")
+
+    # Store original HEAD in case of conflict or error to reset
+    original_head_oid = repo.head.target
+    original_index_tree_oid = repo.index.write_tree() # Save current index state
+
+    try:
+        # Check for mainline requirement if it's a merge commit
+        if len(commit_to_pick.parents) > 1 and mainline is None:
+            raise GitWriteError(
+                f"Commit {commit_to_pick.short_id} is a merge commit. "
+                "Please specify the 'mainline' parameter (e.g., 1 or 2) to choose which parent's changes to pick."
+            )
+
+        # Determine cherrypick_options
+        opts = pygit2.CherryPickOptions()
+        if mainline is not None: # mainline is not None here implies it's for a merge or user explicitly set it
+            if not commit_to_pick.parents or len(commit_to_pick.parents) < 2:
+                # This case should ideally be caught if mainline is specified for a non-merge.
+                # However, if mainline is None for non-merge, the above check is skipped.
+                # If mainline is not None for non-merge, this check is important.
+                raise GitWriteError(f"Mainline option specified, but commit {commit_to_pick.short_id} is not a merge commit.")
+            if mainline <= 0 or mainline > len(commit_to_pick.parents):
+                raise GitWriteError(f"Invalid mainline number {mainline} for merge commit {commit_to_pick.short_id} with {len(commit_to_pick.parents)} parents.")
+            opts.mainline = mainline
+        # If it's not a merge commit, opts.mainline remains 0, which is correct.
+
+        # Perform the cherry-pick operation. This updates the working directory and index.
+        # pygit2.Repository.cherrypick does NOT create a commit.
+        repo.cherrypick(commit_to_pick.id, opts=opts)
+
+        # Check for conflicts after cherrypick
+        # The index is updated by repo.cherrypick(). If there are conflicts, repo.index.conflicts will be populated.
+        if repo.index.conflicts is not None:
+            conflicting_files = get_conflicting_files(repo.index.conflicts) # Use existing helper
+            if conflicting_files:
+                # Cherry-pick resulted in conflicts. The index is in a conflicted state.
+                # The working directory contains conflict markers.
+                # We should not proceed to commit.
+                # The state is left for the user to resolve. REVERT_HEAD or CHERRY_PICK_HEAD might be set by libgit2.
+                # pygit2.Repository.state_cleanup() would typically clean these, but we want to leave them
+                # if user needs to resolve. However, for a programmatic API, it's better to
+                # either complete the operation or fully abort and reset.
+                # For now, we raise, and the repo is left in a conflicted state.
+                # A more robust solution might involve `repo.reset()` if we don't want to leave it conflicted.
+                # Let's reset to original state before raising.
+                repo.reset(original_head_oid, pygit2.GIT_RESET_HARD)
+                repo.index.read_tree(original_index_tree_oid) # Restore original index
+                repo.index.write()
+                repo.state_cleanup() # Clean up CHERRY_PICK_HEAD etc.
+
+                raise MergeConflictError(
+                    f"Cherry-pick of commit {commit_to_pick.short_id} resulted in conflicts.",
+                    conflicting_files=conflicting_files
+                )
+
+        # If no conflicts, the index reflects the cherry-picked changes.
+        # Proceed to create a commit.
+
+        # Use the original commit's message, author, and committer.
+        # The commit time will be new.
+        author = pygit2.Signature(
+            commit_to_pick.author.name,
+            commit_to_pick.author.email,
+            time=commit_to_pick.author.time,
+            offset=commit_to_pick.author.offset
+        )
+        committer = repo.default_signature # Use current user/time as committer
+        if not committer: # Fallback
+             # Create a new signature for committer with current time
+             current_time = int(datetime.now(timezone.utc).timestamp())
+             # Attempt to get local timezone offset, default to 0 (UTC)
+             try:
+                local_tz = datetime.now(timezone.utc).astimezone().tzinfo
+                offset_minutes = 0
+                if local_tz:
+                    offset_delta = local_tz.utcoffset(datetime.now())
+                    if offset_delta:
+                        offset_minutes = int(offset_delta.total_seconds() / 60)
+             except Exception:
+                offset_minutes = 0
+             committer = pygit2.Signature("GitWrite System", "gitwrite@example.com", time=current_time, offset=offset_minutes)
+        else:
+            # If default signature exists, use its name/email but update time to now
+            current_time = int(datetime.now(timezone.utc).timestamp())
+            committer = pygit2.Signature(committer.name, committer.email, time=current_time, offset=committer.offset)
+
+        commit_message = commit_to_pick.message
+
+        # Create the commit
+        new_tree_oid = repo.index.write_tree()
+        parents = [repo.head.target]
+
+        new_commit_oid = repo.create_commit(
+            "HEAD",             # Update HEAD to point to the new commit
+            author,             # Author from original commit
+            committer,          # Committer is the current user
+            commit_message,     # Message from original commit
+            new_tree_oid,       # Tree from the updated index
+            parents             # Parent is the current HEAD
+        )
+
+        repo.state_cleanup() # Clean up CHERRY_PICK_HEAD if it was set
+
+        return {
+            'status': 'success',
+            'new_commit_oid': str(new_commit_oid),
+            'message': f"Commit '{commit_to_pick.short_id}' cherry-picked successfully as '{str(new_commit_oid)[:7]}'."
+        }
+
+    except MergeConflictError: # Re-raise if it's already our specific error
+        raise
+    except pygit2.GitError as e:
+        # Attempt to reset repository to original state on error
+        current_head = repo.head.target if not repo.head_is_unborn else None
+        if current_head != original_head_oid : # Only reset if HEAD changed
+            try:
+                repo.reset(original_head_oid, pygit2.GIT_RESET_HARD)
+                # Also try to restore the index to its pre-cherrypick state
+                # This might not be perfect if write_tree() failed or index was corrupted
+                # but it's a best effort.
+                original_tree = repo.get(original_index_tree_oid, pygit2.GIT_OBJ_TREE)
+                if original_tree:
+                    repo.index.read_tree(original_tree)
+                repo.index.write()
+            except Exception as reset_e: # pragma: no cover
+                # If reset fails, append to original error or log it
+                raise GitWriteError(f"Error during cherry-pick: {e}. Additionally, failed to reset repository: {reset_e}")
+
+        repo.state_cleanup() # Ensure CHERRY_PICK_HEAD etc. are cleaned up on error
+        raise GitWriteError(f"Error during cherry-pick operation for commit '{commit_oid_to_pick}': {e}")
+    except Exception as e: # Catch any other unexpected error
+        # Attempt to reset repository to original state
+        current_head = repo.head.target if not repo.head_is_unborn else None
+        if current_head != original_head_oid: # Only reset if HEAD changed
+            try:
+                repo.reset(original_head_oid, pygit2.GIT_RESET_HARD)
+                original_tree = repo.get(original_index_tree_oid, pygit2.GIT_OBJ_TREE)
+                if original_tree:
+                    repo.index.read_tree(original_tree)
+                repo.index.write()
+            except Exception as reset_e: # pragma: no cover
+                raise GitWriteError(f"An unexpected error occurred during cherry-pick: {e}. Additionally, failed to reset repository: {reset_e}")
+
+        repo.state_cleanup()
+        raise GitWriteError(f"An unexpected error occurred during cherry-pick for commit '{commit_oid_to_pick}': {e}")
