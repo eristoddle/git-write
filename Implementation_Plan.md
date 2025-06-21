@@ -47,7 +47,7 @@ Architectural Notes:
 
 ### Task 6.1 - Agent_SDK_Dev: Initial SDK Setup & Project Configuration
 Objective: Set up the project structure, dependencies, and build configuration for the TypeScript SDK.
-Status: **In Progress**
+Status: **Completed**
 
 1.  Create a new directory `gitwrite_sdk/` at the project root.
 2.  Initialize a `package.json` file. Add dependencies like `axios` (for HTTP requests) and dev dependencies like `typescript`, `jest` (or `vitest`), `ts-jest`, and a bundler like `rollup` or `vite`.
