@@ -39,18 +39,15 @@ class TestSyncRepositoryCore(unittest.TestCase):
         self.remote_repo = pygit2.init_repository(str(self.remote_repo_path), bare=True)
         self._configure_repo_user(self.remote_repo) # Not strictly necessary for bare, but good for consistency if ever non-bare
         # Set the HEAD for the bare remote repository to default to 'main'.
-        # This is crucial for initial pushes to correctly establish the 'main' branch.
-        # This makes HEAD point to 'refs/heads/main', even if 'main' doesn't exist yet.
-        # For a bare repo, this is standard setup.
         try:
             self.remote_repo.set_head("refs/heads/main")
+            # Re-open the repository object to ensure the HEAD change is persisted and visible
+            # to subsequent operations that might open the repo by path.
+            self.remote_repo = pygit2.Repository(str(self.remote_repo_path))
         except pygit2.GitError as e:
-            # This might fail if the remote_repo is not truly bare or in an unexpected state,
-            # but for a fresh bare repo, set_head defines the default branch.
-            print(f"Warning: Failed to set HEAD for bare remote during setup: {e}")
-            # Depending on the strictness of the pygit2 version or underlying libgit2,
-            # HEAD might need 'refs/heads/main' to exist. If tests fail due to this,
-            # this setup needs revisiting.
+            print(f"Warning: Failed to set HEAD for bare remote during setup or re-opening: {e}")
+            # If set_head fails, subsequent tests relying on it might also fail.
+            # Consider making this a hard fail if set_head is critical for most tests.
             pass
 
 
@@ -570,9 +567,28 @@ class TestSyncRepositoryCore(unittest.TestCase):
         self._push_to_remote(self.local_repo, "origin", "main") # Remote 'main' is at C1
 
         # Verify remote 'main' exists and set remote HEAD (important for clone behavior)
-        self.remote_repo = pygit2.Repository(str(self.remote_repo_path)) # Re-open for fresh view
-        self.assertIsNotNone(self.remote_repo.lookup_reference("refs/heads/main"), "refs/heads/main should exist on remote after push")
-        self.remote_repo.set_head("refs/heads/main")
+        # Re-open the remote repo to ensure we have the latest state after push
+        fresh_remote_repo = pygit2.Repository(str(self.remote_repo_path))
+
+        # Ensure refs/heads/main actually exists on remote after push before trying to set HEAD to it
+        try:
+            fresh_remote_repo.lookup_reference("refs/heads/main")
+        except KeyError:
+            self.fail("refs/heads/main was not created on the remote repository after push.")
+
+        # Explicitly set HEAD on the bare remote to point to the 'main' branch
+        fresh_remote_repo.set_head("refs/heads/main")
+
+        # Now, assertions on the fresh_remote_repo instance
+        self.assertIsNotNone(fresh_remote_repo.lookup_reference("refs/heads/main"), "refs/heads/main should exist on remote after push and set_head.")
+        head_ref = fresh_remote_repo.head
+        self.assertEqual(head_ref.name, "HEAD") # Symbolic ref name
+        # Check if HEAD is symbolic and points to 'refs/heads/main'
+        if head_ref.type == pygit2.GIT_REFERENCE_SYMBOLIC:
+            self.assertEqual(head_ref.target, "refs/heads/main", "Remote HEAD should point to refs/heads/main")
+        else:
+            self.fail(f"Remote HEAD is not symbolic after set_head, but is {head_ref.target}")
+
 
         # 2. Local C2: Add a new file (main branch)
         c2_local_oid = self._make_commit(self.local_repo, "local_file.txt", "local content", "C2 Local")

@@ -740,7 +740,7 @@ def cherry_pick_commit(repo_path_str: str, commit_oid_to_pick: str, mainline: Op
             )
 
         # Determine cherrypick_options
-        opts = pygit2.CherrypickOptions() # Corrected to lowercase 'p'
+        opts = pygit2.CherryPickOptions() # Use PascalCase for CherryPickOptions
         if mainline is not None: # mainline is not None here implies it's for a merge or user explicitly set it
             if not commit_to_pick.parents or len(commit_to_pick.parents) < 2:
                 # This case should ideally be caught if mainline is specified for a non-merge.
