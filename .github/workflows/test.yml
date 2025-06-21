@@ -24,7 +24,7 @@ jobs:
           poetry install
       - name: Test with pytest
         run: |
-          pytest
+          poetry run pytest --cov=gitwrite_core --cov=gitwrite_cli tests/
 
   test-sdk:
     runs-on: ubuntu-latest
