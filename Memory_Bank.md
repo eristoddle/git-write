@@ -221,3 +221,49 @@ None.
 
 **Next Steps (Optional):**
 Proceed with Phase 6, Task 6.2: Implement Authentication and API Client.
+---
+**Agent:** Jules (Implementation Agent)
+**Task Reference:** Phase 6, Task 6.2: Implement Authentication and API Client
+
+**Summary:**
+Implemented the `GitWriteClient` class in TypeScript, providing core functionality for API authentication and request management. This includes methods for login, logout, setting a token, and generic request wrappers (GET, POST, PUT, DELETE) using an Axios instance. Comprehensive unit tests were added and are passing.
+
+**Details:**
+- Created `gitwrite_sdk/src/apiClient.ts`:
+    - Defined `GitWriteClient` class with constructor for API base URL.
+    - Implemented `login(credentials)`: POSTs to `/token`, stores JWT.
+    - Implemented `logout()`: Clears stored JWT.
+    - Implemented `setToken(token)`: Allows manual JWT setting.
+    - Implemented `getToken()`: Retrieves stored JWT.
+    - Implemented private `updateAuthHeader()`: Updates Axios instance defaults with Bearer token.
+    - Implemented generic `request<T, R, D>(config)` method wrapping `this.axiosInstance.request`.
+    - Implemented helper methods `get()`, `post()`, `put()`, `delete()` using the generic `request` method.
+    - Defined types `AuthToken`, `LoginCredentials`, `TokenResponse`.
+- Updated `gitwrite_sdk/src/index.ts`:
+    - Exported `GitWriteClient` and related types (`AuthToken`, `LoginCredentials`, `TokenResponse`).
+- Created `gitwrite_sdk/tests/apiClient.test.ts`:
+    - Added comprehensive unit tests for `GitWriteClient` methods.
+    - Mocked `axios` for isolated testing.
+    - Tests cover login (success, failure, no credentials), token setting, logout, and correct formation/header inclusion for GET, POST, PUT, DELETE requests, and error handling.
+    - All tests are passing.
+- Updated `gitwrite_sdk/jest.config.js`:
+    - Removed `roots` configuration to allow Jest to find tests in the `<rootDir>/tests` directory correctly.
+- Debugged and resolved issues with Jest test discovery and mock implementation for `axiosInstance.request`.
+
+**Output/Result:**
+- New file: `gitwrite_sdk/src/apiClient.ts`
+- Modified file: `gitwrite_sdk/src/index.ts`
+- New file: `gitwrite_sdk/tests/apiClient.test.ts`
+- Modified file: `gitwrite_sdk/jest.config.js`
+- Modified file: `Implementation_Plan.md` (Task 6.2 status updated to Completed)
+- This log entry in `Memory_Bank.md`.
+
+**Status:** Completed
+
+**Issues/Blockers:**
+- Encountered initial issues with `cd` command in the bash session, worked around using subshells `(cd dir && command)`.
+- Jest initially failed to find tests due to `roots` configuration in `jest.config.js`.
+- Test failures occurred due to incorrect mocking of the Axios instance, specifically the `request` method and how Authorization headers were checked. These were resolved by refining the mock setup and test assertions.
+
+**Next Steps (Optional):**
+Proceed with Phase 6, Task 6.3: Implement Read-Only Repository Methods.

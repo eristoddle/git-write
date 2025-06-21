@@ -56,7 +56,7 @@ Status: **Completed**
 
 ### Task 6.2 - Agent_SDK_Dev: Implement Authentication and API Client
 Objective: Create a base API client to handle authentication and requests to the GitWrite API.
-Status: **Pending**
+Status: **Completed**
 
 1.  Create a main client class (e.g., `GitWriteClient`).
 2.  Implement methods for authentication (`login`, `logout`, `setToken`). The client should store the JWT and automatically include it in subsequent requests.
