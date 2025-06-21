@@ -1,5 +1,12 @@
 import axios from 'axios';
 import { GitWriteClient, LoginCredentials, TokenResponse } from '../src/apiClient';
+import {
+  RepositoryBranchesResponse,
+  RepositoryTagsResponse,
+  RepositoryCommitsResponse,
+  CommitDetail,
+  ListCommitsParams,
+} from '../src/types'; // Import new types for testing
 
 // Mock axios
 jest.mock('axios');
@@ -191,6 +198,134 @@ describe('GitWriteClient', () => {
       // Reset mock for next call if necessary, or use different error for POST
       mockRequest.mockRejectedValueOnce(new Error('Another Network Error'));
       await expect(client.post('/test-error-post', {})).rejects.toThrow('Another Network Error');
+    });
+  });
+
+  describe('Repository Methods', () => {
+    beforeEach(() => {
+      // Ensure client is authenticated for these tests
+      client.setToken('test-repo-token');
+      // clientAxiosInstance.defaults.headers.common['Authorization'] is set by setToken
+    });
+
+    describe('listBranches', () => {
+      it('should call GET /repository/branches and return data', async () => {
+        const mockResponseData: RepositoryBranchesResponse = {
+          status: 'success',
+          branches: ['main', 'develop'],
+          message: 'Branches listed',
+        };
+        // The client.get method uses clientAxiosInstance.request
+        mockRequest.mockResolvedValueOnce({ data: mockResponseData });
+
+        const result = await client.listBranches();
+
+        expect(mockRequest).toHaveBeenCalledWith({
+          method: 'GET',
+          url: '/repository/branches',
+        });
+        expect(result).toEqual(mockResponseData);
+      });
+
+      it('should throw if API call fails for listBranches', async () => {
+        const error = new Error('API Error for listBranches');
+        mockRequest.mockRejectedValueOnce(error);
+        await expect(client.listBranches()).rejects.toThrow('API Error for listBranches');
+      });
+    });
+
+    describe('listTags', () => {
+      it('should call GET /repository/tags and return data', async () => {
+        const mockResponseData: RepositoryTagsResponse = {
+          status: 'success',
+          tags: ['v1.0', 'v1.1'],
+          message: 'Tags listed',
+        };
+        mockRequest.mockResolvedValueOnce({ data: mockResponseData });
+
+        const result = await client.listTags();
+
+        expect(mockRequest).toHaveBeenCalledWith({
+          method: 'GET',
+          url: '/repository/tags',
+        });
+        expect(result).toEqual(mockResponseData);
+      });
+
+      it('should throw if API call fails for listTags', async () => {
+        const error = new Error('API Error for listTags');
+        mockRequest.mockRejectedValueOnce(error);
+        await expect(client.listTags()).rejects.toThrow('API Error for listTags');
+      });
+    });
+
+    describe('listCommits', () => {
+      const mockCommit: CommitDetail = {
+        sha: 'abcdef123',
+        message: 'Test commit',
+        author_name: 'Test Author',
+        author_email: 'author@example.com',
+        author_date: new Date().toISOString(),
+        committer_name: 'Test Committer',
+        committer_email: 'committer@example.com',
+        committer_date: new Date().toISOString(),
+        parents: [],
+      };
+      const mockResponseData: RepositoryCommitsResponse = {
+        status: 'success',
+        commits: [mockCommit],
+        message: 'Commits listed',
+      };
+
+      it('should call GET /repository/commits without params and return data', async () => {
+        mockRequest.mockResolvedValueOnce({ data: mockResponseData });
+        const result = await client.listCommits();
+        expect(mockRequest).toHaveBeenCalledWith({
+          method: 'GET',
+          url: '/repository/commits',
+          params: {}, // Expect empty params when none provided
+        });
+        expect(result).toEqual(mockResponseData);
+      });
+
+      it('should call GET /repository/commits with branchName param', async () => {
+        const params: ListCommitsParams = { branchName: 'develop' };
+        mockRequest.mockResolvedValueOnce({ data: mockResponseData });
+        await client.listCommits(params);
+        expect(mockRequest).toHaveBeenCalledWith({
+          method: 'GET',
+          url: '/repository/commits',
+          params: { branch_name: 'develop' },
+        });
+      });
+
+      it('should call GET /repository/commits with maxCount param', async () => {
+        const params: ListCommitsParams = { maxCount: 10 };
+        mockRequest.mockResolvedValueOnce({ data: mockResponseData });
+        await client.listCommits(params);
+        expect(mockRequest).toHaveBeenCalledWith({
+          method: 'GET',
+          url: '/repository/commits',
+          params: { max_count: 10 },
+        });
+      });
+
+      it('should call GET /repository/commits with all params', async () => {
+        const params: ListCommitsParams = { branchName: 'feature/test', maxCount: 5 };
+        mockRequest.mockResolvedValueOnce({ data: mockResponseData });
+        await client.listCommits(params);
+        expect(mockRequest).toHaveBeenCalledWith({
+          method: 'GET',
+          url: '/repository/commits',
+          params: { branch_name: 'feature/test', max_count: 5 },
+        });
+      });
+
+      it('should throw if API call fails for listCommits', async () => {
+        const error = new Error('API Error for listCommits');
+        mockRequest.mockRejectedValueOnce(error);
+        await expect(client.listCommits()).rejects.toThrow('API Error for listCommits');
+      });
     });
   });
 });

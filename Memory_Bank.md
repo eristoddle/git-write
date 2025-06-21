@@ -267,3 +267,47 @@ Implemented the `GitWriteClient` class in TypeScript, providing core functionali
 
 **Next Steps (Optional):**
 Proceed with Phase 6, Task 6.3: Implement Read-Only Repository Methods.
+---
+**Agent:** Jules (Implementation Agent)
+**Task Reference:** Phase 6, Task 6.3: Implement Read-Only Repository Methods
+
+**Summary:**
+Implemented read-only repository methods (`listBranches`, `listTags`, `listCommits`) in the TypeScript SDK's `GitWriteClient`. This involved defining necessary TypeScript interfaces for API responses, adding the methods to the client, exporting the types, and writing comprehensive unit tests which are now passing.
+
+**Details:**
+- **TypeScript Interfaces Defined**:
+    - Created `gitwrite_sdk/src/types.ts`.
+    - Defined `Branch`, `Tag`, `CommitDetail` interfaces.
+    - Defined `RepositoryBranchesResponse`, `RepositoryTagsResponse`, `RepositoryCommitsResponse` for API call results.
+    - Defined `ListCommitsParams` for `listCommits` method parameters.
+- **`GitWriteClient` Methods Implemented (`gitwrite_sdk/src/apiClient.ts`)**:
+    - Added `async listBranches(): Promise<RepositoryBranchesResponse>`.
+    - Added `async listTags(): Promise<RepositoryTagsResponse>`.
+    - Added `async listCommits(params?: ListCommitsParams): Promise<RepositoryCommitsResponse>`.
+    - These methods utilize the existing `get` helper and map to `/repository/branches`, `/repository/tags`, and `/repository/commits` API endpoints.
+    - `listCommits` correctly handles optional `branchName` and `maxCount` query parameters.
+- **Exports Updated (`gitwrite_sdk/src/index.ts`)**:
+    - All newly defined interfaces from `types.ts` are now exported for SDK consumers.
+- **Unit Tests Added (`gitwrite_sdk/tests/apiClient.test.ts`)**:
+    - Added test suites for `listBranches`, `listTags`, and `listCommits`.
+    - Tests cover successful data fetching, correct API endpoint calls, parameter handling for `listCommits`, and error propagation.
+    - All tests (21 total for `apiClient.test.ts`) are passing after resolving a Jest preset issue by cleaning `node_modules` and reinstalling.
+- **Troubleshooting**:
+    - Resolved `Preset ts-jest not found` error by removing `node_modules`, `package-lock.json`, and running `npm install` in the `gitwrite_sdk` directory.
+    - Encountered and worked around some inconsistencies with `cd` command in `run_in_bash_session`.
+
+**Output/Result:**
+- New file: `gitwrite_sdk/src/types.ts`
+- Modified file: `gitwrite_sdk/src/apiClient.ts`
+- Modified file: `gitwrite_sdk/src/index.ts`
+- Modified file: `gitwrite_sdk/tests/apiClient.test.ts`
+- Modified file: `Implementation_Plan.md` (Task 6.3 status updated to Completed)
+- This log entry in `Memory_Bank.md`.
+
+**Status:** Completed
+
+**Issues/Blockers:**
+None remaining for this task. Initial test execution issues were resolved.
+
+**Next Steps (Optional):**
+Proceed with Phase 6, Task 6.4: Implement `save` Method.

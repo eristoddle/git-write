@@ -1,4 +1,10 @@
 import axios, { AxiosInstance, AxiosRequestConfig, AxiosResponse } from 'axios';
+import {
+  RepositoryBranchesResponse,
+  RepositoryTagsResponse,
+  RepositoryCommitsResponse,
+  ListCommitsParams,
+} from './types'; // Import the new types
 
 // Define a type for the token, which can be a string or null
 export type AuthToken = string | null;
@@ -110,6 +116,48 @@ export class GitWriteClient {
   // Example of a DELETE request
   public async delete<T = any, R = AxiosResponse<T>, D = any>(url: string, config?: AxiosRequestConfig<D>): Promise<R> {
     return this.request<T, R, D>({ ...config, method: 'DELETE', url });
+  }
+
+  // Repository Methods
+
+  /**
+   * Lists all local branches in the repository.
+   * Corresponds to API endpoint: GET /repository/branches
+   */
+  public async listBranches(): Promise<RepositoryBranchesResponse> {
+    // The actual response object from Axios is AxiosResponse<RepositoryBranchesResponse>
+    // We are interested in the `data` part of it.
+    const response = await this.get<RepositoryBranchesResponse>('/repository/branches');
+    return response.data;
+  }
+
+  /**
+   * Lists all tags in the repository.
+   * Corresponds to API endpoint: GET /repository/tags
+   */
+  public async listTags(): Promise<RepositoryTagsResponse> {
+    const response = await this.get<RepositoryTagsResponse>('/repository/tags');
+    return response.data;
+  }
+
+  /**
+   * Lists commits for a given branch, or the current branch if branch_name is not provided.
+   * Corresponds to API endpoint: GET /repository/commits
+   * @param params Optional parameters: branchName, maxCount.
+   */
+  public async listCommits(params?: ListCommitsParams): Promise<RepositoryCommitsResponse> {
+    const queryParams: Record<string, string | number> = {};
+    if (params?.branchName) {
+      queryParams['branch_name'] = params.branchName;
+    }
+    if (params?.maxCount !== undefined) {
+      queryParams['max_count'] = params.maxCount;
+    }
+
+    const response = await this.get<RepositoryCommitsResponse>('/repository/commits', {
+      params: queryParams,
+    });
+    return response.data;
   }
 }
 
