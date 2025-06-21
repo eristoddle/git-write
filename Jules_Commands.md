@@ -20,5 +20,5 @@ Here is how you run unit tests:
 
 
 Read Memory_Bank.md and Implementation_Plan.md for details on the current state of the project.
-Proceed with Task 6.3 - Agent_API_Dev: Revert and Sync Endpoints
-When you are done update Memory_Bank.md and Implementation_Plan.md.
+Proceed with Task 6.6: Finalize Multi-File Upload Logic as per the Implementation Plan.
+When you are done update Memory_Bank.md and Implementation_Plan.md according the the APM rules, located here: prompts.
