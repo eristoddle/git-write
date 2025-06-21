@@ -324,7 +324,6 @@ class TestSwitchToBranch:
 
 
 class TestMergeBranch:
-    @pytest.mark.xfail
     def test_merge_success_normal(self, repo_for_merge: Path, configure_git_user): # Fixtures from conftest
         # repo_for_merge is already on 'main'
         # configure_git_user has already been applied to repo_for_merge fixture

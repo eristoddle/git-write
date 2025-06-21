@@ -15,7 +15,7 @@ client = TestClient(app)
 
 # --- Mock Data ---
 MOCK_USER = PlaceholderUser(username="testuser", email="test@example.com", active=True)
-MOCK_REPO_PATH = "/path/to/user/repo" # Should match the placeholder in the router
+MOCK_REPO_PATH = "/tmp/gitwrite_repos_api" # Updated to match router
 
 # --- Helper for Authentication Mocking ---
 def mock_get_current_active_user():
@@ -410,7 +410,12 @@ def test_api_add_ignore_pattern_invalid_payload():
     response = client.post("/repository/ignore", json={"pattern": ""})
     assert response.status_code == HTTPStatus.UNPROCESSABLE_ENTITY # 422
     data = response.json()["detail"]
-    assert any(item["loc"] == ["body", "pattern"] and "min_length" in item["msg"].lower() for item in data)
+    assert any(
+        item["loc"] == ["body", "pattern"] and
+        item["type"] == "string_too_short" and
+        item.get("ctx", {}).get("min_length") == 1
+        for item in data
+    )
     app.dependency_overrides = {}
 
 @patch('gitwrite_api.routers.repository.list_commits')
@@ -1750,7 +1755,12 @@ def test_api_create_tag_invalid_payload():
     response = client.post("/repository/tags", json={"tag_name": ""})
     assert response.status_code == HTTPStatus.UNPROCESSABLE_ENTITY # 422
     data = response.json()["detail"]
-    assert any(item["loc"] == ["body", "tag_name"] and "min_length" in item["msg"] for item in data)
+    assert any(
+        item["loc"] == ["body", "tag_name"] and
+        item["type"] == "string_too_short" and
+        item.get("ctx", {}).get("min_length") == 1  # Assuming min_length is 1 for tag_name
+        for item in data
+    )
 
     # force is not a boolean
     response = client.post("/repository/tags", json={"tag_name": "test", "force": "not-a-bool"})
@@ -1982,7 +1992,12 @@ def test_api_initialize_repository_invalid_payload():
     response = client.post("/repository/repositories", json=invalid_payload_chars)
     assert response.status_code == HTTPStatus.UNPROCESSABLE_ENTITY # 422
     data = response.json()["detail"]
-    assert any(item["loc"] == ["body", "project_name"] and "pattern" in item["msg"] for item in data)
+    assert any(
+        item["loc"] == ["body", "project_name"] and
+        item["type"] == "string_pattern_mismatch" and
+        item.get("ctx", {}).get("pattern") == r"^[a-zA-Z0-9_-]+$"
+        for item in data
+    )
 
     # project_name is empty string (violates Pydantic model min_length=1)
     # Note: project_name is Optional, so omitting it is fine (tested above).
@@ -1991,7 +2006,12 @@ def test_api_initialize_repository_invalid_payload():
     response = client.post("/repository/repositories", json=invalid_payload_empty)
     assert response.status_code == HTTPStatus.UNPROCESSABLE_ENTITY # 422
     data = response.json()["detail"]
-    assert any(item["loc"] == ["body", "project_name"] and "min_length" in item["msg"] for item in data)
+    assert any(
+        item["loc"] == ["body", "project_name"] and
+        item["type"] == "string_too_short" and
+        item.get("ctx", {}).get("min_length") == 1
+        for item in data
+    )
 
     app.dependency_overrides = {}
 

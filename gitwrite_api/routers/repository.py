@@ -2,9 +2,10 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Body
 from typing import Any, Dict, Optional, List
 from pydantic import BaseModel, Field
 import datetime # For commit date serialization
+import pygit2 # Moved import to top
 
 # TODO: Make this configurable or dynamically determined per user/request
-PLACEHOLDER_REPO_PATH = "/path/to/user/repo"
+PLACEHOLDER_REPO_PATH = "/tmp/gitwrite_repos_api"
 
 # Import core functions
 from gitwrite_core.repository import (
@@ -712,7 +713,7 @@ async def api_create_tag(
         try:
             # Attempt to import pygit2. If it's not available in this environment,
             # this would be a server-side issue. For now, assume it's available.
-            import pygit2
+            # import pygit2 # Removed from here
             tagger_signature = pygit2.Signature(user_name, user_email)
         except ImportError:
             # This should ideally not happen in a deployed environment.

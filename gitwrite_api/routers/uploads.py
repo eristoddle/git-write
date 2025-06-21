@@ -65,6 +65,9 @@ session_upload_router = APIRouter(
 #   }
 # }
 upload_sessions: Dict[str, Any] = {}
+if upload_sessions is None: # Should never happen with module-level dict
+    upload_sessions = {}
+
 
 # We will add the endpoint implementations in subsequent tasks.
 # This task is just to create the router file and basic setup.

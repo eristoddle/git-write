@@ -265,8 +265,9 @@ class TestRevertCommandCLI:
 # #####################
 
 class TestSaveCommandCLI:
-    def test_save_initial_commit_cli(self, runner: CliRunner, tmp_path: Path): # runner from conftest, tmp_path from pytest
+    def test_save_initial_commit_cli(self, runner: CliRunner, tmp_path: Path, configure_git_user_for_cli): # Added configure_git_user_for_cli
         """Test `gitwrite save "Initial commit"` in a new repository."""
+        # configure_git_user_for_cli will set user.name and user.email for the repo created at repo_path
         repo_path = tmp_path / "new_repo_for_initial_save"
         repo_path.mkdir()
         pygit2.init_repository(str(repo_path)) # pygit2 import is kept

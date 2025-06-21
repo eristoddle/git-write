@@ -1010,7 +1010,7 @@ class TestCherryPickCommitCore(GitWriteCoreTestCaseBase):
                 if self.repo.head.shorthand == "master":
                     master_branch = self.repo.lookup_branch("master")
                     if master_branch:
-                        master_branch.rename("main", force=True)
+                        master_branch.rename("main") # Removed force=True
                         self.repo.set_head(f"refs/heads/main") # Point HEAD to new main
                 else: # Create main if some other default was used or if unborn logic needs it
                     main_branch = self.repo.branches.local.create("main", self.repo.head.peel(pygit2.Commit))

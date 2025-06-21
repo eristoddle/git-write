@@ -556,75 +556,67 @@ class TestSyncRepositoryCore(unittest.TestCase):
         self.assertFalse(result["push_status"]["pushed"])
         self.assertIn("Nothing to push", result["push_status"]["message"])
 
-    @pytest.mark.xfail
-    @mock.patch('pygit2.Remote.push') # Corrected: pygit2.Remote.push
+    # Removed @pytest.mark.xfail
+    @mock.patch('pygit2.Remote.push')
     def test_sync_push_failure_non_fast_forward(self, mock_push_method):
-        # 1. Local C1, pushed to remote
-        c1_local_oid = self._make_commit(self.local_repo, "file.txt", "v1", "C1")
-        main_commit_obj = self.local_repo.lookup_reference("HEAD").peel(pygit2.Commit)
-        self._create_branch(self.local_repo, "main", main_commit_obj)
+        # 1. Base C1 on local 'main', pushed to remote 'main'
+        c1_oid = self._make_commit(self.local_repo, "base_file.txt", "v1", "C1 Base")
+        # Ensure 'main' branch exists from this commit and is checked out
+        if "main" not in self.local_repo.branches.local:
+            self._create_branch(self.local_repo, "main", self.local_repo.get(c1_oid))
         self._checkout_branch(self.local_repo, "main")
 
         self._add_remote(self.local_repo, "origin", str(self.remote_repo_path))
-        self._push_to_remote(self.local_repo, "origin", "main")
+        self._push_to_remote(self.local_repo, "origin", "main") # Remote 'main' is at C1
 
-        # Re-open the remote repository object to ensure its reference list is up-to-date
-        self.remote_repo = pygit2.Repository(str(self.remote_repo_path))
-
-        # After the push, check if the 'main' branch ref was created on the remote
-        if "refs/heads/main" not in self.remote_repo.listall_references():
-            # If the ref doesn't exist, the push might have failed silently or the bare repo is in an odd state.
-            self.fail("Initial push did not create 'refs/heads/main' on the remote bare repository after re-opening.")
-
-        # Now that 'refs/heads/main' exists, set the remote's HEAD to it.
-        # This makes 'main' the default branch for the bare remote.
+        # Verify remote 'main' exists and set remote HEAD (important for clone behavior)
+        self.remote_repo = pygit2.Repository(str(self.remote_repo_path)) # Re-open for fresh view
+        self.assertIsNotNone(self.remote_repo.lookup_reference("refs/heads/main"), "refs/heads/main should exist on remote after push")
         self.remote_repo.set_head("refs/heads/main")
 
-        # Verify 'main' exists on remote_repo and HEAD is correctly set
-        self.assertIn("refs/heads/main", self.remote_repo.listall_references()) # Should pass now
-        remote_head_ref = self.remote_repo.head
-        self.assertIsNotNone(remote_head_ref)
-        self.assertEqual(remote_head_ref.name, "refs/heads/main") # Check symbolic ref target
+        # 2. Local C2: Add a new file (main branch)
+        c2_local_oid = self._make_commit(self.local_repo, "local_file.txt", "local content", "C2 Local")
 
-
-        # 2. Local C2 (on 'main')
-        c2_local_oid = self._make_commit(self.local_repo, "file.txt", "v2 local", "C2 Local")
-
-        # 3. Simulate remote having a C2' (diverged)
-        temp_clone = pygit2.clone_repository(str(self.remote_repo_path), self.base_temp_dir / "remote_clone_for_nff")
+        # 3. Remote C2': Add a different new file (main branch, from C1)
+        # Simulate this via a temporary clone
+        temp_clone_path = self.base_temp_dir / "temp_clone_for_nff_push"
+        temp_clone = pygit2.clone_repository(str(self.remote_repo_path), str(temp_clone_path))
         self._configure_repo_user(temp_clone)
         sig_clone = pygit2.Signature(TEST_USER_NAME, TEST_USER_EMAIL, int(datetime.now(timezone.utc).timestamp()), 0)
 
-        # Ensure 'main' branch exists and is checked out in the clone
-        if "main" not in temp_clone.branches.local:
-            remote_main_ref_name = "refs/remotes/origin/main"
-            if remote_main_ref_name in temp_clone.references:
-                remote_main_commit = temp_clone.lookup_reference(remote_main_ref_name).peel(pygit2.Commit)
-                temp_clone.branches.local.create("main", remote_main_commit)
-            else:
-                raise AssertionError(f"Remote tracking branch {remote_main_ref_name} not found in temp_clone for test_sync_push_failure_non_fast_forward, and local 'main' also missing.")
+        # Checkout main in clone and reset to C1
+        if "main" not in temp_clone.branches.local: # Should exist due to clone
+             remote_main_commit = temp_clone.lookup_reference("refs/remotes/origin/main").peel(pygit2.Commit)
+             temp_clone.branches.local.create("main", remote_main_commit)
+        temp_clone.checkout("refs/heads/main")
+        temp_clone.reset(c1_oid, pygit2.GIT_RESET_HARD) # Reset clone's main to C1
 
-        temp_clone.checkout("refs/heads/main") # Checkout 'main'
-        temp_clone.reset(c1_local_oid, pygit2.GIT_RESET_HARD) # Back to C1
-        (Path(temp_clone.workdir) / "file.txt").write_text("v2 remote") # Wrapped workdir with Path()
-        temp_clone.index.add("file.txt")
+        # Create C2' on clone's main
+        (Path(temp_clone.workdir) / "remote_file.txt").write_text("remote content")
+        temp_clone.index.add("remote_file.txt")
         temp_clone.index.write()
         tree_clone = temp_clone.index.write_tree()
-        temp_clone.create_commit("HEAD", sig_clone, sig_clone, "C2 Remote (for NFF)", tree_clone, [c1_local_oid])
+        c2_remote_oid = temp_clone.create_commit("HEAD", sig_clone, sig_clone, "C2' Remote", tree_clone, [c1_oid])
         temp_clone.remotes["origin"].push(["refs/heads/main:refs/heads/main"])
-        shutil.rmtree(temp_clone.workdir)
+        shutil.rmtree(str(temp_clone.workdir)) # Use str() for Path object before rmtree
 
-        # Configure mock_push to raise GitError for non-fast-forward
-        # The error message should contain "non-fast-forward"
-        mock_push_method.side_effect = pygit2.GitError("Push failed: non-fast-forward")
+        # At this point:
+        # Local 'main' is at C2 (C1 -> C2_local)
+        # Remote 'main' is at C2' (C1 -> C2_remote)
+        # sync_repository should:
+        # - Fetch C2'.
+        # - Merge C2' into local C2. This should be a clean merge (different files), creating C3_merge.
+        # - Attempt to push C3_merge. This will be non-fast-forward as remote is at C2'.
 
-        with self.assertRaisesRegex(PushError, "non-fast-forward"):
+        mock_push_method.side_effect = pygit2.GitError("Push failed: non-fast-forward simulated")
+
+        with self.assertRaisesRegex(PushError, "non-fast-forward simulated"):
             sync_repository(str(self.local_repo_path), branch_name_opt="main", push=True)
-            # The function should raise PushError, but the dictionary would also be populated.
-            # If we want to check the dictionary, we'd have to catch the error in the test.
-            # For now, testing the raised exception is sufficient as per subtask.
 
-    @mock.patch('pygit2.Remote.push') # Corrected: pygit2.Remote.push
+        # Verify mock was called (means merge was successful)
+        mock_push_method.assert_called_once()
+
+    @mock.patch('pygit2.Remote.push')
     def test_sync_push_failure_auth_error(self, mock_push_method):
         # Create 'main' branch and commit C1
         self._make_commit(self.local_repo, "file_for_auth_test.txt", "content", "C1")

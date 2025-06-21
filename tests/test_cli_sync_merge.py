@@ -119,10 +119,11 @@ class TestMergeCommandCLI:
         assert result.exit_code == 0, f"CLI Error: {result.output}"
         assert "Error: Cannot merge in a bare repository." in result.output
 
-    def test_merge_no_signature_cli(self, runner: CliRunner, tmp_path: Path): # runner from conftest, tmp_path from pytest
+    def test_merge_no_signature_cli(self, runner: CliRunner, tmp_path: Path, configure_git_user_for_cli): # runner from conftest, tmp_path from pytest, added configure_git_user_for_cli
         repo_path_no_sig = tmp_path / "no_sig_repo_for_cli_merge"
         repo_path_no_sig.mkdir()
         repo = pygit2.init_repository(str(repo_path_no_sig))
+        # The configure_git_user_for_cli fixture will apply to this repo when os.chdir is called.
         # DO NOT configure user.name/user.email for this repo
 
         make_commit(repo, "common.txt", "line0", "C0: Initial on main", branch_name="main") # make_commit from conftest
