@@ -320,9 +320,26 @@ def test_complete_upload_success_integration(mock_core_save_files):
 
     # The files_to_commit_map should contain the relative path and the *actual* temp path
     # that handle_file_upload stored in the session.
-    session_after_init = uploads.upload_sessions[completion_token] # Get session before it's popped
-    # The actual_temp_path_on_server is what core_save_files should receive.
+    #
+    # The actual_temp_path_on_server is known from the PUT upload response.
+    # This is the path that the /complete endpoint will retrieve from its session
+    # and pass to core_save_files.
 
+    # 4. Call Complete
+    complete_response = client.post(
+        f"/repositories/{TEST_REPO_ID}/save/complete",
+        json={"completion_token": completion_token}
+    )
+    assert complete_response.status_code == 200
+    complete_data = complete_response.json()
+    assert complete_data["commit_id"] == expected_commit_id
+    assert complete_data["message"] == "Files committed successfully."
+
+    # 5. Verify core function was called correctly
+    expected_repo_path = str(uploads.Path(uploads.PLACEHOLDER_REPO_PATH_PREFIX) / TEST_REPO_ID)
+
+    # Use actual_temp_path_on_server (captured from PUT response before /complete call)
+    # for the assertion, as this is what core_save_files should receive.
     expected_files_map = {TEST_FILE1_PATH: actual_temp_path_on_server}
 
     mock_core_save_files.assert_called_once_with(
@@ -334,9 +351,12 @@ def test_complete_upload_success_integration(mock_core_save_files):
     )
 
     # 6. Verify temporary file was deleted
-    assert not os.path.exists(actual_temp_path_on_server)
+    assert not os.path.exists(actual_temp_path_on_server) # Check against the path from PUT response
 
-    # 7. Verify session was cleared
+    # 7. Verify session was cleared from the server's perspective.
+    # This check can be problematic if the test's view of `uploads.upload_sessions` is inconsistent
+    # with the server's. If this continues to cause issues, it might be removed or re-evaluated.
+    # For now, the problem description implies this check should pass if the /complete logic is correct.
     assert completion_token not in uploads.upload_sessions
 
 
