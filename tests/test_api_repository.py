@@ -309,9 +309,15 @@ from gitwrite_core.exceptions import (
     BranchAlreadyExistsError as CoreBranchAlreadyExistsError,
     RepositoryEmptyError as CoreRepositoryEmptyError,
     BranchNotFoundError as CoreBranchNotFoundError,
+    MergeConflictError as CoreMergeConflictError,
+    DetachedHeadError as CoreDetachedHeadError,
     GitWriteError as CoreGitWriteError,
-    RepositoryNotFoundError as CoreRepositoryNotFoundError # Though API maps this to 500
+    RepositoryNotFoundError as CoreRepositoryNotFoundError,
+    CommitNotFoundError as CoreCommitNotFoundError, # For compare tests
+    NotEnoughHistoryError as CoreNotEnoughHistoryError # For compare tests
 )
+from gitwrite_api.routers.repository import MergeBranchRequest # For merge tests
+# No specific request model for GET /compare, but response model is CompareRefsResponse
 
 
 @patch('gitwrite_api.routers.repository.list_branches')
@@ -545,6 +551,309 @@ def test_api_create_branch_invalid_payload():
 
     # branch_name is empty string (violates min_length=1 in Pydantic model)
     response = client.post("/repository/branches", json={"branch_name": ""})
+    assert response.status_code == HTTPStatus.UNPROCESSABLE_ENTITY # 422
+    app.dependency_overrides = {}
+
+
+# --- Tests for GET /repository/compare ---
+
+@patch('gitwrite_api.routers.repository.core_get_diff') # core_get_diff is imported alias
+def test_api_compare_refs_success_defaults(mock_core_get_diff):
+    mock_core_get_diff.return_value = {
+        "ref1_oid": "abcdef0", "ref2_oid": "1234567",
+        "ref1_display_name": "HEAD~1", "ref2_display_name": "HEAD",
+        "patch_text": "--- a/file.txt\n+++ b/file.txt\n@@ -1 +1 @@\n-old\n+new"
+    }
+    app.dependency_overrides[actual_repo_auth_dependency] = mock_get_current_active_user
+    response = client.get("/repository/compare") # No params, uses defaults
+
+    assert response.status_code == HTTPStatus.OK
+    data = response.json()
+    assert data["ref1_oid"] == "abcdef0"
+    assert data["ref2_oid"] == "1234567"
+    assert data["ref1_display_name"] == "HEAD~1"
+    assert data["ref2_display_name"] == "HEAD"
+    assert "patch_text" in data
+    mock_core_get_diff.assert_called_once_with(repo_path_str=MOCK_REPO_PATH, ref1_str=None, ref2_str=None)
+    app.dependency_overrides = {}
+
+@patch('gitwrite_api.routers.repository.core_get_diff')
+def test_api_compare_refs_success_with_params(mock_core_get_diff):
+    mock_core_get_diff.return_value = {
+        "ref1_oid": "branch1sha", "ref2_oid": "tag2sha",
+        "ref1_display_name": "branch1", "ref2_display_name": "v1.0",
+        "patch_text": "diff text here"
+    }
+    app.dependency_overrides[actual_repo_auth_dependency] = mock_get_current_active_user
+    response = client.get("/repository/compare?ref1=branch1&ref2=v1.0")
+
+    assert response.status_code == HTTPStatus.OK
+    data = response.json()
+    assert data["ref1_display_name"] == "branch1"
+    assert data["ref2_display_name"] == "v1.0"
+    mock_core_get_diff.assert_called_once_with(repo_path_str=MOCK_REPO_PATH, ref1_str="branch1", ref2_str="v1.0")
+    app.dependency_overrides = {}
+
+@patch('gitwrite_api.routers.repository.core_get_diff')
+def test_api_compare_refs_commit_not_found(mock_core_get_diff):
+    mock_core_get_diff.side_effect = CoreCommitNotFoundError("Reference 'unknown-ref' not found.")
+    app.dependency_overrides[actual_repo_auth_dependency] = mock_get_current_active_user
+    response = client.get("/repository/compare?ref1=unknown-ref")
+
+    assert response.status_code == HTTPStatus.NOT_FOUND # 404
+    assert response.json()["detail"] == "Reference 'unknown-ref' not found."
+    app.dependency_overrides = {}
+
+@patch('gitwrite_api.routers.repository.core_get_diff')
+def test_api_compare_refs_not_enough_history(mock_core_get_diff):
+    mock_core_get_diff.side_effect = CoreNotEnoughHistoryError("Not enough history to compare (e.g., initial commit).")
+    app.dependency_overrides[actual_repo_auth_dependency] = mock_get_current_active_user
+    response = client.get("/repository/compare") # Default HEAD~1 vs HEAD on initial commit
+
+    assert response.status_code == HTTPStatus.BAD_REQUEST # 400
+    assert response.json()["detail"] == "Not enough history to compare (e.g., initial commit)."
+    app.dependency_overrides = {}
+
+@patch('gitwrite_api.routers.repository.core_get_diff')
+def test_api_compare_refs_value_error_from_core(mock_core_get_diff):
+    # core_get_diff raises ValueError for invalid ref combinations (e.g., ref2 without ref1 unless both are None)
+    mock_core_get_diff.side_effect = ValueError("Invalid reference combination for diff.")
+    app.dependency_overrides[actual_repo_auth_dependency] = mock_get_current_active_user
+    response = client.get("/repository/compare?ref2=some-ref") # ref1 is None, ref2 is not
+
+    assert response.status_code == HTTPStatus.BAD_REQUEST # 400
+    assert response.json()["detail"] == "Invalid reference combination for diff."
+    app.dependency_overrides = {}
+
+@patch('gitwrite_api.routers.repository.core_get_diff')
+def test_api_compare_refs_repo_not_found_error(mock_core_get_diff):
+    mock_core_get_diff.side_effect = CoreRepositoryNotFoundError("Repository path misconfigured.")
+    app.dependency_overrides[actual_repo_auth_dependency] = mock_get_current_active_user
+    response = client.get("/repository/compare")
+
+    assert response.status_code == HTTPStatus.INTERNAL_SERVER_ERROR # 500
+    assert response.json()["detail"] == "Repository configuration error."
+    app.dependency_overrides = {}
+
+@patch('gitwrite_api.routers.repository.core_get_diff')
+def test_api_compare_refs_core_git_write_error(mock_core_get_diff):
+    mock_core_get_diff.side_effect = CoreGitWriteError("Some other core diffing error.")
+    app.dependency_overrides[actual_repo_auth_dependency] = mock_get_current_active_user
+    response = client.get("/repository/compare")
+
+    assert response.status_code == HTTPStatus.INTERNAL_SERVER_ERROR # 500
+    assert response.json()["detail"] == "Compare operation failed: Some other core diffing error."
+    app.dependency_overrides = {}
+
+def test_api_compare_refs_unauthorized():
+    app.dependency_overrides = {}
+    async def mock_raise_401_for_compare():
+        from fastapi import HTTPException
+        raise HTTPException(status_code=HTTPStatus.UNAUTHORIZED, detail="Auth failed for compare")
+    app.dependency_overrides[actual_repo_auth_dependency] = mock_raise_401_for_compare
+
+    response = client.get("/repository/compare")
+
+    assert response.status_code == HTTPStatus.UNAUTHORIZED
+    assert response.json()["detail"] == "Auth failed for compare"
+    app.dependency_overrides = {}
+
+
+# --- Tests for POST /repository/merges ---
+
+@patch('gitwrite_api.routers.repository.merge_branch_into_current')
+def test_api_merge_branch_fast_forward(mock_core_merge):
+    mock_core_merge.return_value = {
+        'status': 'fast_forwarded',
+        'branch_name': 'feature-branch',
+        'current_branch': 'main',
+        'commit_oid': 'ffcommitsha'
+    }
+    app.dependency_overrides[actual_repo_auth_dependency] = mock_get_current_active_user
+    payload = MergeBranchRequest(source_branch="feature-branch")
+    response = client.post("/repository/merges", json=payload.model_dump())
+
+    assert response.status_code == HTTPStatus.OK
+    data = response.json()
+    assert data["status"] == "fast_forwarded"
+    assert data["message"] == "Branch 'feature-branch' was fast-forwarded into 'main'."
+    assert data["merged_branch"] == "feature-branch"
+    assert data["current_branch"] == "main"
+    assert data["commit_oid"] == "ffcommitsha"
+    mock_core_merge.assert_called_once_with(repo_path_str=MOCK_REPO_PATH, branch_to_merge_name="feature-branch")
+    app.dependency_overrides = {}
+
+@patch('gitwrite_api.routers.repository.merge_branch_into_current')
+def test_api_merge_branch_merged_ok(mock_core_merge):
+    mock_core_merge.return_value = {
+        'status': 'merged_ok',
+        'branch_name': 'develop',
+        'current_branch': 'main',
+        'commit_oid': 'mergecommitsha'
+    }
+    app.dependency_overrides[actual_repo_auth_dependency] = mock_get_current_active_user
+    payload = MergeBranchRequest(source_branch="develop")
+    response = client.post("/repository/merges", json=payload.model_dump())
+
+    assert response.status_code == HTTPStatus.OK
+    data = response.json()
+    assert data["status"] == "merged_ok"
+    assert data["message"] == "Branch 'develop' was successfully merged into 'main'."
+    assert data["commit_oid"] == "mergecommitsha"
+    app.dependency_overrides = {}
+
+@patch('gitwrite_api.routers.repository.merge_branch_into_current')
+def test_api_merge_branch_up_to_date(mock_core_merge):
+    mock_core_merge.return_value = {
+        'status': 'up_to_date',
+        'branch_name': 'main',
+        'current_branch': 'main'
+    }
+    app.dependency_overrides[actual_repo_auth_dependency] = mock_get_current_active_user
+    payload = MergeBranchRequest(source_branch="main") # Merging main into main (example)
+    response = client.post("/repository/merges", json=payload.model_dump())
+
+    assert response.status_code == HTTPStatus.OK
+    data = response.json()
+    assert data["status"] == "up_to_date"
+    assert data["message"] == "Current branch 'main' is already up-to-date with 'main'."
+    app.dependency_overrides = {}
+
+@patch('gitwrite_api.routers.repository.merge_branch_into_current')
+def test_api_merge_branch_conflict(mock_core_merge):
+    conflict_details = {
+        "message": "Automatic merge failed due to conflicts.",
+        "conflicting_files": ["file1.txt", "file2.txt"],
+        # Simulating that core exception might provide these, though current impl doesn't directly
+        # The API endpoint tries to access these:
+        # "current_branch_name": "main",
+        # "merged_branch_name": "feature-conflict"
+    }
+    # The CoreMergeConflictError needs these attributes if the API endpoint is to access them.
+    # For testing, we can mock the exception object itself.
+    mock_exception = CoreMergeConflictError(
+        message=conflict_details["message"],
+        conflicting_files=conflict_details["conflicting_files"]
+    )
+    # Manually add attributes if the constructor doesn't take them or if they are dynamic
+    # setattr(mock_exception, 'current_branch_name', "main")
+    # setattr(mock_exception, 'merged_branch_name', "feature-conflict")
+
+    mock_core_merge.side_effect = mock_exception
+    app.dependency_overrides[actual_repo_auth_dependency] = mock_get_current_active_user
+    payload = MergeBranchRequest(source_branch="feature-conflict")
+    response = client.post("/repository/merges", json=payload.model_dump())
+
+    assert response.status_code == HTTPStatus.CONFLICT # 409
+    data = response.json() # FastAPI puts the detail into response.json() for HTTPExceptions
+
+    # The detail payload is constructed by the endpoint:
+    # detail_payload = {
+    #     "status": "conflict",
+    #     "message": str(e.message),
+    #     "conflicting_files": e.conflicting_files,
+    #     "current_branch": getattr(e, 'current_branch_name', None),
+    #     "merged_branch": getattr(e, 'merged_branch_name', request_data.source_branch)
+    # }
+    # detail_payload = {k: v for k, v in detail_payload.items() if v is not None}
+    # raise HTTPException(status_code=409, detail=detail_payload)
+
+    assert data["detail"]["status"] == "conflict"
+    assert data["detail"]["message"] == conflict_details["message"] # Core message
+    assert data["detail"]["conflicting_files"] == conflict_details["conflicting_files"]
+    # Since current_branch_name and merged_branch_name are not on the mock_exception by default:
+    assert "current_branch" not in data["detail"] # It was None, so removed
+    assert data["detail"]["merged_branch"] == "feature-conflict" # Fell back to request_data.source_branch
+    app.dependency_overrides = {}
+
+@patch('gitwrite_api.routers.repository.merge_branch_into_current')
+def test_api_merge_branch_branch_not_found(mock_core_merge):
+    mock_core_merge.side_effect = CoreBranchNotFoundError("Branch 'ghost-branch' not found.")
+    app.dependency_overrides[actual_repo_auth_dependency] = mock_get_current_active_user
+    payload = MergeBranchRequest(source_branch="ghost-branch")
+    response = client.post("/repository/merges", json=payload.model_dump())
+
+    assert response.status_code == HTTPStatus.NOT_FOUND # 404
+    assert response.json()["detail"] == "Branch 'ghost-branch' not found."
+    app.dependency_overrides = {}
+
+@patch('gitwrite_api.routers.repository.merge_branch_into_current')
+def test_api_merge_branch_repo_empty(mock_core_merge):
+    mock_core_merge.side_effect = CoreRepositoryEmptyError("Repository is empty, cannot merge.")
+    app.dependency_overrides[actual_repo_auth_dependency] = mock_get_current_active_user
+    payload = MergeBranchRequest(source_branch="any-branch")
+    response = client.post("/repository/merges", json=payload.model_dump())
+
+    assert response.status_code == HTTPStatus.BAD_REQUEST # 400
+    assert response.json()["detail"] == "Repository is empty, cannot merge."
+    app.dependency_overrides = {}
+
+@patch('gitwrite_api.routers.repository.merge_branch_into_current')
+def test_api_merge_branch_detached_head(mock_core_merge):
+    mock_core_merge.side_effect = CoreDetachedHeadError("HEAD is detached, cannot merge.")
+    app.dependency_overrides[actual_repo_auth_dependency] = mock_get_current_active_user
+    payload = MergeBranchRequest(source_branch="any-branch")
+    response = client.post("/repository/merges", json=payload.model_dump())
+
+    assert response.status_code == HTTPStatus.BAD_REQUEST # 400
+    assert response.json()["detail"] == "HEAD is detached, cannot merge."
+    app.dependency_overrides = {}
+
+@patch('gitwrite_api.routers.repository.merge_branch_into_current')
+def test_api_merge_branch_git_write_error_merge_into_self(mock_core_merge):
+    mock_core_merge.side_effect = CoreGitWriteError("Cannot merge a branch into itself.")
+    app.dependency_overrides[actual_repo_auth_dependency] = mock_get_current_active_user
+    payload = MergeBranchRequest(source_branch="main") # Assuming current is main
+    response = client.post("/repository/merges", json=payload.model_dump())
+
+    assert response.status_code == HTTPStatus.BAD_REQUEST # 400
+    assert response.json()["detail"] == "Merge operation failed: Cannot merge a branch into itself."
+    app.dependency_overrides = {}
+
+@patch('gitwrite_api.routers.repository.merge_branch_into_current')
+def test_api_merge_branch_git_write_error_no_signature(mock_core_merge):
+    mock_core_merge.side_effect = CoreGitWriteError("User signature (user.name and user.email) not configured in Git.")
+    app.dependency_overrides[actual_repo_auth_dependency] = mock_get_current_active_user
+    payload = MergeBranchRequest(source_branch="feature-needs-commit")
+    response = client.post("/repository/merges", json=payload.model_dump())
+
+    assert response.status_code == HTTPStatus.BAD_REQUEST # 400
+    assert "User signature" in response.json()["detail"]
+    app.dependency_overrides = {}
+
+@patch('gitwrite_api.routers.repository.merge_branch_into_current')
+def test_api_merge_branch_repo_not_found_error(mock_core_merge):
+    mock_core_merge.side_effect = CoreRepositoryNotFoundError("Configured repo path is invalid.")
+    app.dependency_overrides[actual_repo_auth_dependency] = mock_get_current_active_user
+    payload = MergeBranchRequest(source_branch="any-branch")
+    response = client.post("/repository/merges", json=payload.model_dump())
+
+    assert response.status_code == HTTPStatus.INTERNAL_SERVER_ERROR # 500
+    assert response.json()["detail"] == "Repository configuration error."
+    app.dependency_overrides = {}
+
+def test_api_merge_branch_unauthorized():
+    app.dependency_overrides = {}
+    async def mock_raise_401_for_merge():
+        from fastapi import HTTPException
+        raise HTTPException(status_code=HTTPStatus.UNAUTHORIZED, detail="Auth failed for merge")
+    app.dependency_overrides[actual_repo_auth_dependency] = mock_raise_401_for_merge
+
+    payload = MergeBranchRequest(source_branch="some-branch")
+    response = client.post("/repository/merges", json=payload.model_dump())
+
+    assert response.status_code == HTTPStatus.UNAUTHORIZED
+    assert response.json()["detail"] == "Auth failed for merge"
+    app.dependency_overrides = {}
+
+def test_api_merge_branch_invalid_payload():
+    app.dependency_overrides[actual_repo_auth_dependency] = mock_get_current_active_user
+    # source_branch missing
+    response = client.post("/repository/merges", json={})
+    assert response.status_code == HTTPStatus.UNPROCESSABLE_ENTITY # 422
+
+    # source_branch empty
+    response = client.post("/repository/merges", json={"source_branch": ""})
     assert response.status_code == HTTPStatus.UNPROCESSABLE_ENTITY # 422
     app.dependency_overrides = {}
 

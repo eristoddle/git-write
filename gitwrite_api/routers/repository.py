@@ -27,8 +27,14 @@ from gitwrite_core.exceptions import (
     RepositoryEmptyError as CoreRepositoryEmptyError,
     BranchAlreadyExistsError as CoreBranchAlreadyExistsError,
     BranchNotFoundError as CoreBranchNotFoundError,
-    GitWriteError as CoreGitWriteError
+    MergeConflictError as CoreMergeConflictError, # Added for merge
+    GitWriteError as CoreGitWriteError,
+    DetachedHeadError as CoreDetachedHeadError # Added for merge
 )
+from gitwrite_core.branching import merge_branch_into_current # Core function for merge
+from gitwrite_core.versioning import get_diff as core_get_diff # Core function for compare
+from gitwrite_core.exceptions import CommitNotFoundError as CoreCommitNotFoundError # Added for compare
+from gitwrite_core.exceptions import NotEnoughHistoryError as CoreNotEnoughHistoryError # Added for compare
 
 
 # For now, let's define a placeholder dependency to make the code runnable without the actual security module
@@ -90,6 +96,27 @@ class BranchResponse(BaseModel):
     head_commit_oid: Optional[str] = None
     previous_branch_name: Optional[str] = None # For switch operation
     is_detached: Optional[bool] = None # For switch operation
+
+# Merge Endpoint Models
+class MergeBranchRequest(BaseModel):
+    source_branch: str = Field(..., min_length=1, description="Name of the branch to merge into the current branch.")
+
+class MergeBranchResponse(BaseModel):
+    status: str = Field(..., description="Outcome of the merge operation (e.g., 'merged_ok', 'fast_forwarded', 'up_to_date', 'conflict').")
+    message: str = Field(..., description="Detailed message about the merge outcome.")
+    current_branch: Optional[str] = Field(None, description="The current branch after the merge attempt.")
+    merged_branch: Optional[str] = Field(None, description="The branch that was merged.")
+    commit_oid: Optional[str] = Field(None, description="The OID of the new merge commit, if one was created.")
+    conflicting_files: Optional[List[str]] = Field(None, description="List of files with conflicts, if any.")
+
+# Compare Endpoint Models
+# Note: For GET /compare, parameters are via Query. This model is for response structure.
+class CompareRefsResponse(BaseModel):
+    ref1_oid: str = Field(..., description="Resolved OID of the first reference.")
+    ref2_oid: str = Field(..., description="Resolved OID of the second reference.")
+    ref1_display_name: str = Field(..., description="Display name for the first reference.")
+    ref2_display_name: str = Field(..., description="Display name for the second reference.")
+    patch_text: str = Field(..., description="The diff/patch output as a string.")
 
 # --- Helper for error handling ---
 def handle_core_response(response: Dict[str, Any], success_status: str = "success") -> Dict[str, Any]:
@@ -318,3 +345,147 @@ async def api_switch_branch(
         raise HTTPException(status_code=400, detail=f"Failed to switch branch: {str(e)}") # 400 Bad Request for other git issues
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"An unexpected error occurred: {str(e)}")
+
+
+# --- Merge Endpoint ---
+
+@router.post("/merges", response_model=MergeBranchResponse)
+async def api_merge_branch(
+    request_data: MergeBranchRequest,
+    current_user: User = Depends(get_current_active_user)
+):
+    """
+    Merges a specified source branch into the current branch.
+    Requires authentication.
+    """
+    repo_path = PLACEHOLDER_REPO_PATH
+    try:
+        result = merge_branch_into_current(
+            repo_path_str=repo_path,
+            branch_to_merge_name=request_data.source_branch
+        )
+        # Core function returns dict with 'status', 'branch_name', 'current_branch', 'commit_oid' (optional)
+        # e.g. {'status': 'up_to_date', 'branch_name': 'feature', 'current_branch': 'main'}
+        # e.g. {'status': 'fast_forwarded', ..., 'commit_oid': 'sha'}
+        # e.g. {'status': 'merged_ok', ..., 'commit_oid': 'sha'}
+
+        status_code = 200 # Default OK for successful merges
+        response_status = result['status']
+        message = ""
+
+        if response_status == 'up_to_date':
+            message = f"Current branch '{result['current_branch']}' is already up-to-date with '{result['branch_name']}'."
+        elif response_status == 'fast_forwarded':
+            message = f"Branch '{result['branch_name']}' was fast-forwarded into '{result['current_branch']}'."
+        elif response_status == 'merged_ok':
+            message = f"Branch '{result['branch_name']}' was successfully merged into '{result['current_branch']}'."
+        else: # Should not happen if core adheres to spec
+            message = "Merge operation completed with an unknown status."
+            response_status = "unknown_core_status" # To avoid conflict with HTTP status
+
+        return MergeBranchResponse(
+            status=response_status,
+            message=message,
+            current_branch=result.get('current_branch'),
+            merged_branch=result.get('branch_name'), # Core uses 'branch_name' for the branch that was merged
+            commit_oid=result.get('commit_oid')
+        )
+
+    except CoreMergeConflictError as e:
+        # e.conflicting_files should be populated by the core function
+        return MergeBranchResponse(
+            status="conflict",
+            message=str(e.message), # Original message from core
+            current_branch=e.current_branch_name if hasattr(e, 'current_branch_name') else None, # If core adds this
+            merged_branch=e.merged_branch_name if hasattr(e, 'merged_branch_name') else request_data.source_branch, # If core adds this
+            conflicting_files=e.conflicting_files,
+        )
+        # Alternative: raise HTTPException(status_code=409, detail={"message": str(e), "conflicting_files": e.conflicting_files})
+        # For now, returning 200 with a specific body structure for conflicts, as per some API designs.
+        # Let's stick to raising 409 for conflicts as it's a clearer error signal.
+        # The Pydantic model for MergeBranchResponse can be used by the client to parse this.
+        # The plan states "Return 409 Conflict", so let's adjust.
+        # raise HTTPException(status_code=409, detail={"message": str(e.message), "conflicting_files": e.conflicting_files})
+        # To make the response body consistent with MergeBranchResponse on 409:
+        # We can't directly return a MergeBranchResponse with a 409 status from here.
+        # FastAPI handles the detail part of HTTPException.
+        # A custom exception handler for CoreMergeConflictError could do this globally.
+        # For now, let's construct the detail for HTTPException to include what we need.
+        detail_payload = {
+            "status": "conflict",
+            "message": str(e.message),
+            "conflicting_files": e.conflicting_files,
+            # Attempt to get branch names if the exception provides them, otherwise use what we know
+            "current_branch": getattr(e, 'current_branch_name', None), # Assuming core might add these to exception
+            "merged_branch": getattr(e, 'merged_branch_name', request_data.source_branch)
+        }
+        # Remove None values from detail_payload to keep it clean
+        detail_payload = {k: v for k, v in detail_payload.items() if v is not None}
+        raise HTTPException(status_code=409, detail=detail_payload)
+
+    except CoreBranchNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except CoreRepositoryEmptyError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except CoreDetachedHeadError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except CoreRepositoryNotFoundError: # Server-side configuration issue
+        raise HTTPException(status_code=500, detail="Repository configuration error.")
+    except CoreGitWriteError as e:
+        # Examples: "Cannot merge a branch into itself", "User signature not configured"
+        # These are client/request errors or preconditions not met.
+        raise HTTPException(status_code=400, detail=f"Merge operation failed: {str(e)}")
+    except Exception as e: # Fallback for unexpected errors
+        raise HTTPException(status_code=500, detail=f"An unexpected error occurred during merge: {str(e)}")
+
+
+# --- Compare Endpoint ---
+
+@router.get("/compare", response_model=CompareRefsResponse)
+async def api_compare_refs(
+    ref1: Optional[str] = Query(None, description="The first reference (e.g., commit hash, branch, tag). Defaults to HEAD~1."),
+    ref2: Optional[str] = Query(None, description="The second reference (e.g., commit hash, branch, tag). Defaults to HEAD."),
+    current_user: User = Depends(get_current_active_user)
+):
+    """
+    Compares two references in the repository and returns the diff.
+    Requires authentication.
+    If ref1 and ref2 are None, compares HEAD~1 with HEAD.
+    If only ref1 is provided, compares ref1 with HEAD.
+    """
+    repo_path = PLACEHOLDER_REPO_PATH
+    try:
+        # Call the core function. It handles default logic for None refs.
+        diff_result = core_get_diff(
+            repo_path_str=repo_path,
+            ref1_str=ref1,
+            ref2_str=ref2
+        )
+        # Core function returns:
+        # {
+        #     "ref1_oid": str,
+        #     "ref2_oid": str,
+        #     "ref1_display_name": str,
+        #     "ref2_display_name": str,
+        #     "patch_text": str
+        # }
+        return CompareRefsResponse(
+            ref1_oid=diff_result["ref1_oid"],
+            ref2_oid=diff_result["ref2_oid"],
+            ref1_display_name=diff_result["ref1_display_name"],
+            ref2_display_name=diff_result["ref2_display_name"],
+            patch_text=diff_result["patch_text"]
+        )
+    except CoreCommitNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except CoreNotEnoughHistoryError as e:
+        # This occurs if trying to compare HEAD~1 vs HEAD on initial commit, etc.
+        raise HTTPException(status_code=400, detail=str(e))
+    except ValueError as e: # Raised by core_get_diff for invalid ref combinations
+        raise HTTPException(status_code=400, detail=str(e))
+    except CoreRepositoryNotFoundError: # Server-side configuration issue
+        raise HTTPException(status_code=500, detail="Repository configuration error.")
+    except CoreGitWriteError as e: # Other general errors from core
+        raise HTTPException(status_code=500, detail=f"Compare operation failed: {str(e)}")
+    except Exception as e: # Fallback for unexpected errors
+        raise HTTPException(status_code=500, detail=f"An unexpected error occurred during compare: {str(e)}")

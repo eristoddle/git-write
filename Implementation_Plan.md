@@ -27,7 +27,7 @@ Status: **Completed**
 
 ### Task 6.2 - Agent_API_Dev: Merge and Compare Endpoints
 Objective: Expose `merge` and `compare` functionalities.
-Status: **Pending**
+Status: **Completed**
 
 1.  Create a `POST /repository/merges` endpoint that takes a `source_branch` name and calls `gitwrite_core.branching.merge_branch_into_current`. It must handle success, fast-forward, and conflict states.
 2.  Create a `GET /repository/compare` endpoint that takes two references (`ref1`, `ref2`) and calls `gitwrite_core.versioning.get_diff`.
