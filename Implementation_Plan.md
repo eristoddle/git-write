@@ -64,7 +64,7 @@ Status: **Completed**
 
 ### Task 6.3 - Agent_SDK_Dev: Implement Read-Only Repository Methods
 Objective: Create SDK methods for read-only repository operations.
-Status: **Pending**
+Status: **Completed**
 
 1.  Create a `repository` module or property on the main client.
 2.  Implement `repository.listBranches()`, `repository.listTags()`, and `repository.listCommits(options)`.
