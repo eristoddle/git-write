@@ -81,6 +81,70 @@ Proceed with Task 6.3: Revert and Sync Endpoints as per the Implementation Plan.
 
 ---
 **Agent:** Jules (Implementation Agent)
+**Task Reference:** Phase 6, Task 6.6: Finalize Multi-File Upload Logic
+
+**Summary:**
+Successfully integrated the multi-file upload mechanism with a new core function for committing multiple files. This involved creating `save_and_commit_multiple_files` in the core, updating the `/repositories/{repo_id}/save/complete` API endpoint to use it, implementing temporary file cleanup, and enhancing unit tests.
+
+**Details:**
+- **`gitwrite_core/repository.py` modifications:**
+    - Added new function `save_and_commit_multiple_files(repo_path_str, files_to_commit, commit_message, author_name, author_email)`:
+        - Takes a map of relative repository paths to absolute temporary file paths.
+        - Copies each temporary file to its destination within the repository.
+        - Performs path safety checks to prevent escaping repository boundaries.
+        - Creates necessary parent directories within the repository.
+        - Stages all files to the Git index.
+        - Creates a single commit with all changes, using provided message and author details.
+        - Handles cases where no actual changes are detected to prevent empty commits.
+        - Returns status, message, and commit ID.
+- **`gitwrite_api/routers/uploads.py` modifications (`POST /repositories/{repo_id}/save/complete`):**
+    - Imported and now calls `gitwrite_core.repository.save_and_commit_multiple_files`.
+    - Constructs the `files_to_commit` map from session data (relative repo paths to temp server paths).
+    - Passes commit message and authenticated user details (name, email) as author to the core function.
+    - If core function succeeds:
+        - Deletes all temporary uploaded files for the session from `TEMP_UPLOAD_DIR`.
+        - Clears the upload session from `upload_sessions`.
+        - Returns the commit ID from the core function.
+    - If core function indicates "no_changes":
+        - Deletes temporary files and clears the session.
+        - Returns a response indicating no commit was made (e.g., `commit_id: null`).
+    - If core function fails:
+        - Temporary files are *not* deleted.
+        - Upload session is *not* cleared (to allow for potential retries).
+        - Maps core error messages to appropriate HTTP status codes (404 for repo not found, 400 for bad paths, 500 for other core errors).
+- **`tests/test_api_uploads.py` modifications:**
+    - Renamed `test_complete_upload_success` to `test_complete_upload_success_integration`.
+    - Added a `mock_core_save_files` fixture to mock `gitwrite_api.routers.uploads.core_save_files`.
+    - `test_complete_upload_success_integration` now:
+        - Verifies `core_save_files` is called with correct parameters.
+        - Checks that temporary files are deleted on success.
+        - Confirms the session is cleared.
+        - Asserts the API response reflects the mocked core function's output.
+    - Added `test_complete_upload_core_no_changes` to test the scenario where the core function reports no changes to commit.
+    - Added `test_complete_upload_core_failure_repo_not_found` for core returning a repository not found error.
+    - Added `test_complete_upload_core_failure_generic_error` for other core errors.
+    - These failure tests verify that temporary files and sessions are *not* cleared.
+- **`Implementation_Plan.md` updated:**
+    - Marked Task 6.6 as "Completed".
+    - Marked Phase 6 as "Completed".
+
+**Output/Result:**
+- Modified file: `gitwrite_core/repository.py`
+- Modified file: `gitwrite_api/routers/uploads.py`
+- Modified file: `tests/test_api_uploads.py`
+- Modified file: `Implementation_Plan.md`
+- This log entry in `Memory_Bank.md`.
+
+**Status:** Completed
+
+**Issues/Blockers:**
+None.
+
+**Next Steps (Optional):**
+Phase 6 "API Feature Parity with CLI" is now complete. The project can proceed to Phase 7 "TypeScript SDK Development" or await further instructions from the User/Manager Agent.
+
+---
+**Agent:** Jules (Implementation Agent)
 **Task Reference:** Phase 6, Task 6.4: Tagging Endpoints
 
 **Summary:**

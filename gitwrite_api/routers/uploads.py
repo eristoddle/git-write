@@ -292,24 +292,119 @@ async def complete_file_upload(
             detail="Not all files for this session have been successfully uploaded."
         )
 
-    # --- Placeholder for Task 5.5 ---
-    # In Task 5.5, this section will:
-    # 1. Construct the full repository path (e.g., using PLACEHOLDER_REPO_PATH_PREFIX and repo_id).
-    # 2. Create a list of (target_repo_path, temp_file_path_on_server) tuples.
-    #    The target_repo_path is session_data["files"][file_path]["original_path_in_repo"] (or just file_path key).
-    # 3. Call core.versioning.save_changes(repo_path, session_data["commit_message"], files_to_commit_map).
-    # 4. If successful, clean up temporary files from TEMP_UPLOAD_DIR.
-    # 5. Clean up the entry from upload_sessions.
+    # --- Integration with core.repository.save_and_commit_multiple_files ---
 
-    # For now, simulate success:
-    simulated_commit_id = f"sim_commit_{uuid.uuid4().hex}"
+    # 1. Construct the full repository path
+    # For now, using the placeholder. In a real system, this path would be derived securely.
+    # Ensure the specific repo directory exists or handle appropriately.
+    # For this task, we assume PLACEHOLDER_REPO_PATH_PREFIX/repo_id is the root of a valid repo.
+    # The core function `save_and_commit_multiple_files` expects repo_path_str to be an existing repo.
+    # Initialization of the repo itself is outside the scope of this upload endpoint.
+    repo_base_path = Path(PLACEHOLDER_REPO_PATH_PREFIX)
+    # It's good practice to ensure the base user repo directory exists.
+    # os.makedirs(repo_base_path / repo_id, exist_ok=True) # This might be needed if repo_id is a new dir
+    # However, the core function will fail if it's not a valid git repo.
+    # For testing, we'll need to ensure a test repo exists at this path.
+    repo_path_str = str(repo_base_path / repo_id)
 
-    # Placeholder: Clean up session data (actual file cleanup for Task 5.5)
-    # For now, just pop from upload_sessions. In 5.5, this happens *after* successful core operation.
-    # And actual temp files need to be os.remove()'d.
-    upload_sessions.pop(completion_token, None)
 
-    return FileUploadCompleteResponse(
-        commit_id=simulated_commit_id,
-        message="Files processed successfully (simulation). Actual commit in next task."
+    # 2. Prepare the files_to_commit_map for the core function
+    files_to_commit_map: Dict[str, str] = {}
+    temp_files_to_cleanup_on_success: List[str] = []
+
+    for relative_file_path, file_details in session_data.get("files", {}).items():
+        # Key: relative path in repo (e.g., "drafts/file1.txt")
+        # Value: absolute path to the temporary file on server
+        files_to_commit_map[relative_file_path] = file_details["temp_path"]
+        temp_files_to_cleanup_on_success.append(file_details["temp_path"])
+
+    # 3. Get commit message and author details
+    commit_message = session_data["commit_message"]
+    author_name = current_user.username # Or a more specific name field if available
+    author_email = current_user.email
+
+    # 4. Call the core function
+    # Need to import the core function
+    from gitwrite_core.repository import save_and_commit_multiple_files as core_save_files
+    # from gitwrite_core.exceptions import RepositoryNotFoundError as CoreRepositoryNotFoundError # if specific handling needed
+
+    core_result = core_save_files(
+        repo_path_str=repo_path_str,
+        files_to_commit=files_to_commit_map,
+        commit_message=commit_message,
+        author_name=author_name,
+        author_email=author_email
     )
+
+    # 5. Handle result from core function
+    if core_result.get("status") == "success":
+        # Successful commit
+        commit_id = core_result.get("commit_id")
+
+        # Clean up temporary files
+        for temp_file_path in temp_files_to_cleanup_on_success:
+            try:
+                if Path(temp_file_path).exists():
+                    os.remove(temp_file_path)
+            except OSError as e:
+                # Log this error in a real application. For now, we'll ignore it
+                # as the main operation (commit) was successful.
+                # print(f"Warning: Could not delete temporary file {temp_file_path}: {e}")
+                pass # Non-critical if commit succeeded
+
+        # Clean up the session
+        upload_sessions.pop(completion_token, None)
+
+        return FileUploadCompleteResponse(
+            commit_id=commit_id,
+            message="Files committed successfully."
+        )
+    elif core_result.get("status") == "no_changes":
+        # No changes were made, but operation was "successful" in that no error occurred.
+        # Clean up temporary files as they are not needed.
+        for temp_file_path in temp_files_to_cleanup_on_success:
+            try:
+                if Path(temp_file_path).exists():
+                    os.remove(temp_file_path)
+            except OSError:
+                pass
+
+        upload_sessions.pop(completion_token, None) # Clear session
+
+        # Return 200 OK but indicate no commit was made.
+        # The FileUploadCompleteResponse expects a commit_id.
+        # We could return a different response model or adjust.
+        # For now, let's use a special message.
+        # Or, we can raise an HTTPException that translates to a 200 with specific message.
+        # For simplicity, let's adapt the response.
+        # A dedicated status code like 204 No Content might be too strong if client expects a body.
+        # Client might expect a commit_id. Returning an empty or placeholder commit_id might be an option.
+        return FileUploadCompleteResponse(
+            commit_id=None, # Or a placeholder like "NO_CHANGES_COMMITTED"
+            message=core_result.get("message", "No changes to commit.")
+        )
+    else:
+        # Error from core function
+        # Do NOT delete temporary files (might be needed for retry/diagnostics)
+        # Do NOT clear the session (allows for potential retry of complete step)
+        error_message = core_result.get("message", "Failed to save and commit files due to a core system error.")
+
+        # Map core errors to HTTP status codes
+        # This mapping can be more granular if core_result provides more specific error types/codes.
+        # For example, if core_result['error_type'] == 'RepositoryNotFoundError':
+        # raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Repository {repo_id} not found or not accessible.")
+        # For now, a general 500 for core errors.
+        # If it's a user correctable error (e.g. invalid path in core, though API should catch some), 400.
+
+        # Based on the current core function, 'Repository not found or invalid' is a common one.
+        if "Repository not found" in error_message:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=error_message)
+        elif "Invalid relative file path" in error_message or "escapes repository" in error_message:
+            # This should ideally be caught earlier, but if core catches it:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=error_message)
+
+        # Default to 500 for other core errors
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=error_message
+        )

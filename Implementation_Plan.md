@@ -14,7 +14,7 @@ Summary: All tasks related to the core library, CLI, and initial API setup are c
 ---
 
 ## Phase 6: API Feature Parity with CLI
-Status: **Pending**
+Status: **Completed**
 Architectural Notes: This phase will create API endpoints for all remaining user-facing features available in the CLI. Each new endpoint will be a thin wrapper around its corresponding core function and must include authentication and appropriate error handling.
 
 ### Task 6.1 - Agent_API_Dev: Branching Endpoints
@@ -58,7 +58,7 @@ Status: **Completed**
 
 ### Task 6.6 - Agent_API_Dev: Finalize Multi-File Upload Logic
 Objective: Connect the two-step upload mechanism to a core function that can commit multiple files at once.
-Status: **Pending**
+Status: **Completed**
 
 1.  Create a new core function `save_and_commit_multiple_files(repo_path_str: str, files_to_commit: Dict[str, str], ...)` in `gitwrite_core.repository`. It will take a dictionary mapping the destination relative path to the temporary file path on the server.
 2.  Update the `POST /repositories/{repo_id}/save/complete` endpoint in `gitwrite_api/routers/uploads.py` to call this new core function.

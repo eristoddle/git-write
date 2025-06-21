@@ -900,3 +900,174 @@ def save_and_commit_file(repo_path_str: str, file_path: str, content: str, commi
     except Exception as e:
         # Catch-all for unexpected errors at the function level
         return {'status': 'error', 'message': f"An unexpected error occurred: {e}", 'commit_id': None}
+
+
+def save_and_commit_multiple_files(repo_path_str: str, files_to_commit: Dict[str, str], commit_message: str, author_name: Optional[str] = None, author_email: Optional[str] = None) -> Dict[str, Any]:
+    """
+    Saves multiple files to the repository and creates a single commit with all changes.
+
+    Args:
+        repo_path_str: The string representation of the repository's root path.
+        files_to_commit: A dictionary where keys are relative paths within the repository
+                         (e.g., "drafts/chapter1.txt") and values are absolute paths
+                         to the temporary uploaded files on the server.
+        commit_message: The message for the commit.
+        author_name: Optional name of the commit author.
+        author_email: Optional email of the commit author.
+
+    Returns:
+        A dictionary with 'status', 'message', and 'commit_id' (if successful).
+    """
+    import shutil # For shutil.copyfile
+    import os # For path normalization and checking
+
+    try:
+        repo_path = Path(repo_path_str)
+        resolved_repo_path = repo_path.resolve()
+
+        try:
+            repo = pygit2.Repository(str(resolved_repo_path))
+        except pygit2.GitError as e:
+            return {'status': 'error', 'message': f"Repository not found or invalid: {e}", 'commit_id': None}
+
+        if repo.is_bare:
+            return {'status': 'error', 'message': "Operation not supported on bare repositories.", 'commit_id': None}
+
+        # Ensure index is fresh before starting operations
+        repo.index.read()
+
+        for relative_repo_file_path_str, temp_file_abs_path_str in files_to_commit.items():
+            # Ensure relative_repo_file_path_str is indeed relative and safe
+            if Path(relative_repo_file_path_str).is_absolute() or ".." in relative_repo_file_path_str:
+                return {'status': 'error', 'message': f"Invalid relative file path: {relative_repo_file_path_str}", 'commit_id': None}
+
+            absolute_target_path = resolved_repo_path / relative_repo_file_path_str
+
+            # Path safety check: Ensure the target path is within the repository boundaries.
+            # Normalizing paths helps in comparing them reliably.
+            normalized_repo_path = os.path.normpath(str(resolved_repo_path))
+            normalized_target_path = os.path.normpath(str(absolute_target_path))
+
+            # Check if the normalized target path starts with the normalized repo path.
+            # Add os.sep to ensure it's a subdirectory match, not just a prefix match (e.g. /repo vs /repo-something)
+            # However, if relative_repo_file_path_str can be just a filename at root, direct startswith is fine.
+            # For robustness with subdirectories:
+            if not normalized_target_path.startswith(normalized_repo_path + os.sep) and normalized_target_path != normalized_repo_path:
+                # If relative_repo_file_path_str can be empty or ".", target could be same as repo path.
+                # This case needs to be handled if files can be written to the root itself directly by an empty relative path.
+                # Assuming relative_repo_file_path_str will always point to a file *name*,
+                # so `normalized_target_path` will always be longer or different if escaping.
+                # A more direct check:
+                # common_path = os.path.commonpath([normalized_target_path, normalized_repo_path])
+                # if common_path != normalized_repo_path:
+                # A simpler and often effective check is direct prefix after normalization.
+                # If target is exactly repo path (e.g. trying to overwrite repo dir with a file), it's also an issue.
+                # Path.is_relative_to (Python 3.9+) would be ideal here.
+                # For now, combining startswith with a check against direct equality for the repo path itself.
+                if not normalized_target_path.startswith(normalized_repo_path): # General check
+                    return {'status': 'error', 'message': f"File path '{relative_repo_file_path_str}' escapes repository.", 'commit_id': None}
+                # If it starts with, but is not a sub-path (e.g. /foo/bar vs /foo/barista), commonpath is better.
+                # Let's use commonpath for clarity.
+                common_base = os.path.commonpath([normalized_target_path, normalized_repo_path])
+                if common_base != normalized_repo_path:
+                    return {'status': 'error', 'message': f"File path '{relative_repo_file_path_str}' escapes repository boundaries.", 'commit_id': None}
+                # Prevent writing directly to the .git directory or other sensitive paths.
+                # This part could be expanded with more checks if needed.
+                if ".git" in Path(relative_repo_file_path_str).parts:
+                     return {'status': 'error', 'message': f"File path '{relative_repo_file_path_str}' targets a restricted directory.", 'commit_id': None}
+
+
+            # Create parent directories if they don't exist
+            try:
+                absolute_target_path.parent.mkdir(parents=True, exist_ok=True)
+            except OSError as e:
+                return {'status': 'error', 'message': f"Error creating directories for '{relative_repo_file_path_str}': {e}", 'commit_id': None}
+
+            # Copy the temporary file to the target path
+            try:
+                shutil.copyfile(temp_file_abs_path_str, absolute_target_path)
+            except IOError as e:
+                return {'status': 'error', 'message': f"Error copying file '{temp_file_abs_path_str}' to '{absolute_target_path}': {e}", 'commit_id': None}
+
+            # Stage the file
+            try:
+                # Path for add() must be relative to the repository workdir
+                repo.index.add(relative_repo_file_path_str)
+            except pygit2.GitError as e:
+                return {'status': 'error', 'message': f"Error staging file '{relative_repo_file_path_str}': {e}", 'commit_id': None}
+            except Exception as e: # Catch other potential errors like invalid path for index
+                return {'status': 'error', 'message': f"An unexpected error occurred staging '{relative_repo_file_path_str}': {e}", 'commit_id': None}
+
+        # Write the index after all files are added
+        try:
+            repo.index.write()
+        except pygit2.GitError as e:
+            return {'status': 'error', 'message': f"Error writing index: {e}", 'commit_id': None}
+
+        # Create the commit
+        try:
+            current_time = int(time.time())
+            local_offset_seconds = -time.timezone if not time.daylight else -time.altzone
+            tz_offset_minutes = local_offset_seconds // 60
+
+            try:
+                default_sig = repo.default_signature
+                committer_name = default_sig.name
+                committer_email = default_sig.email
+                committer_offset = default_sig.offset
+                committer_signature = pygit2.Signature(committer_name, committer_email, current_time, committer_offset)
+            except pygit2.GitError: # Default signature not set
+                committer_name = "GitWrite System"
+                committer_email = "gitwrite@example.com"
+                committer_signature = pygit2.Signature(committer_name, committer_email, current_time, tz_offset_minutes)
+
+            if author_name and author_email:
+                author_signature = pygit2.Signature(author_name, author_email, current_time, tz_offset_minutes)
+            else:
+                author_signature = committer_signature # Fallback to committer details
+
+            tree_id = repo.index.write_tree()
+            parents = [] if repo.head_is_unborn else [repo.head.target]
+
+            # Check if there are actual changes to commit
+            if not parents: # First commit
+                pass # Always commit if it's the first one
+            else:
+                # Compare new tree with HEAD's tree
+                head_commit = repo.get(parents[0])
+                if head_commit and head_commit.tree_id == tree_id:
+                    # Check if the index is dirty (e.g. new files added, mode changes, etc.)
+                    # even if the tree content hash is the same (unlikely for new files but good to check).
+                    # A simple way is to check if there are any changes between HEAD tree and index tree.
+                    # repo.diff_tree_to_index(head_commit.tree, repo.index) will show changes.
+                    # For simplicity, if tree_id is same, assume no content changes relevant for commit unless index was modified.
+                    # The act of `repo.index.add()` and `repo.index.write()` should make it "dirty" enough
+                    # if new files were added or existing tracked files changed.
+                    # If only untracked files were "added" that were already gitignored, tree might not change.
+                    # But our loop explicitly adds files, so they should be in the index.
+                    # A more robust check:
+                    if not repo.status(): # If status is empty, no changes
+                        return {'status': 'no_changes', 'message': 'No changes to commit.', 'commit_id': None}
+
+            commit_oid = repo.create_commit(
+                "HEAD",
+                author_signature,
+                committer_signature,
+                commit_message,
+                tree_id,
+                parents
+            )
+            return {'status': 'success', 'message': 'Files committed successfully.', 'commit_id': str(commit_oid)}
+        except pygit2.GitError as e:
+            # It's possible to get an error here if the tree is identical to HEAD and no changes were staged
+            # pygit2.GitError: 'failed to create commit: current tip is not the first parent' if parents is not empty
+            # and tree is identical. Let's refine the "no_changes" check.
+            if "nothing to commit" in str(e).lower() or (repo.head and not repo.head_is_unborn and repo.head.peel(pygit2.Commit).tree_id == tree_id):
+                 return {'status': 'no_changes', 'message': 'No changes to commit.', 'commit_id': None}
+            return {'status': 'error', 'message': f"Error committing files: {e}", 'commit_id': None}
+        except Exception as e:
+            return {'status': 'error', 'message': f"An unexpected error occurred during commit: {e}", 'commit_id': None}
+
+    except Exception as e:
+        # Catch-all for unexpected errors at the function level
+        return {'status': 'error', 'message': f"An unexpected error occurred: {e}", 'commit_id': None}

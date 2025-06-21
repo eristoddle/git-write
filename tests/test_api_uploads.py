@@ -229,6 +229,183 @@ def test_complete_upload_success():
     assert "sim_commit_" in complete_data["commit_id"] # As it's simulated for now
     assert completion_token not in uploads.upload_sessions # Session should be cleared
 
+
+# Patch the core function for relevant tests
+@pytest.fixture
+def mock_core_save_files(mocker):
+    # The core function is imported as 'core_save_files' inside the endpoint function.
+    # So we need to patch it at 'gitwrite_api.routers.uploads.core_save_files'
+    mock = mocker.patch("gitwrite_api.routers.uploads.core_save_files")
+    return mock
+
+def test_complete_upload_success_integration(mock_core_save_files):
+    # 1. Initiate
+    init_resp = client.post(
+        f"/repositories/{TEST_REPO_ID}/save/initiate",
+        json={
+            "commit_message": TEST_COMMIT_MSG,
+            "files": [{"file_path": TEST_FILE1_PATH, "file_hash": TEST_FILE1_HASH}]
+        }
+    )
+    assert init_resp.status_code == 200
+    init_data = init_resp.json()
+    upload_url = init_data["upload_urls"][TEST_FILE1_PATH]
+    completion_token = init_data["completion_token"]
+
+    # 2. Upload file - this creates a temp file
+    # Get the actual path of the temp file created by handle_file_upload
+    # Ensure TEST_TEMP_UPLOAD_DIR is clean before this specific part
+    if os.path.exists(TEST_TEMP_UPLOAD_DIR): # Should be handled by fixture, but defensive
+        shutil.rmtree(TEST_TEMP_UPLOAD_DIR)
+    os.makedirs(TEST_TEMP_UPLOAD_DIR, exist_ok=True)
+
+    dummy_file_content = b"dummy content for integration test"
+    dummy_temp_file_name = "testfile_for_complete_integ.tmp" # A distinct name
+
+    # Simulate the file upload process to get a known temp_path in the session
+    # This is a bit complex because handle_file_upload creates its own temp file.
+    # For more control, we can manually populate the session after `initiate`
+    # or rely on `handle_file_upload` to create it. Let's rely on it.
+
+    with open(dummy_temp_file_name, "wb") as f:
+        f.write(dummy_file_content)
+
+    actual_temp_path_on_server = ""
+    with open(dummy_temp_file_name, "rb") as f_upload:
+        upload_resp = client.put(
+            upload_url,
+            files={"uploaded_file": (TEST_FILE1_PATH, f_upload, "text/plain")}
+        )
+    assert upload_resp.status_code == 200
+    actual_temp_path_on_server = upload_resp.json()["temporary_path"]
+    assert os.path.exists(actual_temp_path_on_server) # Verify temp file was created by PUT
+
+    os.remove(dummy_temp_file_name) # Clean up the local dummy file
+
+    # 3. Mock core function's successful response
+    expected_commit_id = "new_commit_12345"
+    mock_core_save_files.return_value = {
+        "status": "success",
+        "commit_id": expected_commit_id,
+        "message": "Files committed successfully."
+    }
+
+    # 4. Call Complete
+    complete_response = client.post(
+        f"/repositories/{TEST_REPO_ID}/save/complete",
+        json={"completion_token": completion_token}
+    )
+    assert complete_response.status_code == 200
+    complete_data = complete_response.json()
+    assert complete_data["commit_id"] == expected_commit_id
+    assert complete_data["message"] == "Files committed successfully."
+
+    # 5. Verify core function was called correctly
+    expected_repo_path = str(uploads.Path(uploads.PLACEHOLDER_REPO_PATH_PREFIX) / TEST_REPO_ID)
+
+    # The files_to_commit_map should contain the relative path and the *actual* temp path
+    # that handle_file_upload stored in the session.
+    session_after_init = uploads.upload_sessions[completion_token] # Get session before it's popped
+    # The actual_temp_path_on_server is what core_save_files should receive.
+
+    expected_files_map = {TEST_FILE1_PATH: actual_temp_path_on_server}
+
+    mock_core_save_files.assert_called_once_with(
+        repo_path_str=expected_repo_path,
+        files_to_commit=expected_files_map,
+        commit_message=TEST_COMMIT_MSG,
+        author_name=mock_user_one.username,
+        author_email=mock_user_one.email
+    )
+
+    # 6. Verify temporary file was deleted
+    assert not os.path.exists(actual_temp_path_on_server)
+
+    # 7. Verify session was cleared
+    assert completion_token not in uploads.upload_sessions
+
+
+def test_complete_upload_core_no_changes(mock_core_save_files):
+    init_resp = client.post(f"/repositories/{TEST_REPO_ID}/save/initiate", json={"commit_message": TEST_COMMIT_MSG, "files": [{"file_path": TEST_FILE1_PATH, "file_hash": "h"}]})
+    upload_url = init_resp.json()["upload_urls"][TEST_FILE1_PATH]
+    completion_token = init_resp.json()["completion_token"]
+
+    dummy_file_name = "no_change_file.tmp"
+    with open(dummy_file_name, "wb") as f: f.write(b"content")
+    temp_file_path_on_server = ""
+    with open(dummy_file_name, "rb") as f_upload:
+        upload_resp = client.put(upload_url, files={"uploaded_file": (TEST_FILE1_PATH, f_upload, "text/plain")})
+        temp_file_path_on_server = upload_resp.json()["temporary_path"]
+    os.remove(dummy_file_name)
+    assert os.path.exists(temp_file_path_on_server)
+
+
+    mock_core_save_files.return_value = {"status": "no_changes", "message": "No changes to commit."}
+
+    complete_response = client.post(f"/repositories/{TEST_REPO_ID}/save/complete", json={"completion_token": completion_token})
+
+    assert complete_response.status_code == 200 # Should still be 200 OK
+    data = complete_response.json()
+    assert data["commit_id"] is None # Or specific placeholder if API changes
+    assert data["message"] == "No changes to commit."
+
+    mock_core_save_files.assert_called_once()
+    assert not os.path.exists(temp_file_path_on_server) # Temp file should be cleaned
+    assert completion_token not in uploads.upload_sessions # Session cleared
+
+
+def test_complete_upload_core_failure_repo_not_found(mock_core_save_files):
+    init_resp = client.post(f"/repositories/{TEST_REPO_ID}/save/initiate", json={"commit_message": TEST_COMMIT_MSG, "files": [{"file_path": TEST_FILE1_PATH, "file_hash": "h"}]})
+    upload_url = init_resp.json()["upload_urls"][TEST_FILE1_PATH]
+    completion_token = init_resp.json()["completion_token"]
+
+    dummy_file_name = "fail_file.tmp"
+    with open(dummy_file_name, "wb") as f: f.write(b"content")
+    temp_file_path_on_server = ""
+    with open(dummy_file_name, "rb") as f_upload:
+        upload_resp = client.put(upload_url, files={"uploaded_file": (TEST_FILE1_PATH, f_upload, "text/plain")})
+        temp_file_path_on_server = upload_resp.json()["temporary_path"] # Path to the file created by PUT
+    os.remove(dummy_file_name) # Clean up local dummy
+    assert os.path.exists(temp_file_path_on_server) # Server temp file exists
+
+    mock_core_save_files.return_value = {"status": "error", "message": "Repository not found or invalid: some_path"}
+
+    complete_response = client.post(f"/repositories/{TEST_REPO_ID}/save/complete", json={"completion_token": completion_token})
+
+    assert complete_response.status_code == 404 # Not Found
+    assert "Repository not found" in complete_response.json()["detail"]
+
+    mock_core_save_files.assert_called_once()
+    assert os.path.exists(temp_file_path_on_server) # Temp file should NOT be deleted
+    assert completion_token in uploads.upload_sessions # Session should NOT be cleared
+
+
+def test_complete_upload_core_failure_generic_error(mock_core_save_files):
+    init_resp = client.post(f"/repositories/{TEST_REPO_ID}/save/initiate", json={"commit_message": TEST_COMMIT_MSG, "files": [{"file_path": TEST_FILE1_PATH, "file_hash": "h"}]})
+    upload_url = init_resp.json()["upload_urls"][TEST_FILE1_PATH]
+    completion_token = init_resp.json()["completion_token"]
+
+    dummy_file_name = "generic_fail.tmp"
+    with open(dummy_file_name, "wb") as f: f.write(b"content")
+    temp_file_path_on_server = ""
+    with open(dummy_file_name, "rb") as f_upload:
+        upload_resp = client.put(upload_url, files={"uploaded_file": (TEST_FILE1_PATH, f_upload, "text/plain")})
+        temp_file_path_on_server = upload_resp.json()["temporary_path"]
+    os.remove(dummy_file_name)
+    assert os.path.exists(temp_file_path_on_server)
+
+    mock_core_save_files.return_value = {"status": "error", "message": "A generic core error occurred."}
+
+    complete_response = client.post(f"/repositories/{TEST_REPO_ID}/save/complete", json={"completion_token": completion_token})
+
+    assert complete_response.status_code == 500 # Internal Server Error
+    assert "A generic core error occurred." in complete_response.json()["detail"]
+
+    mock_core_save_files.assert_called_once()
+    assert os.path.exists(temp_file_path_on_server) # Temp file NOT deleted
+    assert completion_token in uploads.upload_sessions # Session NOT cleared
+
+
 def test_complete_upload_invalid_token():
     response = client.post(f"/repositories/{TEST_REPO_ID}/save/complete", json={"completion_token": "invalid_token"})
     assert response.status_code == 404
