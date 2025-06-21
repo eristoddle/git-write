@@ -22,3 +22,20 @@ jobs:
       - name: Test with pytest
         run: |
           pytest
+
+  test-sdk:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+      - name: Install SDK dependencies
+        run: |
+          cd gitwrite_sdk
+          npm install
+      - name: Test SDK with Jest
+        run: |
+          cd gitwrite_sdk
+          npm test
