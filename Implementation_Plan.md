@@ -81,7 +81,7 @@ Status: **Completed**
 
 ### Task 6.5 - Agent_SDK_Dev: Implement Multi-Part Upload Methods
 Objective: Create a high-level SDK method to simplify the two-step upload process.
-Status: **Pending**
+Status: **Completed**
 
 1.  Design a method like `repository.saveFiles(files, commitMessage)`.
 2.  `files` would be an array of objects, each containing a file path and its content (e.g., as a `Blob` or `Buffer`).

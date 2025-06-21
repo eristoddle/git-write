@@ -13,6 +13,14 @@ export type {
   ApiErrorResponse,
   SaveFileRequestPayload,
   SaveFileResponseData,
+  // Multi-Part Upload Types
+  InputFile,
+  FileMetadataForUpload,
+  UploadInitiateRequestPayload,
+  UploadURLData,
+  UploadInitiateResponseData,
+  UploadCompleteRequestPayload,
+  UploadCompleteResponseData,
 } from './types';
 
 // You can also export other modules or types here as the SDK grows

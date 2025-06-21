@@ -8,6 +8,14 @@ import {
   ListCommitsParams,
   SaveFileRequestPayload,
   SaveFileResponseData,
+  // Multi-part upload types for testing
+  InputFile,
+  UploadInitiateRequestPayload,
+  UploadInitiateResponseData,
+  UploadCompleteRequestPayload,
+  UploadCompleteResponseData,
+  UploadURLData,
+  FileMetadataForUpload,
 } from '../src/types';
 
 // Mock axios
@@ -371,6 +379,156 @@ describe('GitWriteClient', () => {
           data: mockRequestPayload,
         });
       });
+    });
+  });
+
+  describe('saveFiles (Multi-Part Upload)', () => {
+    const repoId = 'test-repo';
+    const commitMessage = 'Test multi-file commit';
+    const file1Content = Buffer.from('Content for file 1');
+    const file2Content = Buffer.from('Content for file 2');
+
+    const inputFiles: InputFile[] = [
+      { path: 'file1.txt', content: file1Content, size: file1Content.length },
+      { path: 'path/to/file2.md', content: file2Content, size: file2Content.length },
+    ];
+
+    const mockFilesMetadata: FileMetadataForUpload[] = inputFiles.map(f => ({
+        file_path: f.path,
+        size: f.size,
+    }));
+
+    const mockInitiatePayload: UploadInitiateRequestPayload = {
+      files: mockFilesMetadata,
+      commit_message: commitMessage,
+    };
+
+    const mockUploadURLs: UploadURLData[] = [
+      { file_path: 'file1.txt', upload_url: '/upload-session/upload-id-1', upload_id: 'upload-id-1' },
+      { file_path: 'path/to/file2.md', upload_url: '/upload-session/upload-id-2', upload_id: 'upload-id-2' },
+    ];
+
+    const mockInitiateResponse: UploadInitiateResponseData = {
+      status: 'success',
+      message: 'Upload initiated',
+      completion_token: 'test-completion-token',
+      files: mockUploadURLs,
+    };
+
+    const mockCompletePayload: UploadCompleteRequestPayload = {
+      completion_token: 'test-completion-token',
+    };
+
+    const mockCompleteResponse: UploadCompleteResponseData = {
+      status: 'success',
+      message: 'Files saved successfully',
+      commit_id: 'multi-commit-sha456',
+    };
+
+    beforeEach(() => {
+      // Ensure client is authenticated
+      client.setToken('test-savefiles-token');
+    });
+
+    it('should successfully perform a multi-part upload', async () => {
+      // Mock /initiate call (uses client.post -> client.request)
+      mockRequest
+        .mockResolvedValueOnce({ data: mockInitiateResponse }); // For initiate POST
+
+      // Mock individual file PUT uploads (uses client.put -> client.request)
+      // Two files, so two PUT calls
+      mockRequest.mockResolvedValueOnce({ status: 200, data: { message: 'upload 1 ok'} }); // For file1.txt PUT
+      mockRequest.mockResolvedValueOnce({ status: 200, data: { message: 'upload 2 ok'} }); // For file2.md PUT
+
+      // Mock /complete call (uses client.post -> client.request)
+      mockRequest.mockResolvedValueOnce({ data: mockCompleteResponse }); // For complete POST
+
+      const result = await client.saveFiles(repoId, inputFiles, commitMessage);
+
+      // Verify /initiate call
+      expect(mockRequest).toHaveBeenNthCalledWith(1, {
+        method: 'POST',
+        url: `/repositories/${repoId}/save/initiate`,
+        data: mockInitiatePayload,
+      });
+
+      // Verify PUT calls for file uploads
+      // Order of Promise.all execution isn't strictly guaranteed for map,
+      // so check for both calls regardless of order if necessary, or ensure mock setup matches expected call order.
+      // For simplicity here, assuming they are called in order of mockRequest setup.
+      expect(mockRequest).toHaveBeenNthCalledWith(2, {
+        method: 'PUT',
+        url: mockUploadURLs[0].upload_url, // /upload-session/upload-id-1
+        data: inputFiles[0].content,
+        headers: { 'Content-Type': 'application/octet-stream' },
+      });
+      expect(mockRequest).toHaveBeenNthCalledWith(3, {
+        method: 'PUT',
+        url: mockUploadURLs[1].upload_url, // /upload-session/upload-id-2
+        data: inputFiles[1].content,
+        headers: { 'Content-Type': 'application/octet-stream' },
+      });
+
+      // Verify /complete call
+      expect(mockRequest).toHaveBeenNthCalledWith(4, {
+        method: 'POST',
+        url: `/repositories/${repoId}/save/complete`,
+        data: mockCompletePayload,
+      });
+
+      expect(result).toEqual(mockCompleteResponse);
+    });
+
+    it('should throw an error if /initiate call fails', async () => {
+      const initiateError = new Error('Initiate failed');
+      mockRequest.mockRejectedValueOnce(initiateError); // For initiate POST
+
+      await expect(client.saveFiles(repoId, inputFiles, commitMessage)).rejects.toThrow('Initiate failed');
+      expect(mockRequest).toHaveBeenCalledTimes(1); // Only initiate should be called
+    });
+
+    it('should throw an error if any file upload (PUT) fails', async () => {
+      mockRequest.mockResolvedValueOnce({ data: mockInitiateResponse }); // Initiate POST succeeds
+
+      const uploadError = new Error('Upload failed for file1.txt');
+      mockRequest.mockRejectedValueOnce(uploadError); // First PUT fails
+      // No need to mock the second PUT if the first one throws and Promise.all rejects
+
+      await expect(client.saveFiles(repoId, inputFiles, commitMessage)).rejects.toThrow('Upload failed for file1.txt');
+
+      expect(mockRequest).toHaveBeenCalledTimes(2); // Initiate + 1st PUT
+      // (Could be 3 if Promise.all allows other promises to start, but one rejection is enough)
+    });
+
+    it('should throw an error if /complete call fails', async () => {
+      mockRequest.mockResolvedValueOnce({ data: mockInitiateResponse }); // Initiate POST
+      mockRequest.mockResolvedValueOnce({ status: 200 }); // File 1 PUT
+      mockRequest.mockResolvedValueOnce({ status: 200 }); // File 2 PUT
+
+      const completeError = new Error('Complete failed');
+      mockRequest.mockRejectedValueOnce(completeError); // Complete POST fails
+
+      await expect(client.saveFiles(repoId, inputFiles, commitMessage)).rejects.toThrow('Complete failed');
+      expect(mockRequest).toHaveBeenCalledTimes(4); // Initiate + 2 PUTs + Complete
+    });
+
+    it('should throw an error if initiate response is invalid (no token)', async () => {
+        const invalidInitiateResponse = { ...mockInitiateResponse, completion_token: '' };
+        mockRequest.mockResolvedValueOnce({ data: invalidInitiateResponse });
+
+        await expect(client.saveFiles(repoId, inputFiles, commitMessage)).rejects.toThrow('Invalid response from initiate upload endpoint.');
+        expect(mockRequest).toHaveBeenCalledTimes(1);
+    });
+
+    it('should throw an error if file data is not found for an upload instruction', async () => {
+        const modifiedUploadURLs = [
+            { file_path: 'nonexistent.txt', upload_url: '/upload-session/upload-id-x', upload_id: 'upload-id-x' }
+        ];
+        const initiateResponseWithBadFile = { ...mockInitiateResponse, files: modifiedUploadURLs };
+        mockRequest.mockResolvedValueOnce({ data: initiateResponseWithBadFile }); // Initiate succeeds
+
+        await expect(client.saveFiles(repoId, inputFiles, commitMessage)).rejects.toThrow('File data not found for path: nonexistent.txt');
+        expect(mockRequest).toHaveBeenCalledTimes(1); // Only initiate call
     });
   });
 });

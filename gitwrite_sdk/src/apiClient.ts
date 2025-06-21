@@ -6,6 +6,14 @@ import {
   ListCommitsParams,
   SaveFileRequestPayload,
   SaveFileResponseData,
+  // Multi-part upload types
+  InputFile,
+  FileMetadataForUpload,
+  UploadInitiateRequestPayload,
+  UploadInitiateResponseData,
+  UploadCompleteRequestPayload,
+  UploadCompleteResponseData,
+  UploadURLData,
 } from './types';
 
 // Define a type for the token, which can be a string or null
@@ -180,6 +188,79 @@ export class GitWriteClient {
       payload
     );
     return response.data;
+  }
+
+  /**
+   * Saves multiple files to the repository using a multi-part upload process.
+   * Handles initiating the upload, uploading individual files, and completing the upload.
+   * @param repoId The ID of the repository.
+   * @param files An array of InputFile objects, each with a path and content (Blob or Buffer).
+   * @param commitMessage The commit message for the save operation.
+   * @returns A promise that resolves with the response from the complete upload endpoint.
+   */
+  public async saveFiles(
+    repoId: string,
+    files: InputFile[],
+    commitMessage: string
+  ): Promise<UploadCompleteResponseData> {
+    // Step 1: Prepare metadata and call /initiate endpoint
+    const filesMetadata: FileMetadataForUpload[] = files.map(file => ({
+      file_path: file.path,
+      size: file.size ?? (file.content instanceof Blob ? file.content.size : Buffer.byteLength(file.content)),
+      // hash: file.hash, // If hash calculation is implemented
+    }));
+
+    const initiatePayload: UploadInitiateRequestPayload = {
+      files: filesMetadata,
+      commit_message: commitMessage,
+    };
+
+    const initiateResponse = await this.post<UploadInitiateResponseData, AxiosResponse<UploadInitiateResponseData>, UploadInitiateRequestPayload>(
+      `/repositories/${repoId}/save/initiate`,
+      initiatePayload
+    );
+
+    const { completion_token, files: uploadInstructions } = initiateResponse.data;
+
+    if (!completion_token || !uploadInstructions || uploadInstructions.length === 0) {
+      throw new Error('Invalid response from initiate upload endpoint.');
+    }
+
+    // Step 2: Upload individual files in parallel
+    const uploadPromises = uploadInstructions.map(async (instruction: UploadURLData) => {
+      const fileToUpload = files.find(f => f.path === instruction.file_path);
+      if (!fileToUpload) {
+        throw new Error(`File data not found for path: ${instruction.file_path}`);
+      }
+
+      // The instruction.upload_url is expected to be a relative path like /upload-session/{upload_id}
+      // Axios will prepend the baseURL to this.
+      await this.put<any, AxiosResponse<any>, Blob | Buffer>(
+        instruction.upload_url,
+        fileToUpload.content,
+        {
+          headers: {
+            // Axios typically sets Content-Type automatically for Blob/Buffer,
+            // but being explicit for application/octet-stream can be good.
+            'Content-Type': 'application/octet-stream',
+          },
+        }
+      );
+    });
+
+    await Promise.all(uploadPromises);
+
+    // Step 3: Call /complete endpoint
+    const completePayload: UploadCompleteRequestPayload = {
+      completion_token: completion_token,
+    };
+
+    const completeResponse = await this.post<UploadCompleteResponseData, AxiosResponse<UploadCompleteResponseData>, UploadCompleteRequestPayload>(
+      `/repositories/${repoId}/save/complete`,
+      completePayload
+    );
+
+    return completeResponse.data;
   }
 }
 

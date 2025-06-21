@@ -350,3 +350,54 @@ None remaining for this task. Test execution issues were resolved by reinstallin
 
 **Next Steps (Optional):**
 Proceed with Phase 6, Task 6.5: Implement Multi-Part Upload Methods.
+---
+**Agent:** Jules (Implementation Agent)
+**Task Reference:** Phase 6, Task 6.5: Implement Multi-Part Upload Methods
+
+**Summary:**
+Implemented the `saveFiles(repoId, files, commitMessage)` method in the TypeScript SDK's `GitWriteClient`. This method orchestrates the multi-part upload process, allowing users to save multiple files to a repository in a single logical operation. It handles initiating the upload, uploading individual file contents, and then finalizing the commit.
+
+**Details:**
+- **TypeScript Interfaces Defined (`gitwrite_sdk/src/types.ts`)**:
+    - `InputFile`: Represents a file to be uploaded (path, content as `Blob | Buffer`, optional size).
+    - `FileMetadataForUpload`: Metadata for each file in the initiate request (file_path, optional size).
+    - `UploadInitiateRequestPayload`: Payload for `POST /repositories/{repo_id}/save/initiate` (files metadata, commit_message).
+    - `UploadURLData`: Structure for individual file upload instructions from initiate response (file_path, upload_url, upload_id).
+    - `UploadInitiateResponseData`: Response from `/initiate` (status, message, completion_token, files upload data).
+    - `UploadCompleteRequestPayload`: Payload for `POST /repositories/{repo_id}/save/complete` (completion_token).
+    - `UploadCompleteResponseData`: Response from `/complete` (status, message, optional commit_id).
+    - All new types were exported from `gitwrite_sdk/src/index.ts`.
+- **`GitWriteClient` Method Implemented (`gitwrite_sdk/src/apiClient.ts`)**:
+    - Added `async saveFiles(repoId: string, files: InputFile[], commitMessage: string): Promise<UploadCompleteResponseData>`.
+    - The method performs three main steps:
+        1.  Calls `POST /repositories/{repoId}/save/initiate` with metadata for all files and the commit message.
+        2.  Uploads each file's content in parallel using `PUT` to the unique `upload_url` provided by the initiate step for each file. The `Content-Type` is set to `application/octet-stream`.
+        3.  Calls `POST /repositories/{repoId}/save/complete` with the `completion_token` received from the initiate step.
+    - Includes error handling for invalid API responses and mismatches in file data.
+- **Unit Tests Added (`gitwrite_sdk/tests/apiClient.test.ts`)**:
+    - Added a new test suite for `saveFiles`.
+    - Tests cover:
+        - Successful end-to-end multi-part upload flow.
+        - Failure during the `/initiate` API call.
+        - Failure during one of the individual file `PUT` uploads.
+        - Failure during the `/complete` API call.
+        - Handling of invalid responses from the `/initiate` call (e.g., missing token).
+        - Handling of scenarios where file data for a given upload instruction is not found.
+    - Utilized the existing `mockRequest` to mock underlying Axios calls.
+- **Branch**: `feature/sdk-multi-part-upload` (intended branch for submission).
+
+**Output/Result:**
+- Modified file: `gitwrite_sdk/src/types.ts` (added new interfaces for multi-part upload)
+- Modified file: `gitwrite_sdk/src/index.ts` (exported new interfaces)
+- Modified file: `gitwrite_sdk/src/apiClient.ts` (added `saveFiles` method and imported new types)
+- Modified file: `gitwrite_sdk/tests/apiClient.test.ts` (added tests for `saveFiles` method and imported new types)
+- Modified file: `Implementation_Plan.md` (Task 6.5 status updated to Completed)
+- This log entry in `Memory_Bank.md`.
+
+**Status:** Completed
+
+**Issues/Blockers:**
+None for this task.
+
+**Next Steps (Optional):**
+Proceed with Phase 6, Task 6.6: Add Unit and Integration Tests (though unit tests for this specific functionality were added as part of this task, Task 6.6 likely refers to overall SDK testing coverage).

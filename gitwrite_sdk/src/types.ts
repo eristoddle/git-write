@@ -92,3 +92,75 @@ export interface SaveFileResponseData {
   message: string;
   commit_id?: string; // Optional, as it might not be present on error
 }
+
+// Interfaces for Multi-Part Upload (Task 6.5)
+
+/**
+ * Represents a file to be uploaded as part of a multi-file save operation.
+ * Content can be Blob (for browser environments) or Buffer (for Node.js).
+ */
+export interface InputFile {
+  path: string;
+  content: Blob | Buffer; // Using Blob for browser, Buffer for Node.js
+  size?: number; // Optional: size of the content in bytes
+  // hash?: string; // Optional: SHA256 hash of the content, if pre-calculated
+}
+
+/**
+ * Represents metadata for a single file in the upload initiation request.
+ * This aligns with the API's expected `FileMetadata` Pydantic model.
+ */
+export interface FileMetadataForUpload {
+  file_path: string;
+  size?: number; // Optional: size of the content in bytes
+  // hash?: string; // Optional: SHA256 hash of the content
+}
+
+/**
+ * Represents the payload for initiating a multi-part upload.
+ * Aligns with API's `FileUploadInitiateRequest` Pydantic model.
+ */
+export interface UploadInitiateRequestPayload {
+  // repo_id is part of the URL path: /repositories/{repo_id}/save/initiate
+  // The body should match the Pydantic model FileUploadInitiateRequest
+  files: FileMetadataForUpload[];
+  commit_message: string;
+}
+
+/**
+ * Represents the data for a single file's upload URL and ID, received from the initiate response.
+ */
+export interface UploadURLData {
+  file_path: string;
+  upload_url: string; // This will be the relative path like /upload-session/{upload_id}
+  upload_id: string;  // The unique ID for this specific file upload session
+}
+
+/**
+ * Represents the response from the multi-part upload initiation endpoint.
+ * Aligns with API's `FileUploadInitiateResponse` Pydantic model.
+ */
+export interface UploadInitiateResponseData {
+  status: string;
+  message: string;
+  completion_token: string;
+  files: UploadURLData[]; // Details for each file to be uploaded
+}
+
+/**
+ * Represents the payload for completing a multi-part upload.
+ * Aligns with API's `FileUploadCompleteRequest` Pydantic model.
+ */
+export interface UploadCompleteRequestPayload {
+  completion_token: string;
+}
+
+/**
+ * Represents the response from the multi-part upload completion endpoint.
+ * Aligns with API's `FileUploadCompleteResponse` Pydantic model.
+ */
+export interface UploadCompleteResponseData {
+  status: string;
+  message: string;
+  commit_id?: string; // Optional, as it might not be present on error
+}
