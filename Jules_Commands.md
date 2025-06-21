@@ -20,5 +20,5 @@ Here is how you run unit tests:
 
 
 Read Memory_Bank.md and Implementation_Plan.md for details on the current state of the project.
-Proceed with Phase 6, Task 6.5: Implement Multi-Part Upload Methods.
+Proceed with Task 6.3 - Agent_API_Dev: Revert and Sync Endpoints
 When you are done update Memory_Bank.md and Implementation_Plan.md.

@@ -1,66 +1,3 @@
----
-**Agent:** Jules (Implementation Agent)
-**Task Reference:** Phase 6, Task 6.2: Merge and Compare Endpoints
-
-**Summary:**
-Implemented API endpoints for merging branches (`POST /repository/merges`) and comparing references (`GET /repository/compare`). This included adding Pydantic models for request and response bodies, implementing the endpoint logic with comprehensive error handling, and writing extensive unit tests.
-
-**Details:**
-- **`gitwrite_api/routers/repository.py` modifications:**
-    - Added Pydantic models:
-        - `MergeBranchRequest` (for `source_branch`)
-        - `MergeBranchResponse` (for status, message, current/merged branches, commit OID, conflicting files)
-        - `CompareRefsResponse` (for ref OIDs, display names, patch text)
-    - Implemented `POST /repository/merges`:
-        - Takes `source_branch` in request body.
-        - Calls `gitwrite_core.branching.merge_branch_into_current`.
-        - Handles success states (200 OK for `merged_ok`, `fast_forwarded`, `up_to_date`).
-        - Handles `CoreMergeConflictError` (409 Conflict, with structured detail including conflicting files).
-        - Handles `CoreBranchNotFoundError` (404 Not Found).
-        - Handles `CoreRepositoryEmptyError`, `CoreDetachedHeadError`, other `CoreGitWriteError` (400 Bad Request).
-        - Handles `CoreRepositoryNotFoundError` (500 Internal Server Error).
-        - Protected by authentication.
-    - Implemented `GET /repository/compare`:
-        - Takes `ref1` and `ref2` as optional query parameters.
-        - Calls `gitwrite_core.versioning.get_diff`.
-        - Handles success (200 OK with diff details).
-        - Handles `CoreCommitNotFoundError` (404 Not Found).
-        - Handles `CoreNotEnoughHistoryError`, `ValueError` (from core for invalid refs) (400 Bad Request).
-        - Handles `CoreRepositoryNotFoundError` (500 Internal Server Error).
-        - Handles other `CoreGitWriteError` (500 Internal Server Error).
-        - Protected by authentication.
-- **`tests/test_api_repository.py` modifications:**
-    - Added unit tests for `POST /repository/merges`:
-        - Tested successful merge outcomes: `fast_forwarded`, `merged_ok`, `up_to_date`.
-        - Tested `CoreMergeConflictError` (409 response with structured conflict details).
-        - Tested `CoreBranchNotFoundError` (404).
-        - Tested `CoreRepositoryEmptyError`, `CoreDetachedHeadError`, specific `CoreGitWriteError`s (e.g., merge into self, no signature) (400).
-        - Tested `CoreRepositoryNotFoundError` (500).
-        - Tested unauthorized access (401) and invalid payload (422).
-    - Added unit tests for `GET /repository/compare`:
-        - Tested successful comparison with default parameters (HEAD~1 vs HEAD) and specified parameters.
-        - Tested `CoreCommitNotFoundError` (404).
-        - Tested `CoreNotEnoughHistoryError` and `ValueError` (400).
-        - Tested `CoreRepositoryNotFoundError` and other `CoreGitWriteError` (500).
-        - Tested unauthorized access (401).
-- **`Implementation_Plan.md` updated:**
-    - Marked Task 6.2 as "Completed".
-
-**Output/Result:**
-- Modified file: `gitwrite_api/routers/repository.py`
-- Modified file: `tests/test_api_repository.py`
-- Modified file: `Implementation_Plan.md`
-- This log entry in `Memory_Bank.md`.
-
-**Status:** Completed
-
-**Issues/Blockers:**
-None.
-
-**Next Steps (Optional):**
-Proceed with Task 6.3: Revert and Sync Endpoints as per the Implementation Plan.
-
----
 **Agent:** Jules (Implementation Agent)
 **Task Reference:** Project Planning & Strategy Update
 
@@ -140,4 +77,67 @@ Implemented two new API endpoints for repository branch management: `POST /repos
 None.
 
 **Next Steps (Optional):**
-Proceed with Task 6.2: Merge and Compare Endpoints as per the Implementation Plan.
+Proceed with Task 6.3: Revert and Sync Endpoints as per the Implementation Plan.
+
+---
+
+**Agent:** Jules (Implementation Agent)
+**Task Reference:** Phase 6, Task 6.2: Merge and Compare Endpoints
+
+**Summary:**
+Implemented API endpoints for merging branches (`POST /repository/merges`) and comparing references (`GET /repository/compare`). This included adding Pydantic models for request and response bodies, implementing the endpoint logic with comprehensive error handling, and writing extensive unit tests.
+
+**Details:**
+- **`gitwrite_api/routers/repository.py` modifications:**
+    - Added Pydantic models:
+        - `MergeBranchRequest` (for `source_branch`)
+        - `MergeBranchResponse` (for status, message, current/merged branches, commit OID, conflicting files)
+        - `CompareRefsResponse` (for ref OIDs, display names, patch text)
+    - Implemented `POST /repository/merges`:
+        - Takes `source_branch` in request body.
+        - Calls `gitwrite_core.branching.merge_branch_into_current`.
+        - Handles success states (200 OK for `merged_ok`, `fast_forwarded`, `up_to_date`).
+        - Handles `CoreMergeConflictError` (409 Conflict, with structured detail including conflicting files).
+        - Handles `CoreBranchNotFoundError` (404 Not Found).
+        - Handles `CoreRepositoryEmptyError`, `CoreDetachedHeadError`, other `CoreGitWriteError` (400 Bad Request).
+        - Handles `CoreRepositoryNotFoundError` (500 Internal Server Error).
+        - Protected by authentication.
+    - Implemented `GET /repository/compare`:
+        - Takes `ref1` and `ref2` as optional query parameters.
+        - Calls `gitwrite_core.versioning.get_diff`.
+        - Handles success (200 OK with diff details).
+        - Handles `CoreCommitNotFoundError` (404 Not Found).
+        - Handles `CoreNotEnoughHistoryError`, `ValueError` (from core for invalid refs) (400 Bad Request).
+        - Handles `CoreRepositoryNotFoundError` (500 Internal Server Error).
+        - Handles other `CoreGitWriteError` (500 Internal Server Error).
+        - Protected by authentication.
+- **`tests/test_api_repository.py` modifications:**
+    - Added unit tests for `POST /repository/merges`:
+        - Tested successful merge outcomes: `fast_forwarded`, `merged_ok`, `up_to_date`.
+        - Tested `CoreMergeConflictError` (409 response with structured conflict details).
+        - Tested `CoreBranchNotFoundError` (404).
+        - Tested `CoreRepositoryEmptyError`, `CoreDetachedHeadError`, specific `CoreGitWriteError`s (e.g., merge into self, no signature) (400).
+        - Tested `CoreRepositoryNotFoundError` (500).
+        - Tested unauthorized access (401) and invalid payload (422).
+    - Added unit tests for `GET /repository/compare`:
+        - Tested successful comparison with default parameters (HEAD~1 vs HEAD) and specified parameters.
+        - Tested `CoreCommitNotFoundError` (404).
+        - Tested `CoreNotEnoughHistoryError` and `ValueError` (400).
+        - Tested `CoreRepositoryNotFoundError` and other `CoreGitWriteError` (500).
+        - Tested unauthorized access (401).
+- **`Implementation_Plan.md` updated:**
+    - Marked Task 6.2 as "Completed".
+
+**Output/Result:**
+- Modified file: `gitwrite_api/routers/repository.py`
+- Modified file: `tests/test_api_repository.py`
+- Modified file: `Implementation_Plan.md`
+- This log entry in `Memory_Bank.md`.
+
+**Status:** Completed
+
+**Issues/Blockers:**
+None.
+
+**Next Steps (Optional):**
+Proceed with Task 6.3: Revert and Sync Endpoints as per the Implementation Plan.
