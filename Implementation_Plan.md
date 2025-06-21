@@ -19,7 +19,7 @@ Architectural Notes: This phase will create API endpoints for all remaining user
 
 ### Task 6.1 - Agent_API_Dev: Branching Endpoints
 Objective: Expose core branching functionalities (`create`, `switch`) via the API.
-Status: **Pending**
+Status: **Completed**
 
 1.  Create a `POST /repository/branches` endpoint that takes a `branch_name` and calls `gitwrite_core.branching.create_and_switch_branch`.
 2.  Create a `PUT /repository/branch` endpoint that takes a `branch_name` to switch to, calling `gitwrite_core.branching.switch_to_branch`.

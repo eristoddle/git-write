@@ -20,6 +20,16 @@ from gitwrite_core.repository import list_branches, list_tags, list_commits, sav
 # from gitwrite_api.models import User # Example, if User model is needed by get_current_active_user
 from ..models import SaveFileRequest, SaveFileResponse # Added for the new save endpoint
 
+# Import core branching functions and exceptions
+from gitwrite_core.branching import create_and_switch_branch, switch_to_branch
+from gitwrite_core.exceptions import (
+    RepositoryNotFoundError as CoreRepositoryNotFoundError, # Alias to avoid conflict with potential local one
+    RepositoryEmptyError as CoreRepositoryEmptyError,
+    BranchAlreadyExistsError as CoreBranchAlreadyExistsError,
+    BranchNotFoundError as CoreBranchNotFoundError,
+    GitWriteError as CoreGitWriteError
+)
+
 
 # For now, let's define a placeholder dependency to make the code runnable without the actual security module
 async def get_current_active_user(): # Placeholder
@@ -65,6 +75,21 @@ class CommitListResponse(BaseModel):
     status: str
     commits: List[CommitDetail]
     message: str
+
+# Branching Endpoint Models
+class BranchCreateRequest(BaseModel):
+    branch_name: str = Field(..., min_length=1, description="Name of the branch to create.")
+
+class BranchSwitchRequest(BaseModel):
+    branch_name: str = Field(..., min_length=1, description="Name of the branch to switch to.")
+
+class BranchResponse(BaseModel):
+    status: str
+    branch_name: str
+    message: str
+    head_commit_oid: Optional[str] = None
+    previous_branch_name: Optional[str] = None # For switch operation
+    is_detached: Optional[bool] = None # For switch operation
 
 # --- Helper for error handling ---
 def handle_core_response(response: Dict[str, Any], success_status: str = "success") -> Dict[str, Any]:
@@ -203,3 +228,93 @@ async def api_save_file(
 # @app.get("/")
 # async def main_root():
 #     return {"message": "Main application root"}
+
+
+# --- Branching Endpoints ---
+
+@router.post("/branches", response_model=BranchResponse, status_code=201)
+async def api_create_branch(
+    request_data: BranchCreateRequest,
+    current_user: User = Depends(get_current_active_user)
+):
+    """
+    Creates a new branch from the current HEAD and switches to it.
+    Requires authentication.
+    """
+    repo_path = PLACEHOLDER_REPO_PATH
+    try:
+        result = create_and_switch_branch(
+            repo_path_str=repo_path,
+            branch_name=request_data.branch_name
+        )
+        # Core function returns: {'status': 'success', 'branch_name': branch_name, 'head_commit_oid': str(repo.head.target)}
+        return BranchResponse(
+            status="created", # More specific than 'success' for a POST
+            branch_name=result['branch_name'],
+            message=f"Branch '{result['branch_name']}' created and switched to successfully.",
+            head_commit_oid=result['head_commit_oid']
+        )
+    except CoreBranchAlreadyExistsError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    except CoreRepositoryEmptyError as e:
+        # This typically means HEAD is unborn, making branch creation from HEAD problematic.
+        raise HTTPException(status_code=400, detail=str(e)) # 400 Bad Request or 422 Unprocessable
+    except CoreRepositoryNotFoundError:
+        # This implies an issue with PLACEHOLDER_REPO_PATH, a server-side configuration problem.
+        raise HTTPException(status_code=500, detail="Repository configuration error.")
+    except CoreGitWriteError as e:
+        # Catch-all for other git-related errors from the core function.
+        raise HTTPException(status_code=500, detail=f"Failed to create branch: {str(e)}")
+    except Exception as e:
+        # Fallback for unexpected errors
+        raise HTTPException(status_code=500, detail=f"An unexpected error occurred: {str(e)}")
+
+@router.put("/branch", response_model=BranchResponse)
+async def api_switch_branch(
+    request_data: BranchSwitchRequest,
+    current_user: User = Depends(get_current_active_user)
+):
+    """
+    Switches to an existing local branch.
+    Requires authentication.
+    """
+    repo_path = PLACEHOLDER_REPO_PATH
+    try:
+        result = switch_to_branch(
+            repo_path_str=repo_path,
+            branch_name=request_data.branch_name
+        )
+        # Core function returns:
+        # success: {'status': 'success', 'branch_name': ..., 'previous_branch_name': ..., 'head_commit_oid': ..., 'is_detached': ...}
+        # already: {'status': 'already_on_branch', 'branch_name': ..., 'head_commit_oid': ...}
+
+        message = ""
+        if result['status'] == 'success':
+            message = f"Switched to branch '{result['branch_name']}' successfully."
+        elif result['status'] == 'already_on_branch':
+            message = f"Already on branch '{result['branch_name']}'."
+        else: # Should not happen if core function adheres to spec
+            message = "Branch switch operation completed with an unknown status."
+
+
+        return BranchResponse(
+            status=result['status'], # 'success' or 'already_on_branch'
+            branch_name=result['branch_name'],
+            message=message,
+            head_commit_oid=result.get('head_commit_oid'),
+            previous_branch_name=result.get('previous_branch_name'),
+            is_detached=result.get('is_detached')
+        )
+    except CoreBranchNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except CoreRepositoryEmptyError as e: # e.g. switching in empty repo to non-existent branch
+        raise HTTPException(status_code=400, detail=str(e))
+    except CoreRepositoryNotFoundError:
+        raise HTTPException(status_code=500, detail="Repository configuration error.")
+    except CoreGitWriteError as e: # e.g. uncommitted changes, other checkout failures
+        # Check for specific conditions if needed, e.g. uncommitted changes might be 409 or 400
+        if "local changes overwrite" in str(e).lower() or "unstaged changes" in str(e).lower():
+            raise HTTPException(status_code=409, detail=f"Switch failed: {str(e)}") # 409 Conflict
+        raise HTTPException(status_code=400, detail=f"Failed to switch branch: {str(e)}") # 400 Bad Request for other git issues
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"An unexpected error occurred: {str(e)}")

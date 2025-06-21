@@ -303,6 +303,17 @@ from gitwrite_api.routers.repository import get_current_active_user as actual_re
 from gitwrite_api.models import SaveFileRequest # For the /save endpoint tests
 from http import HTTPStatus # For status codes, optional
 
+# Import models and exceptions for new tests
+from gitwrite_api.routers.repository import BranchCreateRequest, BranchSwitchRequest # BranchResponse is implicitly tested
+from gitwrite_core.exceptions import (
+    BranchAlreadyExistsError as CoreBranchAlreadyExistsError,
+    RepositoryEmptyError as CoreRepositoryEmptyError,
+    BranchNotFoundError as CoreBranchNotFoundError,
+    GitWriteError as CoreGitWriteError,
+    RepositoryNotFoundError as CoreRepositoryNotFoundError # Though API maps this to 500
+)
+
+
 @patch('gitwrite_api.routers.repository.list_branches')
 def test_list_branches_unauthorized_explicit_override(mock_list_branches):
     async def mock_raise_401():
@@ -434,3 +445,246 @@ def test_api_save_file_not_authenticated():
     assert response.status_code == HTTPStatus.UNAUTHORIZED # 401
     assert response.json()["detail"] == "Not authenticated for save"
     app.dependency_overrides = {} # Clear overrides
+
+
+# --- Tests for POST /repository/branches ---
+
+@patch('gitwrite_api.routers.repository.create_and_switch_branch')
+def test_api_create_branch_success(mock_core_create_branch):
+    mock_core_create_branch.return_value = {
+        'status': 'success', # Core returns 'success'
+        'branch_name': 'new-feature-branch',
+        'head_commit_oid': 'newcommitsha123'
+    }
+    app.dependency_overrides[actual_repo_auth_dependency] = mock_get_current_active_user
+
+    payload = BranchCreateRequest(branch_name="new-feature-branch")
+    response = client.post("/repository/branches", json=payload.model_dump())
+
+    assert response.status_code == HTTPStatus.CREATED # 201
+    data = response.json()
+    assert data["status"] == "created" # API specific status
+    assert data["branch_name"] == "new-feature-branch"
+    assert data["message"] == "Branch 'new-feature-branch' created and switched to successfully."
+    assert data["head_commit_oid"] == "newcommitsha123"
+    mock_core_create_branch.assert_called_once_with(
+        repo_path_str=MOCK_REPO_PATH,
+        branch_name="new-feature-branch"
+    )
+    app.dependency_overrides = {}
+
+@patch('gitwrite_api.routers.repository.create_and_switch_branch')
+def test_api_create_branch_already_exists(mock_core_create_branch):
+    mock_core_create_branch.side_effect = CoreBranchAlreadyExistsError("Branch 'existing-branch' already exists.")
+    app.dependency_overrides[actual_repo_auth_dependency] = mock_get_current_active_user
+
+    payload = BranchCreateRequest(branch_name="existing-branch")
+    response = client.post("/repository/branches", json=payload.model_dump())
+
+    assert response.status_code == HTTPStatus.CONFLICT # 409
+    assert response.json()["detail"] == "Branch 'existing-branch' already exists."
+    app.dependency_overrides = {}
+
+@patch('gitwrite_api.routers.repository.create_and_switch_branch')
+def test_api_create_branch_repo_empty(mock_core_create_branch):
+    mock_core_create_branch.side_effect = CoreRepositoryEmptyError("Cannot create branch: HEAD is unborn.")
+    app.dependency_overrides[actual_repo_auth_dependency] = mock_get_current_active_user
+
+    payload = BranchCreateRequest(branch_name="some-branch")
+    response = client.post("/repository/branches", json=payload.model_dump())
+
+    assert response.status_code == HTTPStatus.BAD_REQUEST # 400
+    assert response.json()["detail"] == "Cannot create branch: HEAD is unborn."
+    app.dependency_overrides = {}
+
+@patch('gitwrite_api.routers.repository.create_and_switch_branch')
+def test_api_create_branch_core_git_error(mock_core_create_branch):
+    mock_core_create_branch.side_effect = CoreGitWriteError("A generic git error occurred.")
+    app.dependency_overrides[actual_repo_auth_dependency] = mock_get_current_active_user
+
+    payload = BranchCreateRequest(branch_name="error-branch")
+    response = client.post("/repository/branches", json=payload.model_dump())
+
+    assert response.status_code == HTTPStatus.INTERNAL_SERVER_ERROR # 500
+    assert response.json()["detail"] == "Failed to create branch: A generic git error occurred."
+    app.dependency_overrides = {}
+
+@patch('gitwrite_api.routers.repository.create_and_switch_branch')
+def test_api_create_branch_repo_not_found_error(mock_core_create_branch):
+    # This core exception is mapped to 500 by the API endpoint
+    mock_core_create_branch.side_effect = CoreRepositoryNotFoundError("Simulated repo not found.")
+    app.dependency_overrides[actual_repo_auth_dependency] = mock_get_current_active_user
+
+    payload = BranchCreateRequest(branch_name="any-branch")
+    response = client.post("/repository/branches", json=payload.model_dump())
+
+    assert response.status_code == HTTPStatus.INTERNAL_SERVER_ERROR # 500
+    assert response.json()["detail"] == "Repository configuration error."
+    app.dependency_overrides = {}
+
+
+def test_api_create_branch_unauthorized():
+    app.dependency_overrides = {}
+    async def mock_raise_401_for_create_branch():
+        from fastapi import HTTPException
+        raise HTTPException(status_code=HTTPStatus.UNAUTHORIZED, detail="Auth failed for create branch")
+
+    app.dependency_overrides[actual_repo_auth_dependency] = mock_raise_401_for_create_branch
+    payload = BranchCreateRequest(branch_name="unauth-branch")
+    response = client.post("/repository/branches", json=payload.model_dump())
+
+    assert response.status_code == HTTPStatus.UNAUTHORIZED
+    assert response.json()["detail"] == "Auth failed for create branch"
+    app.dependency_overrides = {}
+
+def test_api_create_branch_invalid_payload():
+    app.dependency_overrides[actual_repo_auth_dependency] = mock_get_current_active_user
+    # branch_name is missing
+    response = client.post("/repository/branches", json={})
+    assert response.status_code == HTTPStatus.UNPROCESSABLE_ENTITY # 422
+
+    # branch_name is empty string (violates min_length=1 in Pydantic model)
+    response = client.post("/repository/branches", json={"branch_name": ""})
+    assert response.status_code == HTTPStatus.UNPROCESSABLE_ENTITY # 422
+    app.dependency_overrides = {}
+
+# --- Tests for PUT /repository/branch ---
+
+@patch('gitwrite_api.routers.repository.switch_to_branch')
+def test_api_switch_branch_success(mock_core_switch_branch):
+    mock_core_switch_branch.return_value = {
+        'status': 'success',
+        'branch_name': 'target-branch',
+        'previous_branch_name': 'main',
+        'head_commit_oid': 'targetcommitsha',
+        'is_detached': False
+    }
+    app.dependency_overrides[actual_repo_auth_dependency] = mock_get_current_active_user
+
+    payload = BranchSwitchRequest(branch_name="target-branch")
+    response = client.put("/repository/branch", json=payload.model_dump())
+
+    assert response.status_code == HTTPStatus.OK # 200
+    data = response.json()
+    assert data["status"] == "success"
+    assert data["branch_name"] == "target-branch"
+    assert data["message"] == "Switched to branch 'target-branch' successfully."
+    assert data["head_commit_oid"] == "targetcommitsha"
+    assert data["previous_branch_name"] == "main"
+    assert data["is_detached"] is False
+    mock_core_switch_branch.assert_called_once_with(
+        repo_path_str=MOCK_REPO_PATH,
+        branch_name="target-branch"
+    )
+    app.dependency_overrides = {}
+
+@patch('gitwrite_api.routers.repository.switch_to_branch')
+def test_api_switch_branch_already_on_branch(mock_core_switch_branch):
+    mock_core_switch_branch.return_value = {
+        'status': 'already_on_branch',
+        'branch_name': 'current-branch',
+        'head_commit_oid': 'currentcommitsha'
+    }
+    app.dependency_overrides[actual_repo_auth_dependency] = mock_get_current_active_user
+
+    payload = BranchSwitchRequest(branch_name="current-branch")
+    response = client.put("/repository/branch", json=payload.model_dump())
+
+    assert response.status_code == HTTPStatus.OK # 200
+    data = response.json()
+    assert data["status"] == "already_on_branch"
+    assert data["branch_name"] == "current-branch"
+    assert data["message"] == "Already on branch 'current-branch'."
+    assert data["head_commit_oid"] == "currentcommitsha"
+    app.dependency_overrides = {}
+
+@patch('gitwrite_api.routers.repository.switch_to_branch')
+def test_api_switch_branch_not_found(mock_core_switch_branch):
+    mock_core_switch_branch.side_effect = CoreBranchNotFoundError("Branch 'non-existent-branch' not found.")
+    app.dependency_overrides[actual_repo_auth_dependency] = mock_get_current_active_user
+
+    payload = BranchSwitchRequest(branch_name="non-existent-branch")
+    response = client.put("/repository/branch", json=payload.model_dump())
+
+    assert response.status_code == HTTPStatus.NOT_FOUND # 404
+    assert response.json()["detail"] == "Branch 'non-existent-branch' not found."
+    app.dependency_overrides = {}
+
+@patch('gitwrite_api.routers.repository.switch_to_branch')
+def test_api_switch_branch_repo_empty(mock_core_switch_branch):
+    mock_core_switch_branch.side_effect = CoreRepositoryEmptyError("Cannot switch branch in an empty repository.")
+    app.dependency_overrides[actual_repo_auth_dependency] = mock_get_current_active_user
+
+    payload = BranchSwitchRequest(branch_name="any-branch")
+    response = client.put("/repository/branch", json=payload.model_dump())
+
+    assert response.status_code == HTTPStatus.BAD_REQUEST # 400
+    assert response.json()["detail"] == "Cannot switch branch in an empty repository."
+    app.dependency_overrides = {}
+
+@patch('gitwrite_api.routers.repository.switch_to_branch')
+def test_api_switch_branch_uncommitted_changes(mock_core_switch_branch):
+    # This specific error message from core should result in a 409
+    error_message = "Checkout failed: Your local changes overwrite files."
+    mock_core_switch_branch.side_effect = CoreGitWriteError(error_message)
+    app.dependency_overrides[actual_repo_auth_dependency] = mock_get_current_active_user
+
+    payload = BranchSwitchRequest(branch_name="conflicting-branch")
+    response = client.put("/repository/branch", json=payload.model_dump())
+
+    assert response.status_code == HTTPStatus.CONFLICT # 409
+    assert response.json()["detail"] == f"Switch failed: {error_message}"
+    app.dependency_overrides = {}
+
+@patch('gitwrite_api.routers.repository.switch_to_branch')
+def test_api_switch_branch_generic_git_error(mock_core_switch_branch):
+    # Other CoreGitWriteErrors should result in 400
+    error_message = "Some other git operation failure."
+    mock_core_switch_branch.side_effect = CoreGitWriteError(error_message)
+    app.dependency_overrides[actual_repo_auth_dependency] = mock_get_current_active_user
+
+    payload = BranchSwitchRequest(branch_name="error-branch")
+    response = client.put("/repository/branch", json=payload.model_dump())
+
+    assert response.status_code == HTTPStatus.BAD_REQUEST # 400
+    assert response.json()["detail"] == f"Failed to switch branch: {error_message}"
+    app.dependency_overrides = {}
+
+
+@patch('gitwrite_api.routers.repository.switch_to_branch')
+def test_api_switch_branch_repo_not_found_error(mock_core_switch_branch):
+    mock_core_switch_branch.side_effect = CoreRepositoryNotFoundError("Simulated repo not found for switch.")
+    app.dependency_overrides[actual_repo_auth_dependency] = mock_get_current_active_user
+
+    payload = BranchSwitchRequest(branch_name="any-branch")
+    response = client.put("/repository/branch", json=payload.model_dump())
+
+    assert response.status_code == HTTPStatus.INTERNAL_SERVER_ERROR # 500
+    assert response.json()["detail"] == "Repository configuration error."
+    app.dependency_overrides = {}
+
+
+def test_api_switch_branch_unauthorized():
+    app.dependency_overrides = {}
+    async def mock_raise_401_for_switch_branch():
+        from fastapi import HTTPException
+        raise HTTPException(status_code=HTTPStatus.UNAUTHORIZED, detail="Auth failed for switch branch")
+
+    app.dependency_overrides[actual_repo_auth_dependency] = mock_raise_401_for_switch_branch
+    payload = BranchSwitchRequest(branch_name="unauth-branch-switch")
+    response = client.put("/repository/branch", json=payload.model_dump())
+
+    assert response.status_code == HTTPStatus.UNAUTHORIZED
+    assert response.json()["detail"] == "Auth failed for switch branch"
+    app.dependency_overrides = {}
+
+def test_api_switch_branch_invalid_payload():
+    app.dependency_overrides[actual_repo_auth_dependency] = mock_get_current_active_user
+    # branch_name is missing
+    response = client.put("/repository/branch", json={})
+    assert response.status_code == HTTPStatus.UNPROCESSABLE_ENTITY # 422
+
+    # branch_name is empty string
+    response = client.put("/repository/branch", json={"branch_name": ""})
+    assert response.status_code == HTTPStatus.UNPROCESSABLE_ENTITY # 422
+    app.dependency_overrides = {}

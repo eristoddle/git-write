@@ -22,3 +22,59 @@ None.
 
 **Next Steps (Optional):**
 Proceed with Task 6.1: Branching Endpoints as per the new Implementation Plan.
+
+---
+**Agent:** Jules (Implementation Agent)
+**Task Reference:** Phase 6, Task 6.1: Branching Endpoints
+
+**Summary:**
+Implemented two new API endpoints for repository branch management: `POST /repository/branches` for creating and switching to a new branch, and `PUT /repository/branch` for switching to an existing branch. Added comprehensive unit tests for both endpoints.
+
+**Details:**
+- **`gitwrite_api/routers/repository.py` modifications:**
+    - Added Pydantic models: `BranchCreateRequest`, `BranchSwitchRequest`, `BranchResponse`.
+    - Implemented `POST /repository/branches`:
+        - Takes `branch_name` in request body.
+        - Calls `gitwrite_core.branching.create_and_switch_branch`.
+        - Handles success (201 Created) and errors (409 Conflict for existing branch, 400 Bad Request for empty repo/unborn HEAD, 500 for other core errors).
+        - Protected by authentication dependency.
+    - Implemented `PUT /repository/branch`:
+        - Takes `branch_name` in request body.
+        - Calls `gitwrite_core.branching.switch_to_branch`.
+        - Handles success (200 OK for switch, 200 OK for already on branch) and errors (404 Not Found for non-existent branch, 400/409 for core errors like uncommitted changes, 500 for other core errors).
+        - Protected by authentication dependency.
+- **`tests/test_api_repository.py` modifications:**
+    - Added unit tests for `POST /repository/branches`:
+        - Test successful creation (201).
+        - Test `BranchAlreadyExistsError` (409).
+        - Test `RepositoryEmptyError` (400).
+        - Test generic `GitWriteError` (500).
+        - Test `RepositoryNotFoundError` (500).
+        - Test unauthorized access (401).
+        - Test invalid payload (422).
+    - Added unit tests for `PUT /repository/branch`:
+        - Test successful switch (200).
+        - Test "already on branch" (200).
+        - Test `BranchNotFoundError` (404).
+        - Test `RepositoryEmptyError` (400).
+        - Test `GitWriteError` (uncommitted changes -> 409, other -> 400).
+        - Test `RepositoryNotFoundError` (500).
+        - Test unauthorized access (401).
+        - Test invalid payload (422).
+    - All new tests use mocking for core functions and authentication.
+- **`Implementation_Plan.md` updated:**
+    - Marked Task 6.1 as "Completed".
+
+**Output/Result:**
+- Modified file: `gitwrite_api/routers/repository.py`
+- Modified file: `tests/test_api_repository.py`
+- Modified file: `Implementation_Plan.md`
+- This log entry in `Memory_Bank.md`.
+
+**Status:** Completed
+
+**Issues/Blockers:**
+None.
+
+**Next Steps (Optional):**
+Proceed with Task 6.2: Merge and Compare Endpoints as per the Implementation Plan.
