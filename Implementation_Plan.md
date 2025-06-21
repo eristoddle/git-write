@@ -50,7 +50,7 @@ Status: **Completed**
 
 ### Task 6.5 - Agent_API_Dev: Ignore Management Endpoints
 Objective: Expose `.gitignore` management functionality.
-Status: **Pending**
+Status: **Completed**
 
 1.  Create a `GET /repository/ignore` endpoint that calls `gitwrite_core.repository.list_gitignore_patterns`.
 2.  Create a `POST /repository/ignore` endpoint that takes a `pattern` and calls `gitwrite_core.repository.add_pattern_to_gitignore`.

@@ -207,6 +207,210 @@ def test_list_commits_success(mock_list_commits):
     )
     app.dependency_overrides = {}
 
+
+# --- Tests for GET /repository/ignore ---
+
+@patch('gitwrite_api.routers.repository.core_list_gitignore_patterns')
+def test_api_list_ignore_patterns_success(mock_core_list_patterns):
+    mock_core_list_patterns.return_value = {
+        "status": "success",
+        "patterns": ["*.log", "build/", "__pycache__/"],
+        "message": "Successfully retrieved patterns."
+    }
+    app.dependency_overrides[actual_repo_auth_dependency] = mock_get_current_active_user
+    response = client.get("/repository/ignore")
+
+    assert response.status_code == HTTPStatus.OK
+    data = response.json()
+    assert data["status"] == "success"
+    assert data["patterns"] == ["*.log", "build/", "__pycache__/"]
+    assert data["message"] == "Successfully retrieved patterns."
+    mock_core_list_patterns.assert_called_once_with(repo_path_str=MOCK_REPO_PATH)
+    app.dependency_overrides = {}
+
+@patch('gitwrite_api.routers.repository.core_list_gitignore_patterns')
+def test_api_list_ignore_patterns_not_found(mock_core_list_patterns):
+    mock_core_list_patterns.return_value = {
+        "status": "not_found",
+        "patterns": [],
+        "message": ".gitignore file not found."
+    }
+    app.dependency_overrides[actual_repo_auth_dependency] = mock_get_current_active_user
+    response = client.get("/repository/ignore")
+
+    assert response.status_code == HTTPStatus.OK # Endpoint handles 'not_found' as 200
+    data = response.json()
+    assert data["status"] == "not_found"
+    assert data["patterns"] == []
+    assert data["message"] == ".gitignore file not found."
+    app.dependency_overrides = {}
+
+@patch('gitwrite_api.routers.repository.core_list_gitignore_patterns')
+def test_api_list_ignore_patterns_empty(mock_core_list_patterns):
+    mock_core_list_patterns.return_value = {
+        "status": "empty",
+        "patterns": [],
+        "message": ".gitignore is empty."
+    }
+    app.dependency_overrides[actual_repo_auth_dependency] = mock_get_current_active_user
+    response = client.get("/repository/ignore")
+
+    assert response.status_code == HTTPStatus.OK # Endpoint handles 'empty' as 200
+    data = response.json()
+    assert data["status"] == "empty"
+    assert data["patterns"] == []
+    assert data["message"] == ".gitignore is empty."
+    app.dependency_overrides = {}
+
+@patch('gitwrite_api.routers.repository.core_list_gitignore_patterns')
+def test_api_list_ignore_patterns_core_error(mock_core_list_patterns):
+    mock_core_list_patterns.return_value = {
+        "status": "error",
+        "patterns": [],
+        "message": "Error reading .gitignore due to permissions."
+    }
+    app.dependency_overrides[actual_repo_auth_dependency] = mock_get_current_active_user
+    response = client.get("/repository/ignore")
+
+    assert response.status_code == HTTPStatus.INTERNAL_SERVER_ERROR # 500
+    data = response.json()
+    assert data["detail"] == "Error reading .gitignore due to permissions."
+    app.dependency_overrides = {}
+
+def test_api_list_ignore_patterns_unauthorized():
+    app.dependency_overrides = {}
+    async def mock_raise_401_for_ignore_get():
+        from fastapi import HTTPException
+        raise HTTPException(status_code=HTTPStatus.UNAUTHORIZED, detail="Auth failed for GET ignore")
+    app.dependency_overrides[actual_repo_auth_dependency] = mock_raise_401_for_ignore_get
+
+    response = client.get("/repository/ignore")
+    assert response.status_code == HTTPStatus.UNAUTHORIZED
+    assert response.json()["detail"] == "Auth failed for GET ignore"
+    app.dependency_overrides = {}
+
+
+# --- Tests for POST /repository/ignore ---
+
+from gitwrite_api.routers.repository import IgnorePatternRequest # For POST ignore tests
+
+@patch('gitwrite_api.routers.repository.core_add_pattern_to_gitignore')
+def test_api_add_ignore_pattern_success(mock_core_add_pattern):
+    mock_core_add_pattern.return_value = {
+        "status": "success",
+        "message": "Pattern '*.tmp' added to .gitignore."
+    }
+    app.dependency_overrides[actual_repo_auth_dependency] = mock_get_current_active_user
+    payload = IgnorePatternRequest(pattern="*.tmp")
+    response = client.post("/repository/ignore", json=payload.model_dump())
+
+    assert response.status_code == HTTPStatus.OK # 200 OK for successful add
+    data = response.json()
+    assert data["status"] == "success"
+    assert data["message"] == "Pattern '*.tmp' added to .gitignore."
+    mock_core_add_pattern.assert_called_once_with(
+        repo_path_str=MOCK_REPO_PATH,
+        pattern="*.tmp"
+    )
+    app.dependency_overrides = {}
+
+@patch('gitwrite_api.routers.repository.core_add_pattern_to_gitignore')
+def test_api_add_ignore_pattern_already_exists(mock_core_add_pattern):
+    mock_core_add_pattern.return_value = {
+        "status": "exists",
+        "message": "Pattern 'dist/' already exists in .gitignore."
+    }
+    app.dependency_overrides[actual_repo_auth_dependency] = mock_get_current_active_user
+    payload = IgnorePatternRequest(pattern="dist/")
+    response = client.post("/repository/ignore", json=payload.model_dump())
+
+    assert response.status_code == HTTPStatus.CONFLICT # 409
+    data = response.json()
+    assert data["detail"] == "Pattern 'dist/' already exists in .gitignore."
+    app.dependency_overrides = {}
+
+@patch('gitwrite_api.routers.repository.core_add_pattern_to_gitignore')
+def test_api_add_ignore_pattern_core_error_empty_pattern(mock_core_add_pattern):
+    # This case tests if core itself returns error for empty pattern,
+    # though API endpoint also has a check.
+    mock_core_add_pattern.return_value = {
+        "status": "error",
+        "message": "Pattern cannot be empty."
+    }
+    app.dependency_overrides[actual_repo_auth_dependency] = mock_get_current_active_user
+    # Sending empty pattern via API, Pydantic should catch it first if min_length=1
+    # If Pydantic allows it (e.g. min_length=0 or not set), then this core error check is relevant.
+    # Current Pydantic model IgnorePatternRequest has min_length=1, so this path might not be hit from API
+    # unless Pydantic model is changed or core is called directly.
+    # For this test, we'll assume the pattern somehow gets to the core as empty.
+    # To test the API's specific empty string check before core call:
+    # payload = IgnorePatternRequest(pattern="   ") # spaces only, strip makes it empty
+    # response = client.post("/repository/ignore", json=payload.model_dump())
+    # assert response.status_code == HTTPStatus.BAD_REQUEST
+    # assert response.json()["detail"] == "Pattern cannot be empty."
+
+    # Test core returning this error (assuming Pydantic check was bypassed or different)
+    payload = IgnorePatternRequest(pattern="non-empty-for-pydantic-but-core-says-empty")
+    response = client.post("/repository/ignore", json=payload.model_dump())
+    assert response.status_code == HTTPStatus.BAD_REQUEST # 400 due to "Pattern cannot be empty" in message
+    data = response.json()
+    assert data["detail"] == "Pattern cannot be empty."
+    app.dependency_overrides = {}
+
+
+def test_api_add_ignore_pattern_api_empty_pattern_check():
+    # Test API's own check for empty pattern after strip()
+    app.dependency_overrides[actual_repo_auth_dependency] = mock_get_current_active_user
+    payload = IgnorePatternRequest(pattern="   ") # Will become empty after strip()
+    response = client.post("/repository/ignore", json=payload.model_dump())
+    assert response.status_code == HTTPStatus.BAD_REQUEST # 400
+    assert response.json()["detail"] == "Pattern cannot be empty."
+    app.dependency_overrides = {}
+
+
+@patch('gitwrite_api.routers.repository.core_add_pattern_to_gitignore')
+def test_api_add_ignore_pattern_core_io_error(mock_core_add_pattern):
+    mock_core_add_pattern.return_value = {
+        "status": "error",
+        "message": "Error writing to .gitignore: Permission denied."
+    }
+    app.dependency_overrides[actual_repo_auth_dependency] = mock_get_current_active_user
+    payload = IgnorePatternRequest(pattern="*.lock")
+    response = client.post("/repository/ignore", json=payload.model_dump())
+
+    assert response.status_code == HTTPStatus.INTERNAL_SERVER_ERROR # 500
+    data = response.json()
+    assert data["detail"] == "Error writing to .gitignore: Permission denied."
+    app.dependency_overrides = {}
+
+def test_api_add_ignore_pattern_unauthorized():
+    app.dependency_overrides = {}
+    async def mock_raise_401_for_ignore_post():
+        from fastapi import HTTPException
+        raise HTTPException(status_code=HTTPStatus.UNAUTHORIZED, detail="Auth failed for POST ignore")
+    app.dependency_overrides[actual_repo_auth_dependency] = mock_raise_401_for_ignore_post
+
+    payload = IgnorePatternRequest(pattern="secret/")
+    response = client.post("/repository/ignore", json=payload.model_dump())
+    assert response.status_code == HTTPStatus.UNAUTHORIZED
+    assert response.json()["detail"] == "Auth failed for POST ignore"
+    app.dependency_overrides = {}
+
+def test_api_add_ignore_pattern_invalid_payload():
+    app.dependency_overrides[actual_repo_auth_dependency] = mock_get_current_active_user
+    # 'pattern' field missing
+    response = client.post("/repository/ignore", json={})
+    assert response.status_code == HTTPStatus.UNPROCESSABLE_ENTITY # 422
+    data = response.json()["detail"]
+    assert any(item["loc"] == ["body", "pattern"] and item["type"] == "missing" for item in data)
+
+    # 'pattern' field is empty string (violates Pydantic min_length=1)
+    response = client.post("/repository/ignore", json={"pattern": ""})
+    assert response.status_code == HTTPStatus.UNPROCESSABLE_ENTITY # 422
+    data = response.json()["detail"]
+    assert any(item["loc"] == ["body", "pattern"] and "min_length" in item["msg"].lower() for item in data)
+    app.dependency_overrides = {}
+
 @patch('gitwrite_api.routers.repository.list_commits')
 def test_list_commits_with_params(mock_list_commits):
     mock_list_commits.return_value = {

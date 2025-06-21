@@ -7,7 +7,11 @@ import datetime # For commit date serialization
 PLACEHOLDER_REPO_PATH = "/path/to/user/repo"
 
 # Import core functions
-from gitwrite_core.repository import list_branches, list_tags, list_commits, save_and_commit_file
+from gitwrite_core.repository import (
+    list_branches, list_tags, list_commits, save_and_commit_file,
+    list_gitignore_patterns as core_list_gitignore_patterns,
+    add_pattern_to_gitignore as core_add_pattern_to_gitignore
+)
 
 # Import security dependency (assuming path based on project structure)
 # Adjust the import path if your security module is located differently.
@@ -179,6 +183,19 @@ class TagCreateResponse(BaseModel):
     tag_type: str = Field(..., description="Type of the tag created ('annotated' or 'lightweight').")
     target_commit_oid: str = Field(..., description="The OID of the commit that the tag points to.")
     message: Optional[str] = Field(None, description="The message of the tag, if it's an annotated tag.")
+
+# Ignore Management Endpoint Models
+class IgnorePatternRequest(BaseModel):
+    pattern: str = Field(..., min_length=1, description="The .gitignore pattern to add.")
+
+class IgnoreListResponse(BaseModel):
+    status: str = Field(..., description="Outcome of the list operation.")
+    patterns: List[str] = Field(..., description="List of patterns from .gitignore.")
+    message: str = Field(..., description="Detailed message about the operation.")
+
+class IgnoreAddResponse(BaseModel):
+    status: str = Field(..., description="Outcome of the add pattern operation.")
+    message: str = Field(..., description="Detailed message about the operation.")
 
 
 # --- Helper for error handling ---
@@ -726,3 +743,94 @@ async def api_create_tag(
         # This could include the pygit2.Signature creation failure if not handled more specifically,
         # or other unforeseen issues.
         raise HTTPException(status_code=500, detail=f"An unexpected error occurred during tag creation: {str(e)}")
+
+
+# --- Ignore Management Endpoints ---
+
+@router.get("/ignore", response_model=IgnoreListResponse)
+async def api_list_ignore_patterns(current_user: User = Depends(get_current_active_user)):
+    """
+    Lists all patterns in the .gitignore file of the repository.
+    Requires authentication.
+    """
+    repo_path = PLACEHOLDER_REPO_PATH
+    try:
+        result = core_list_gitignore_patterns(repo_path_str=repo_path)
+        # Core function returns:
+        # {'status': 'success', 'patterns': patterns_list, 'message': '...'}
+        # {'status': 'not_found', 'patterns': [], 'message': '.gitignore file not found.'}
+        # {'status': 'empty', 'patterns': [], 'message': '.gitignore is empty.'}
+        # {'status': 'error', 'patterns': [], 'message': 'Error reading .gitignore: ...'}
+
+        if result['status'] == 'success':
+            return IgnoreListResponse(
+                status=result['status'],
+                patterns=result['patterns'],
+                message=result['message']
+            )
+        elif result['status'] == 'not_found' or result['status'] == 'empty':
+            # These are not errors, but valid states returning empty patterns.
+            return IgnoreListResponse(
+                status=result['status'],
+                patterns=[], # Ensure patterns is empty list as per core
+                message=result['message']
+            )
+        elif result['status'] == 'error':
+            # Core function encountered an error (e.g., I/O error reading file)
+            raise HTTPException(status_code=500, detail=result.get('message', 'Failed to read .gitignore file.'))
+        else:
+            # Should not happen if core adheres to its spec
+            raise HTTPException(status_code=500, detail="Unknown error from core ignore listing.")
+
+    except CoreRepositoryNotFoundError: # Should not happen with placeholder, but good practice
+        raise HTTPException(status_code=500, detail="Repository configuration error.")
+    except Exception as e: # Fallback for unexpected errors
+        raise HTTPException(status_code=500, detail=f"An unexpected error occurred: {str(e)}")
+
+@router.post("/ignore", response_model=IgnoreAddResponse)
+async def api_add_ignore_pattern(
+    request_data: IgnorePatternRequest,
+    current_user: User = Depends(get_current_active_user)
+):
+    """
+    Adds a new pattern to the .gitignore file in the repository.
+    Requires authentication.
+    """
+    repo_path = PLACEHOLDER_REPO_PATH
+    pattern = request_data.pattern.strip() # Ensure leading/trailing whitespace is removed
+
+    if not pattern: # Double check, though Pydantic model has min_length=1
+        raise HTTPException(status_code=400, detail="Pattern cannot be empty.")
+
+    try:
+        result = core_add_pattern_to_gitignore(
+            repo_path_str=repo_path,
+            pattern=pattern
+        )
+        # Core function returns:
+        # {'status': 'success', 'message': 'Pattern added.'}
+        # {'status': 'exists', 'message': 'Pattern already exists.'}
+        # {'status': 'error', 'message': 'Error writing to .gitignore: ...'}
+        # {'status': 'error', 'message': 'Pattern cannot be empty.'} (handled above, but core might also return)
+
+        if result['status'] == 'success':
+            return IgnoreAddResponse(
+                status=result['status'],
+                message=result['message']
+            )
+        elif result['status'] == 'exists':
+            raise HTTPException(status_code=409, detail=result.get('message', 'Pattern already exists in .gitignore.'))
+        elif result['status'] == 'error':
+            # Distinguish between client error (empty pattern) and server error (I/O)
+            if "Pattern cannot be empty" in result.get('message', ''):
+                raise HTTPException(status_code=400, detail=result.get('message'))
+            # Other errors are likely server-side I/O issues or unexpected problems
+            raise HTTPException(status_code=500, detail=result.get('message', 'Failed to add pattern to .gitignore.'))
+        else:
+            # Should not happen
+            raise HTTPException(status_code=500, detail="Unknown error from core ignore add operation.")
+
+    except CoreRepositoryNotFoundError: # Should not happen with placeholder
+        raise HTTPException(status_code=500, detail="Repository configuration error.")
+    except Exception as e: # Fallback for unexpected errors
+        raise HTTPException(status_code=500, detail=f"An unexpected error occurred: {str(e)}")

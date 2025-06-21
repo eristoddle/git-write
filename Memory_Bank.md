@@ -135,6 +135,65 @@ Proceed with Task 6.5: Ignore Management Endpoints as per the Implementation Pla
 
 ---
 **Agent:** Jules (Implementation Agent)
+**Task Reference:** Phase 6, Task 6.5: Ignore Management Endpoints
+
+**Summary:**
+Implemented API endpoints for managing `.gitignore` files: `GET /repository/ignore` to list patterns and `POST /repository/ignore` to add new patterns. Added comprehensive unit tests for both functionalities.
+
+**Details:**
+- **`gitwrite_api/routers/repository.py` modifications:**
+    - Added Pydantic models:
+        - `IgnorePatternRequest` (for `pattern`)
+        - `IgnoreListResponse` (for `status`, `patterns`, `message`)
+        - `IgnoreAddResponse` (for `status`, `message`)
+    - Implemented `GET /repository/ignore`:
+        - Calls `gitwrite_core.repository.list_gitignore_patterns`.
+        - Returns `200 OK` with patterns list or appropriate status/message if `.gitignore` is not found or empty.
+        - Maps core `error` status to `500 Internal Server Error`.
+        - Protected by authentication.
+    - Implemented `POST /repository/ignore`:
+        - Takes `IgnorePatternRequest` data in the request body.
+        - Calls `gitwrite_core.repository.add_pattern_to_gitignore`.
+        - Returns `200 OK` on successful addition.
+        - Maps core `exists` status to `409 Conflict`.
+        - Maps core `error` (e.g., empty pattern from core, I/O error) to `400 Bad Request` or `500 Internal Server Error`.
+        - Includes an API-level check for empty patterns after stripping whitespace, returning `400 Bad Request`.
+        - Protected by authentication.
+    - Imported `core_list_gitignore_patterns` and `core_add_pattern_to_gitignore` from `gitwrite_core.repository`.
+- **`tests/test_api_repository.py` modifications:**
+    - Added unit tests for `GET /repository/ignore`:
+        - Tested successful retrieval of patterns (200 OK).
+        - Tested `.gitignore` not found (200 OK, empty list).
+        - Tested empty `.gitignore` (200 OK, empty list).
+        - Tested core function error (500).
+        - Tested unauthorized access (401).
+    - Added unit tests for `POST /repository/ignore`:
+        - Tested successful pattern addition (200 OK).
+        - Tested adding an existing pattern (409).
+        - Tested API-level check for empty/whitespace-only pattern (400).
+        - Tested core function error for empty pattern (if Pydantic check somehow bypassed) (400).
+        - Tested core I/O error (500).
+        - Tested unauthorized access (401).
+        - Tested invalid request payload (e.g., missing pattern, wrong type) (422).
+- **`Implementation_Plan.md` updated:**
+    - Marked Task 6.5 as "Completed".
+
+**Output/Result:**
+- Modified file: `gitwrite_api/routers/repository.py`
+- Modified file: `tests/test_api_repository.py`
+- Modified file: `Implementation_Plan.md`
+- This log entry in `Memory_Bank.md`.
+
+**Status:** Completed
+
+**Issues/Blockers:**
+None.
+
+**Next Steps (Optional):**
+Proceed with Task 6.6: Finalize Multi-File Upload Logic as per the Implementation Plan.
+
+---
+**Agent:** Jules (Implementation Agent)
 **Task Reference:** Phase 6, Task 6.3: Revert and Sync Endpoints
 
 **Summary:**
