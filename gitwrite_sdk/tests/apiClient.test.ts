@@ -6,7 +6,9 @@ import {
   RepositoryCommitsResponse,
   CommitDetail,
   ListCommitsParams,
-} from '../src/types'; // Import new types for testing
+  SaveFileRequestPayload,
+  SaveFileResponseData,
+} from '../src/types';
 
 // Mock axios
 jest.mock('axios');
@@ -325,6 +327,49 @@ describe('GitWriteClient', () => {
         const error = new Error('API Error for listCommits');
         mockRequest.mockRejectedValueOnce(error);
         await expect(client.listCommits()).rejects.toThrow('API Error for listCommits');
+      });
+    });
+
+    describe('save', () => {
+      const filePath = 'test.txt';
+      const content = 'Hello, world!';
+      const commitMessage = 'Add test.txt';
+
+      const mockRequestPayload: SaveFileRequestPayload = {
+        file_path: filePath,
+        content: content,
+        commit_message: commitMessage,
+      };
+
+      it('should call POST /repository/save with correct payload and return data', async () => {
+        const mockResponseData: SaveFileResponseData = {
+          status: 'success',
+          message: 'File saved successfully',
+          commit_id: 'newcommitsha123',
+        };
+        // The client.post method uses clientAxiosInstance.request
+        mockRequest.mockResolvedValueOnce({ data: mockResponseData });
+
+        const result = await client.save(filePath, content, commitMessage);
+
+        expect(mockRequest).toHaveBeenCalledWith({
+          method: 'POST',
+          url: '/repository/save',
+          data: mockRequestPayload,
+        });
+        expect(result).toEqual(mockResponseData);
+      });
+
+      it('should throw if API call fails for save', async () => {
+        const error = new Error('API Error for save');
+        mockRequest.mockRejectedValueOnce(error);
+
+        await expect(client.save(filePath, content, commitMessage)).rejects.toThrow('API Error for save');
+        expect(mockRequest).toHaveBeenCalledWith({
+          method: 'POST',
+          url: '/repository/save',
+          data: mockRequestPayload,
+        });
       });
     });
   });

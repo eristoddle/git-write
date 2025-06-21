@@ -73,7 +73,7 @@ Status: **Completed**
 
 ### Task 6.4 - Agent_SDK_Dev: Implement `save` Method
 Objective: Create an SDK method for the direct save functionality.
-Status: **Pending**
+Status: **Completed**
 
 1.  Implement a `repository.save(filePath, content, commitMessage)` method.
 2.  This method will call the `POST /repository/save` endpoint.

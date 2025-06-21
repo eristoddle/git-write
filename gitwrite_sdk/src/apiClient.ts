@@ -4,7 +4,9 @@ import {
   RepositoryTagsResponse,
   RepositoryCommitsResponse,
   ListCommitsParams,
-} from './types'; // Import the new types
+  SaveFileRequestPayload,
+  SaveFileResponseData,
+} from './types';
 
 // Define a type for the token, which can be a string or null
 export type AuthToken = string | null;
@@ -157,6 +159,26 @@ export class GitWriteClient {
     const response = await this.get<RepositoryCommitsResponse>('/repository/commits', {
       params: queryParams,
     });
+    return response.data;
+  }
+
+  /**
+   * Saves a file to the repository and commits the change.
+   * Corresponds to API endpoint: POST /repository/save
+   * @param filePath The relative path of the file in the repository.
+   * @param content The content to be saved to the file.
+   * @param commitMessage The commit message for the save operation.
+   */
+  public async save(filePath: string, content: string, commitMessage: string): Promise<SaveFileResponseData> {
+    const payload: SaveFileRequestPayload = {
+      file_path: filePath,
+      content: content,
+      commit_message: commitMessage,
+    };
+    const response = await this.post<SaveFileResponseData, AxiosResponse<SaveFileResponseData>, SaveFileRequestPayload>(
+      '/repository/save',
+      payload
+    );
     return response.data;
   }
 }

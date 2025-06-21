@@ -11,6 +11,8 @@ export type {
   RepositoryCommitsResponse,
   ListCommitsParams,
   ApiErrorResponse,
+  SaveFileRequestPayload,
+  SaveFileResponseData,
 } from './types';
 
 // You can also export other modules or types here as the SDK grows

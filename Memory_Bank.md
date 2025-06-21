@@ -311,3 +311,42 @@ None remaining for this task. Initial test execution issues were resolved.
 
 **Next Steps (Optional):**
 Proceed with Phase 6, Task 6.4: Implement `save` Method.
+---
+**Agent:** Jules (Implementation Agent)
+**Task Reference:** Phase 6, Task 6.4: Implement `save` Method
+
+**Summary:**
+Implemented the `save(filePath, content, commitMessage)` method in the TypeScript SDK's `GitWriteClient`. This method allows for direct saving of file content to the repository via the `POST /repository/save` API endpoint.
+
+**Details:**
+- **TypeScript Interfaces Defined (`gitwrite_sdk/src/types.ts`)**:
+    - Added `SaveFileRequestPayload` for the request body: `{ file_path: string; content: string; commit_message: string; }`.
+    - Added `SaveFileResponseData` for the API response: `{ status: string; message: string; commit_id?: string; }`.
+- **`GitWriteClient` Method Implemented (`gitwrite_sdk/src/apiClient.ts`)**:
+    - Added `async save(filePath: string, content: string, commitMessage: string): Promise<SaveFileResponseData>`.
+    - The method constructs the payload and uses the client's `post` helper to call `/repository/save`.
+- **Exports Updated (`gitwrite_sdk/src/index.ts`)**:
+    - Exported `SaveFileRequestPayload` and `SaveFileResponseData` types.
+- **Unit Tests Added (`gitwrite_sdk/tests/apiClient.test.ts`)**:
+    - Added a new test suite for the `save` method.
+    - Tests cover successful save operations, verifying the correct payload is sent and the expected response is returned.
+    - Tests also cover API error handling during the save operation.
+    - All SDK unit tests (23 total) are passing.
+- **Troubleshooting**:
+    - Encountered a "Preset ts-jest not found" error during `npm test`. Resolved by removing `package-lock.json`, `node_modules/`, and running `npm install` in the `gitwrite_sdk` directory.
+
+**Output/Result:**
+- Modified file: `gitwrite_sdk/src/types.ts` (added new interfaces)
+- Modified file: `gitwrite_sdk/src/apiClient.ts` (added `save` method and imported new types)
+- Modified file: `gitwrite_sdk/src/index.ts` (exported new types)
+- Modified file: `gitwrite_sdk/tests/apiClient.test.ts` (added tests for `save` method and imported new types)
+- Modified file: `Implementation_Plan.md` (Task 6.4 status updated to Completed)
+- This log entry in `Memory_Bank.md`.
+
+**Status:** Completed
+
+**Issues/Blockers:**
+None remaining for this task. Test execution issues were resolved by reinstalling dependencies.
+
+**Next Steps (Optional):**
+Proceed with Phase 6, Task 6.5: Implement Multi-Part Upload Methods.

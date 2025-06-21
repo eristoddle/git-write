@@ -72,3 +72,23 @@ export interface ListCommitsParams {
 export interface ApiErrorResponse {
   detail?: string | { msg: string; type: string }[]; // FastAPI error format
 }
+
+/**
+ * Represents the payload for the save file request.
+ * Based on `SaveFileRequest` Pydantic model in the API.
+ */
+export interface SaveFileRequestPayload {
+  file_path: string;
+  content: string;
+  commit_message: string;
+}
+
+/**
+ * Represents the response data for the save file operation.
+ * Based on `SaveFileResponse` Pydantic model in the API.
+ */
+export interface SaveFileResponseData {
+  status: string;
+  message: string;
+  commit_id?: string; // Optional, as it might not be present on error
+}
