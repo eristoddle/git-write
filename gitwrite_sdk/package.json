@@ -1,0 +1,30 @@
+{
+  "name": "gitwrite-sdk",
+  "version": "0.1.0",
+  "description": "TypeScript SDK for the GitWrite API",
+  "main": "dist/cjs/index.js",
+  "module": "dist/esm/index.js",
+  "types": "dist/types/index.d.ts",
+  "scripts": {
+    "test": "jest",
+    "build": "rollup -c",
+    "prepack": "npm run build"
+  },
+  "keywords": [
+    "git",
+    "writing",
+    "version-control"
+  ],
+  "author": "GitWrite Team",
+  "license": "MIT",
+  "dependencies": {
+    "@rollup/plugin-typescript": "^12.1.3",
+    "@types/jest": "^30.0.0",
+    "axios": "^1.10.0",
+    "jest": "^30.0.2",
+    "rollup": "^4.44.0",
+    "rollup-plugin-dts": "^6.2.1",
+    "ts-jest": "^29.4.0",
+    "typescript": "^5.8.3"
+  }
+}
