@@ -36,7 +36,7 @@ Architectural Notes: This phase implements high-priority features from `writegit
 
 ### Task 7.1 - Agent_Core_Dev: Selective Change Integration (Cherry-Pick)
 Objective: Implement the core logic for selectively applying commits from one branch to another.
-Status: **Pending**
+Status: **Completed**
 
 1.  In `gitwrite_core`, create a new module or extend `versioning.py` with a `cherry_pick_commit` function.
 2.  This function will take a repository path, a commit OID to pick, and options for handling conflicts.

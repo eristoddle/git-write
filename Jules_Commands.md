@@ -20,5 +20,5 @@ Here is how you run unit tests:
 
 
 Read Memory_Bank.md and Implementation_Plan.md for details on the current state of the project.
-Proceed with Task 6.6: Finalize Multi-File Upload Logic as per the Implementation Plan.
+Proceed with Task 7.2 - Agent_CLI_Dev: Cherry-Pick CLI Commands.
 When you are done update Memory_Bank.md and Implementation_Plan.md according the the APM rules, located here: prompts.
