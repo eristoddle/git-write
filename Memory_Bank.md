@@ -28,3 +28,113 @@ None.
 
 **Next Steps (Optional):**
 Proceed with Task 6.1: Repository Initialization Endpoint, as outlined in the new `Implementation_Plan.md`.
+
+---
+**Agent:** Jules (Implementation Agent)
+**Task Reference:** Phase 6, Task 6.1: Repository Initialization Endpoint
+
+**Summary:**
+Implemented the `POST /repositories` API endpoint to allow clients to initialize new GitWrite repositories. This functionality mirrors the `gitwrite init` CLI command. The endpoint supports creating a repository with a specific project name or generating a unique ID if no name is provided. It integrates with the existing `gitwrite_core.repository.initialize_repository` function and includes comprehensive error handling and unit tests.
+
+**Details:**
+-   **API Endpoint Implementation (`gitwrite_api/routers/repository.py`):**
+    -   Created `POST /repositories` endpoint.
+    -   Request body uses `RepositoryCreateRequest` model (from `gitwrite_api/models.py`) with an optional `project_name: str`.
+        -   If `project_name` is provided, it's used as the directory name under `PLACEHOLDER_REPO_PATH/gitwrite_user_repos/`.
+        -   If `project_name` is not provided, a UUID is generated and used as the directory name under `PLACEHOLDER_REPO_PATH/gitwrite_user_repos/`.
+    -   Response model is `RepositoryCreateResponse`, returning `status`, `message`, `repository_id`, and `path`.
+    -   Endpoint is protected by `get_current_active_user` dependency.
+    -   Handles responses from `core_initialize_repository`:
+        -   `201 Created`: On successful initialization.
+        -   `409 Conflict`: If the repository directory already exists and is not a valid target (e.g., non-empty, non-Git directory, or a conflicting file name).
+        -   `500 Internal Server Error`: For other core errors or issues like inability to create base directories.
+-   **Pydantic Models:**
+    -   `gitwrite_api/models.py`: Added `RepositoryCreateRequest(BaseModel)`.
+        ```python
+        class RepositoryCreateRequest(BaseModel):
+            project_name: Optional[str] = Field(None, min_length=1, pattern=r"^[a-zA-Z0-9_-]+$", description="Optional name for the repository. If provided, it will be used as the directory name. Must be alphanumeric with hyphens/underscores.")
+        ```
+    -   `gitwrite_api/routers/repository.py`: Added `RepositoryCreateResponse(BaseModel)`.
+        ```python
+        class RepositoryCreateResponse(BaseModel):
+            status: str = Field(..., description="Outcome of the repository creation operation (e.g., 'created').")
+            message: str = Field(..., description="Detailed message about the creation outcome.")
+            repository_id: str = Field(..., description="The ID or name of the created repository.")
+            path: str = Field(..., description="The server path to the created repository.")
+        ```
+-   **Key Endpoint Snippet (`gitwrite_api/routers/repository.py`):**
+    ```python
+    @router.post("/repositories", response_model=RepositoryCreateResponse, status_code=201)
+    async def api_initialize_repository(
+        request_data: RepositoryCreateRequest,
+        current_user: User = Depends(get_current_active_user)
+    ):
+        repo_base_path = Path(PLACEHOLDER_REPO_PATH) / "gitwrite_user_repos"
+        project_name_to_use: str
+        if request_data.project_name:
+            project_name_to_use = request_data.project_name
+            core_project_name_arg = request_data.project_name
+            core_path_str_arg = str(repo_base_path)
+        else:
+            project_name_to_use = str(uuid.uuid4())
+            core_project_name_arg = None
+            core_path_str_arg = str(repo_base_path / project_name_to_use)
+
+        repo_base_path.mkdir(parents=True, exist_ok=True) # Simplified try-catch not shown
+
+        result = core_initialize_repository(
+            path_str=core_path_str_arg,
+            project_name=core_project_name_arg
+        )
+        # ... (response handling logic) ...
+    ```
+-   **Unit Test Implementation (`tests/test_api_repository.py`):**
+    -   Added new test functions for `POST /repository/repositories`.
+    -   Mocked `gitwrite_core.repository.initialize_repository` and `uuid.uuid4`.
+    -   Tested scenarios:
+        -   Successful creation with project name (201).
+        -   Successful creation without project name (UUID used, 201).
+        -   Attempting to create where a directory/file conflict occurs (409).
+        -   Core function generic error (500).
+        -   Base directory creation OS error (500).
+        -   Unauthorized request (401).
+        -   Invalid payload (e.g., invalid project name characters, empty project name) (422).
+-   **Key Unit Test Snippet (`tests/test_api_repository.py` for success with project name):**
+    ```python
+    @patch('gitwrite_api.routers.repository.core_initialize_repository')
+    @patch('gitwrite_api.routers.repository.uuid.uuid4')
+    def test_api_initialize_repository_with_project_name_success(mock_uuid4, mock_core_init_repo):
+        app.dependency_overrides[actual_repo_auth_dependency] = mock_get_current_active_user
+        project_name = "test-project"
+        expected_repo_path = f"{MOCK_REPO_PATH}/gitwrite_user_repos/{project_name}"
+
+        mock_core_init_repo.return_value = {
+            "status": "success",
+            "message": f"Repository '{project_name}' initialized.",
+            "path": expected_repo_path
+        }
+        payload = RepositoryCreateRequest(project_name=project_name)
+        response = client.post("/repository/repositories", json=payload.model_dump())
+
+        assert response.status_code == HTTPStatus.CREATED
+        data = response.json()
+        assert data["status"] == "created"
+        assert data["repository_id"] == project_name
+        # ... more assertions ...
+        app.dependency_overrides = {}
+    ```
+-   **Testing Confirmation:** All new unit tests passed successfully.
+
+**Output/Result:**
+-   Modified `gitwrite_api/models.py`
+-   Modified `gitwrite_api/routers/repository.py`
+-   Modified `tests/test_api_repository.py`
+-   This log entry in `Memory_Bank.md`.
+
+**Status:** Completed
+
+**Issues/Blockers:**
+None.
+
+**Next Steps (Optional):**
+Proceed with the next task as assigned by the Project Manager.

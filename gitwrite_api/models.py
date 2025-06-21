@@ -52,3 +52,6 @@ class SaveFileResponse(BaseModel):
     status: str = Field(..., description="The status of the save operation (e.g., 'success', 'error').")
     message: str = Field(..., description="A message detailing the outcome of the operation.")
     commit_id: Optional[str] = Field(None, description="The ID of the new commit if the operation was successful.")
+
+class RepositoryCreateRequest(BaseModel):
+    project_name: Optional[str] = Field(None, min_length=1, pattern=r"^[a-zA-Z0-9_-]+$", description="Optional name for the repository. If provided, it will be used as the directory name. Must be alphanumeric with hyphens/underscores.")

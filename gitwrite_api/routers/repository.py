@@ -10,7 +10,8 @@ PLACEHOLDER_REPO_PATH = "/path/to/user/repo"
 from gitwrite_core.repository import (
     list_branches, list_tags, list_commits, save_and_commit_file,
     list_gitignore_patterns as core_list_gitignore_patterns,
-    add_pattern_to_gitignore as core_add_pattern_to_gitignore
+    add_pattern_to_gitignore as core_add_pattern_to_gitignore,
+    initialize_repository as core_initialize_repository
 )
 
 # Import security dependency (assuming path based on project structure)
@@ -48,6 +49,11 @@ from gitwrite_core.versioning import get_diff as core_get_diff # Core function f
 # from gitwrite_core.exceptions import NotEnoughHistoryError as CoreNotEnoughHistoryError # Already imported above
 from gitwrite_core.tagging import create_tag as core_create_tag # Core function for tagging
 from gitwrite_core.exceptions import TagAlreadyExistsError as CoreTagAlreadyExistsError # For tagging
+
+# For Repository Initialization
+import uuid
+from pathlib import Path
+from ..models import RepositoryCreateRequest # Import the request model
 
 
 # For now, let's define a placeholder dependency to make the code runnable without the actual security module
@@ -196,6 +202,12 @@ class IgnoreListResponse(BaseModel):
 class IgnoreAddResponse(BaseModel):
     status: str = Field(..., description="Outcome of the add pattern operation.")
     message: str = Field(..., description="Detailed message about the operation.")
+
+class RepositoryCreateResponse(BaseModel):
+    status: str = Field(..., description="Outcome of the repository creation operation (e.g., 'created').")
+    message: str = Field(..., description="Detailed message about the creation outcome.")
+    repository_id: str = Field(..., description="The ID or name of the created repository.")
+    path: str = Field(..., description="The server path to the created repository.")
 
 
 # --- Helper for error handling ---
@@ -786,6 +798,79 @@ async def api_list_ignore_patterns(current_user: User = Depends(get_current_acti
         raise HTTPException(status_code=500, detail="Repository configuration error.")
     except Exception as e: # Fallback for unexpected errors
         raise HTTPException(status_code=500, detail=f"An unexpected error occurred: {str(e)}")
+
+
+# --- Repository Initialization Endpoint ---
+
+@router.post("/repositories", response_model=RepositoryCreateResponse, status_code=201)
+async def api_initialize_repository(
+    request_data: RepositoryCreateRequest,
+    current_user: User = Depends(get_current_active_user)
+):
+    """
+    Initializes a new GitWrite repository.
+    If `project_name` is provided, it's used as the directory name.
+    Otherwise, a unique ID is generated for the directory name.
+    Requires authentication.
+    """
+    repo_base_path = Path(PLACEHOLDER_REPO_PATH) / "gitwrite_user_repos" # Define a sub-directory for user repos
+    project_name_to_use: str
+
+    if request_data.project_name:
+        # Validate project_name against allowed characters (already done by Pydantic pattern, but good for defense)
+        # Basic check here, Pydantic handles stricter validation
+        if not request_data.project_name.isalnum() and '_' not in request_data.project_name and '-' not in request_data.project_name:
+             raise HTTPException(status_code=400, detail="Invalid project_name. Only alphanumeric, hyphens, and underscores are allowed.")
+        project_name_to_use = request_data.project_name
+        repo_path_to_initialize_at = repo_base_path # Core function will append project_name if provided
+    else:
+        project_name_to_use = str(uuid.uuid4())
+        # If no project name, core function expects the full path to be the target directory
+        repo_path_to_initialize_at = repo_base_path / project_name_to_use
+        # In this case, project_name argument to core_initialize_repository should be None
+        # because the target directory name (UUID) is already part of repo_path_to_initialize_at
+        # core_initialize_repository(path_str=str(repo_path_to_initialize_at), project_name=None)
+
+    try:
+        # Ensure the base directory for user repositories exists
+        repo_base_path.mkdir(parents=True, exist_ok=True)
+    except OSError as e:
+        raise HTTPException(status_code=500, detail=f"Could not create base repository directory: {e}")
+
+    # Call the core function
+    # If request_data.project_name was provided, core_initialize_repository will create path_str / project_name
+    # If not, we constructed the full path (repo_base_path / uuid_str) and pass project_name=None
+    core_project_name_arg = request_data.project_name if request_data.project_name else None
+    core_path_str_arg = str(repo_base_path) if request_data.project_name else str(repo_path_to_initialize_at)
+
+    result = core_initialize_repository(
+        path_str=core_path_str_arg,
+        project_name=core_project_name_arg
+    )
+
+    if result['status'] == 'success':
+        # 'path' from core is the absolute path to the initialized repo
+        created_repo_path = result.get('path', str(repo_base_path / project_name_to_use)) # Fallback, but core should provide it
+        return RepositoryCreateResponse(
+            status="created",
+            message=result.get('message', f"Repository '{project_name_to_use}' initialized successfully."),
+            repository_id=project_name_to_use, # This is the dir name (project_name or UUID)
+            path=created_repo_path
+        )
+    elif "already exists" in result.get("message", "").lower() and \
+         "not empty" in result.get("message", "").lower() and \
+         "not a git repository" in result.get("message", "").lower():
+        # This condition specifically targets the case where the directory exists and is not a valid init target
+        raise HTTPException(status_code=409, detail=result.get('message', "Repository directory conflict."))
+    elif result['status'] == 'error':
+        # Check for other specific error messages that might warrant a 400 vs 500
+        if "a file named" in result.get("message", "").lower() and "already exists" in result.get("message", "").lower():
+            raise HTTPException(status_code=409, detail=result.get('message')) # File conflict
+        # Default to 500 for other core errors during initialization
+        raise HTTPException(status_code=500, detail=result.get('message', "Failed to initialize repository due to a core error."))
+    else:
+        # Should not be reached if core function adheres to 'success' or 'error' statuses
+        raise HTTPException(status_code=500, detail=f"Unexpected response from repository initialization: {result.get('message', 'Unknown error')}")
 
 @router.post("/ignore", response_model=IgnoreAddResponse)
 async def api_add_ignore_pattern(
