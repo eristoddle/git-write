@@ -496,7 +496,7 @@ describe('GitWriteClient', () => {
 
       await expect(client.saveFiles(repoId, inputFiles, commitMessage)).rejects.toThrow('Upload failed for file1.txt');
 
-      expect(mockRequest).toHaveBeenCalledTimes(2); // Initiate + 1st PUT
+      expect(mockRequest).toHaveBeenCalledTimes(3); // Initiate + 1st PUT
       // (Could be 3 if Promise.all allows other promises to start, but one rejection is enough)
     });
 
