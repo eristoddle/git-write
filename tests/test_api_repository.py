@@ -1800,23 +1800,29 @@ def test_api_create_tag_pygit2_import_error(mock_core_create_tag, mock_signature
 
     # Let's assume the `import pygit2` line itself is what we want to fail.
     # We can patch `builtins.__import__` to simulate this.
-    original_import = __builtins__['__import__']
-    def mock_import(name, globals=None, locals=None, fromlist=(), level=0):
-        if name == 'pygit2':
-            raise ImportError("Simulated pygit2 import error")
-        return original_import(name, globals, locals, fromlist, level)
+        # original_import = __builtins__['__import__']
+        # def mock_import(name, globals=None, locals=None, fromlist=(), level=0):
+        #     if name == 'pygit2':
+        #         raise ImportError("Simulated pygit2 import error")
+        #     return original_import(name, globals, locals, fromlist, level)
 
-    with patch('builtins.__import__', side_effect=mock_import):
+        # Simulate pygit2.Signature raising a TypeError that the endpoint should catch
+        mock_signature_constructor_module_level.side_effect = TypeError("'<class 'str'>' called with invalid C type: type must be 'dev/string_type' not 'str'")
+
+        # with patch('builtins.__import__', side_effect=mock_import): # This patch is likely ineffective due to top-level import
         app.dependency_overrides[actual_repo_auth_dependency] = mock_get_current_active_user
         payload = TagCreateRequest(tag_name="error-tag", message="Annotated tag message")
         response = client.post("/repository/tags", json=payload.model_dump())
 
         assert response.status_code == HTTPStatus.INTERNAL_SERVER_ERROR # 500
-        assert response.json()["detail"] == "Server configuration error: pygit2 library not available."
+        assert response.json()["detail"] == "Server configuration error: pygit2 library not available or misconfigured."
+        # Ensure core_create_tag was NOT called because signature creation should fail first
+        mock_core_create_tag.assert_not_called()
+        app.dependency_overrides = {} # Reset overrides at the end of the test
 
-    app.dependency_overrides = {}
+    # Removed the mis-indented app.dependency_overrides = {} from here
     # mock_core_create_tag and mock_signature_constructor_module_level should not have been called.
-    mock_core_create_tag.assert_not_called()
+    # mock_core_create_tag.assert_not_called() # Moved up
     # mock_signature_constructor_module_level is for pygit2.Signature at module level if it were imported there.
     # The one inside the function is what we are concerned about.
 

@@ -714,10 +714,20 @@ async def api_create_tag(
         except pygit2.GitError as e:
             # More specific catch for errors during Signature creation if name/email are invalid for libgit2
             raise HTTPException(status_code=400, detail=f"Failed to create tagger signature due to invalid user details: {str(e)}")
-        except Exception as e:
-            # Catch other unexpected errors during signature creation, potentially the "dev/string_type"
-            # This makes it a 500 error, indicating an internal server problem.
+        except TypeError as e:
+            # Catch TypeError specifically, which 'dev/string_type' often manifests as from pygit2
+            if 'dev/string_type' in str(e):
+                raise HTTPException(status_code=500, detail="Server configuration error: pygit2 library not available or misconfigured.")
             raise HTTPException(status_code=500, detail=f"Unexpected error creating tagger signature: {str(e)}")
+        except Exception as e:
+            # Fallback for other errors during signature creation
+            # This could be the place for the "pygit2 library not available" if we assume pygit2 itself might be None
+            # For now, this addresses other unexpected issues.
+            # If pygit2 module was truly not imported, an NameError would occur earlier if not handled,
+            # or ImportError if `import pygit2` was inside the function and failed.
+            # Given `import pygit2` is at top, this is for other runtime errors.
+            raise HTTPException(status_code=500, detail=f"Unexpected error creating tagger signature: {str(e)}")
+
 
     try:
         result = core_create_tag( # Ensure core_create_tag is imported
@@ -766,6 +776,12 @@ async def api_list_ignore_patterns(current_user: User = Depends(get_current_acti
     repo_path = PLACEHOLDER_REPO_PATH
     try:
         result = core_list_gitignore_patterns(repo_path_str=repo_path)
+
+        if not isinstance(result, dict):
+            raise ValueError(f"Core function core_list_gitignore_patterns returned non-dict: {type(result)}")
+        if 'status' not in result:
+            raise ValueError("Core function core_list_gitignore_patterns result missing 'status' key")
+
         # Core function returns:
         # {'status': 'success', 'patterns': patterns_list, 'message': '...'}
         # {'status': 'not_found', 'patterns': [], 'message': '.gitignore file not found.'}
@@ -787,15 +803,18 @@ async def api_list_ignore_patterns(current_user: User = Depends(get_current_acti
             )
         elif result['status'] == 'error':
             # Core function encountered an error (e.g., I/O error reading file)
-            raise HTTPException(status_code=500, detail=result.get('message', 'Failed to read .gitignore file.'))
+            error_message = result.get('message', 'An error occurred while listing ignore patterns.')
+            raise HTTPException(status_code=500, detail=str(error_message)) # Return specific core message
         else:
             # Should not happen if core adheres to its spec
             raise HTTPException(status_code=500, detail="Unknown error from core ignore listing.")
 
+    # Removed generic Exception catchers to let HTTPExceptions propagate naturally
+    # and to reveal any other unexpected errors directly.
     except CoreRepositoryNotFoundError: # Should not happen with placeholder, but good practice
         raise HTTPException(status_code=500, detail="Repository configuration error.")
-    except Exception as e: # Fallback for unexpected errors
-        raise HTTPException(status_code=500, detail=f"An unexpected error occurred: {str(e)}")
+    # Note: Specific business logic exceptions from core layer (if any) should be caught if they are not already
+    # handled by the result['status'] checks. For now, focusing on existing structure.
 
 
 # --- Repository Initialization Endpoint ---
@@ -890,6 +909,12 @@ async def api_add_ignore_pattern(
             repo_path_str=repo_path,
             pattern=pattern
         )
+
+        if not isinstance(result, dict):
+            raise ValueError(f"Core function core_add_pattern_to_gitignore returned non-dict: {type(result)}")
+        if 'status' not in result:
+            raise ValueError("Core function core_add_pattern_to_gitignore result missing 'status' key")
+
         # Core function returns:
         # {'status': 'success', 'message': 'Pattern added.'}
         # {'status': 'exists', 'message': 'Pattern already exists.'}
@@ -902,18 +927,22 @@ async def api_add_ignore_pattern(
                 message=result['message']
             )
         elif result['status'] == 'exists':
-            raise HTTPException(status_code=409, detail=result.get('message', 'Pattern already exists in .gitignore.'))
+            error_message = result.get('message', 'Pattern already exists in .gitignore.')
+            raise HTTPException(status_code=409, detail=str(error_message))
         elif result['status'] == 'error':
             # Distinguish between client error (empty pattern) and server error (I/O)
-            if "Pattern cannot be empty" in result.get('message', ''):
-                raise HTTPException(status_code=400, detail=result.get('message'))
+            error_message_core = result.get('message', '') # Use .get for safety
+            if "Pattern cannot be empty" in error_message_core: # Specific check for empty pattern error from core
+                raise HTTPException(status_code=400, detail=str(error_message_core))
             # Other errors are likely server-side I/O issues or unexpected problems
-            raise HTTPException(status_code=500, detail=result.get('message', 'Failed to add pattern to .gitignore.'))
+            raise HTTPException(status_code=500, detail=str(error_message_core)) # Return specific core message for other errors
         else:
             # Should not happen
             raise HTTPException(status_code=500, detail="Unknown error from core ignore add operation.")
 
+    # Removed generic Exception catchers to let HTTPExceptions propagate naturally
+    # and to reveal any other unexpected errors directly.
     except CoreRepositoryNotFoundError: # Should not happen with placeholder
         raise HTTPException(status_code=500, detail="Repository configuration error.")
-    except Exception as e: # Fallback for unexpected errors
-        raise HTTPException(status_code=500, detail=f"An unexpected error occurred: {str(e)}")
+    # Note: Specific business logic exceptions from core layer (if any) should be caught if they are not already
+    # handled by the result['status'] checks. For now, focusing on existing structure.
