@@ -81,6 +81,60 @@ Proceed with Task 6.3: Revert and Sync Endpoints as per the Implementation Plan.
 
 ---
 **Agent:** Jules (Implementation Agent)
+**Task Reference:** Phase 6, Task 6.4: Tagging Endpoints
+
+**Summary:**
+Implemented a new API endpoint `POST /repository/tags` for creating lightweight and annotated tags. Added comprehensive unit tests for this functionality.
+
+**Details:**
+- **`gitwrite_api/routers/repository.py` modifications:**
+    - Added Pydantic models:
+        - `TagCreateRequest` (for `tag_name`, `message`, `commit_ish`, `force`)
+        - `TagCreateResponse` (for status, `tag_name`, `tag_type`, `target_commit_oid`, `message`)
+    - Implemented `POST /repository/tags`:
+        - Takes `TagCreateRequest` data in the request body.
+        - Calls `gitwrite_core.tagging.create_tag`.
+        - Handles creation of both lightweight and annotated tags. For annotated tags, it constructs a `pygit2.Signature` using user details from the authenticated user or defaults.
+        - Returns `201 Created` on success with tag details.
+        - Maps core exceptions to appropriate HTTP status codes:
+            - `CoreTagAlreadyExistsError` -> `409 Conflict`
+            - `CoreCommitNotFoundError` -> `404 Not Found`
+            - `CoreRepositoryNotFoundError` -> `500 Internal Server Error`
+            - `CoreGitWriteError` (e.g., invalid tag name, bare repo) -> `400 Bad Request`
+        - Protected by authentication dependency.
+    - Imported `core_create_tag` from `gitwrite_core.tagging` and `CoreTagAlreadyExistsError` from `gitwrite_core.exceptions`.
+- **`tests/test_api_repository.py` modifications:**
+    - Added unit tests for `POST /repository/tags`:
+        - Tested successful creation of lightweight tags (201).
+        - Tested successful creation of annotated tags (201), including mocking of `pygit2.Signature`.
+        - Tested successful creation with `force=True` when a tag already exists (201).
+        - Tested `CoreTagAlreadyExistsError` (409).
+        - Tested `CoreCommitNotFoundError` (404).
+        - Tested `CoreRepositoryNotFoundError` (500).
+        - Tested `CoreGitWriteError` for invalid tag name and bare repository (400).
+        - Tested server error if `pygit2` import fails (500).
+        - Tested correct default user details for `pygit2.Signature` if authenticated user info is missing/empty.
+        - Tested unauthorized access (401).
+        - Tested invalid request payload (422).
+- **`Implementation_Plan.md` updated:**
+    - Marked Task 6.4 as "Completed".
+
+**Output/Result:**
+- Modified file: `gitwrite_api/routers/repository.py`
+- Modified file: `tests/test_api_repository.py`
+- Modified file: `Implementation_Plan.md`
+- This log entry in `Memory_Bank.md`.
+
+**Status:** Completed
+
+**Issues/Blockers:**
+None.
+
+**Next Steps (Optional):**
+Proceed with Task 6.5: Ignore Management Endpoints as per the Implementation Plan.
+
+---
+**Agent:** Jules (Implementation Agent)
 **Task Reference:** Phase 6, Task 6.3: Revert and Sync Endpoints
 
 **Summary:**

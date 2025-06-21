@@ -42,6 +42,8 @@ from gitwrite_core.branching import merge_branch_into_current # Core function fo
 from gitwrite_core.versioning import get_diff as core_get_diff # Core function for compare
 # from gitwrite_core.exceptions import CommitNotFoundError as CoreCommitNotFoundError # Already imported above
 # from gitwrite_core.exceptions import NotEnoughHistoryError as CoreNotEnoughHistoryError # Already imported above
+from gitwrite_core.tagging import create_tag as core_create_tag # Core function for tagging
+from gitwrite_core.exceptions import TagAlreadyExistsError as CoreTagAlreadyExistsError # For tagging
 
 
 # For now, let's define a placeholder dependency to make the code runnable without the actual security module
@@ -163,6 +165,20 @@ class SyncRepositoryResponse(BaseModel):
     fetch_status: SyncFetchStatus
     local_update_status: SyncLocalUpdateStatus
     push_status: SyncPushStatus
+
+# Tagging Endpoint Models
+class TagCreateRequest(BaseModel):
+    tag_name: str = Field(..., min_length=1, description="Name of the tag to create.")
+    message: Optional[str] = Field(None, description="If provided, creates an annotated tag with this message. Otherwise, a lightweight tag is created.")
+    commit_ish: str = Field("HEAD", description="The commit-ish (e.g., commit hash, branch name, another tag) to tag. Defaults to 'HEAD'.")
+    force: bool = Field(False, description="If True, overwrite an existing tag with the same name.")
+
+class TagCreateResponse(BaseModel):
+    status: str = Field(..., description="Outcome of the tag creation operation (e.g., 'created').")
+    tag_name: str = Field(..., description="The name of the created tag.")
+    tag_type: str = Field(..., description="Type of the tag created ('annotated' or 'lightweight').")
+    target_commit_oid: str = Field(..., description="The OID of the commit that the tag points to.")
+    message: Optional[str] = Field(None, description="The message of the tag, if it's an annotated tag.")
 
 
 # --- Helper for error handling ---
@@ -642,3 +658,71 @@ async def api_sync_repository(
         raise HTTPException(status_code=400, detail=f"Sync operation failed: {str(e)}")
     except Exception as e: # Fallback for unexpected errors
         raise HTTPException(status_code=500, detail=f"An unexpected error occurred during sync: {str(e)}")
+
+
+# --- Tagging Endpoint ---
+
+@router.post("/tags", response_model=TagCreateResponse, status_code=201)
+async def api_create_tag(
+    request_data: TagCreateRequest,
+    current_user: User = Depends(get_current_active_user)
+):
+    """
+    Creates a new tag (lightweight or annotated) in the repository.
+    Requires authentication.
+    """
+    repo_path = PLACEHOLDER_REPO_PATH
+
+    # For annotated tags, pygit2.Signature is needed.
+    # We'll use the current_user's details or defaults.
+    tagger_signature = None
+    if request_data.message: # Annotated tags require a tagger
+        user_name = current_user.username if hasattr(current_user, 'username') and current_user.username else "GitWrite API User"
+        user_email = current_user.email if hasattr(current_user, 'email') and current_user.email else "api@gitwrite.com"
+        # Need to import pygit2 for Signature
+        try:
+            # Attempt to import pygit2. If it's not available in this environment,
+            # this would be a server-side issue. For now, assume it's available.
+            import pygit2
+            tagger_signature = pygit2.Signature(user_name, user_email)
+        except ImportError:
+            # This should ideally not happen in a deployed environment.
+            # If pygit2 is missing, core functions would fail much earlier.
+            # However, defensive coding suggests handling it.
+            raise HTTPException(status_code=500, detail="Server configuration error: pygit2 library not available.")
+
+
+    try:
+        result = core_create_tag( # Ensure core_create_tag is imported
+            repo_path_str=repo_path,
+            tag_name=request_data.tag_name,
+            target_commit_ish=request_data.commit_ish,
+            message=request_data.message,
+            force=request_data.force,
+            tagger=tagger_signature # Pass the signature for annotated tags
+        )
+        # Core function returns:
+        # {'name': tag_name, 'type': 'annotated'/'lightweight', 'target': str(target_oid), 'message': message (optional)}
+
+        return TagCreateResponse(
+            status="created",
+            tag_name=result['name'],
+            tag_type=result['type'],
+            target_commit_oid=result['target'],
+            message=result.get('message') # Will be None for lightweight tags or if no message
+        )
+    except CoreTagAlreadyExistsError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    except CoreCommitNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except CoreRepositoryNotFoundError: # Server-side configuration issue
+        raise HTTPException(status_code=500, detail="Repository configuration error.")
+    except CoreGitWriteError as e:
+        # Examples: "Cannot create tags in a bare repository.", "Failed to create ... tag..."
+        # These are typically client errors (bad request / invalid op) or specific git conditions.
+        # Default to 400.
+        raise HTTPException(status_code=400, detail=f"Tag creation failed: {str(e)}")
+    except Exception as e: # Fallback for unexpected errors
+        # This could include the pygit2.Signature creation failure if not handled more specifically,
+        # or other unforeseen issues.
+        raise HTTPException(status_code=500, detail=f"An unexpected error occurred during tag creation: {str(e)}")

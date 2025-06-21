@@ -43,7 +43,7 @@ Status: **Completed**
 
 ### Task 6.4 - Agent_API_Dev: Tagging Endpoints
 Objective: Add the ability to create tags via the API.
-Status: **Pending**
+Status: **Completed**
 
 1.  Create a `POST /repository/tags` endpoint that takes `name`, `message` (optional), `commit_ish` (optional), and `force` (optional) and calls `gitwrite_core.tagging.create_tag`.
 2.  Add unit tests for the new tag creation endpoint.

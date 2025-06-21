@@ -1356,3 +1356,291 @@ def test_api_sync_repository_invalid_payload():
     data = response.json()["detail"]
     assert any(item["type"] == "bool_parsing" and item["loc"] == ["body", "push"] for item in data)
     app.dependency_overrides = {}
+
+
+# --- Tests for POST /repository/tags ---
+
+from gitwrite_api.routers.repository import TagCreateRequest # For tagging tests
+# CoreTagAlreadyExistsError is needed for mocking side_effect
+from gitwrite_core.exceptions import TagAlreadyExistsError as CoreTagAlreadyExistsError
+
+@patch('gitwrite_api.routers.repository.core_create_tag')
+@patch('gitwrite_api.routers.repository.pygit2.Signature') # Mock pygit2.Signature
+def test_api_create_tag_lightweight_success(mock_signature, mock_core_create_tag):
+    mock_core_create_tag.return_value = {
+        'name': 'v1.0-lw',
+        'type': 'lightweight',
+        'target': 'commitsha123',
+        'message': None
+    }
+    app.dependency_overrides[actual_repo_auth_dependency] = mock_get_current_active_user
+    payload = TagCreateRequest(tag_name="v1.0-lw", commit_ish="commitsha123")
+    response = client.post("/repository/tags", json=payload.model_dump())
+
+    assert response.status_code == HTTPStatus.CREATED # 201
+    data = response.json()
+    assert data["status"] == "created"
+    assert data["tag_name"] == "v1.0-lw"
+    assert data["tag_type"] == "lightweight"
+    assert data["target_commit_oid"] == "commitsha123"
+    assert data["message"] is None
+    mock_core_create_tag.assert_called_once_with(
+        repo_path_str=MOCK_REPO_PATH,
+        tag_name="v1.0-lw",
+        target_commit_ish="commitsha123",
+        message=None,
+        force=False,
+        tagger=None # No message, so no tagger expected for lightweight
+    )
+    mock_signature.assert_not_called() # Should not be called for lightweight tags
+    app.dependency_overrides = {}
+
+@patch('gitwrite_api.routers.repository.core_create_tag')
+@patch('gitwrite_api.routers.repository.pygit2.Signature') # Mock pygit2.Signature
+def test_api_create_tag_annotated_success(mock_signature_constructor, mock_core_create_tag):
+    mock_tagger_sig = MagicMock() # Mock instance of Signature
+    mock_signature_constructor.return_value = mock_tagger_sig
+
+    mock_core_create_tag.return_value = {
+        'name': 'v1.0-annotated',
+        'type': 'annotated',
+        'target': 'anothercommitsha',
+        'message': 'Release version 1.0'
+    }
+    app.dependency_overrides[actual_repo_auth_dependency] = mock_get_current_active_user
+    payload = TagCreateRequest(
+        tag_name="v1.0-annotated",
+        message="Release version 1.0",
+        commit_ish="anothercommitsha"
+    )
+    response = client.post("/repository/tags", json=payload.model_dump())
+
+    assert response.status_code == HTTPStatus.CREATED
+    data = response.json()
+    assert data["status"] == "created"
+    assert data["tag_name"] == "v1.0-annotated"
+    assert data["tag_type"] == "annotated"
+    assert data["target_commit_oid"] == "anothercommitsha"
+    assert data["message"] == "Release version 1.0"
+
+    mock_signature_constructor.assert_called_once_with(MOCK_USER.username, MOCK_USER.email)
+    mock_core_create_tag.assert_called_once_with(
+        repo_path_str=MOCK_REPO_PATH,
+        tag_name="v1.0-annotated",
+        target_commit_ish="anothercommitsha",
+        message="Release version 1.0",
+        force=False,
+        tagger=mock_tagger_sig # Expect the mocked signature instance
+    )
+    app.dependency_overrides = {}
+
+@patch('gitwrite_api.routers.repository.core_create_tag')
+@patch('gitwrite_api.routers.repository.pygit2.Signature')
+def test_api_create_tag_force_success(mock_signature, mock_core_create_tag):
+    mock_core_create_tag.return_value = { # Assume it's a lightweight tag for simplicity
+        'name': 'v2.0-force',
+        'type': 'lightweight',
+        'target': 'commitsha_forced',
+        'message': None
+    }
+    app.dependency_overrides[actual_repo_auth_dependency] = mock_get_current_active_user
+    payload = TagCreateRequest(tag_name="v2.0-force", force=True) # commit_ish defaults to HEAD
+    response = client.post("/repository/tags", json=payload.model_dump())
+
+    assert response.status_code == HTTPStatus.CREATED
+    data = response.json()
+    assert data["tag_name"] == "v2.0-force"
+    mock_core_create_tag.assert_called_once_with(
+        repo_path_str=MOCK_REPO_PATH,
+        tag_name="v2.0-force",
+        target_commit_ish="HEAD", # Default
+        message=None,
+        force=True, # Force is True
+        tagger=None
+    )
+    mock_signature.assert_not_called()
+    app.dependency_overrides = {}
+
+@patch('gitwrite_api.routers.repository.core_create_tag')
+def test_api_create_tag_already_exists_error(mock_core_create_tag):
+    mock_core_create_tag.side_effect = CoreTagAlreadyExistsError("Tag 'v1.0' already exists.")
+    app.dependency_overrides[actual_repo_auth_dependency] = mock_get_current_active_user
+    payload = TagCreateRequest(tag_name="v1.0")
+    response = client.post("/repository/tags", json=payload.model_dump())
+
+    assert response.status_code == HTTPStatus.CONFLICT # 409
+    assert response.json()["detail"] == "Tag 'v1.0' already exists."
+    app.dependency_overrides = {}
+
+@patch('gitwrite_api.routers.repository.core_create_tag')
+def test_api_create_tag_commit_not_found_error(mock_core_create_tag):
+    mock_core_create_tag.side_effect = CoreCommitNotFoundError("Commit-ish 'nonexistent-sha' not found.")
+    app.dependency_overrides[actual_repo_auth_dependency] = mock_get_current_active_user
+    payload = TagCreateRequest(tag_name="new-tag", commit_ish="nonexistent-sha")
+    response = client.post("/repository/tags", json=payload.model_dump())
+
+    assert response.status_code == HTTPStatus.NOT_FOUND # 404
+    assert response.json()["detail"] == "Commit-ish 'nonexistent-sha' not found."
+    app.dependency_overrides = {}
+
+@patch('gitwrite_api.routers.repository.core_create_tag')
+def test_api_create_tag_repo_not_found_error(mock_core_create_tag):
+    mock_core_create_tag.side_effect = CoreRepositoryNotFoundError("Repo path is misconfigured.")
+    app.dependency_overrides[actual_repo_auth_dependency] = mock_get_current_active_user
+    payload = TagCreateRequest(tag_name="any-tag")
+    response = client.post("/repository/tags", json=payload.model_dump())
+
+    assert response.status_code == HTTPStatus.INTERNAL_SERVER_ERROR # 500
+    assert response.json()["detail"] == "Repository configuration error."
+    app.dependency_overrides = {}
+
+@patch('gitwrite_api.routers.repository.core_create_tag')
+def test_api_create_tag_git_write_error_invalid_name(mock_core_create_tag):
+    error_message = "Failed to create tag: Invalid tag name 'inv@lid tag'."
+    mock_core_create_tag.side_effect = CoreGitWriteError(error_message)
+    app.dependency_overrides[actual_repo_auth_dependency] = mock_get_current_active_user
+    payload = TagCreateRequest(tag_name="inv@lid tag")
+    response = client.post("/repository/tags", json=payload.model_dump())
+
+    assert response.status_code == HTTPStatus.BAD_REQUEST # 400
+    assert response.json()["detail"] == f"Tag creation failed: {error_message}"
+    app.dependency_overrides = {}
+
+@patch('gitwrite_api.routers.repository.core_create_tag')
+def test_api_create_tag_git_write_error_bare_repo(mock_core_create_tag):
+    error_message = "Cannot create tags in a bare repository."
+    mock_core_create_tag.side_effect = CoreGitWriteError(error_message)
+    app.dependency_overrides[actual_repo_auth_dependency] = mock_get_current_active_user
+    payload = TagCreateRequest(tag_name="bare-repo-tag")
+    response = client.post("/repository/tags", json=payload.model_dump())
+
+    assert response.status_code == HTTPStatus.BAD_REQUEST # 400
+    assert response.json()["detail"] == f"Tag creation failed: {error_message}"
+    app.dependency_overrides = {}
+
+def test_api_create_tag_unauthorized():
+    app.dependency_overrides = {}
+    async def mock_raise_401_for_tags():
+        from fastapi import HTTPException
+        raise HTTPException(status_code=HTTPStatus.UNAUTHORIZED, detail="Auth failed for tags")
+    app.dependency_overrides[actual_repo_auth_dependency] = mock_raise_401_for_tags
+
+    payload = TagCreateRequest(tag_name="unauth-tag")
+    response = client.post("/repository/tags", json=payload.model_dump())
+
+    assert response.status_code == HTTPStatus.UNAUTHORIZED
+    assert response.json()["detail"] == "Auth failed for tags"
+    app.dependency_overrides = {}
+
+def test_api_create_tag_invalid_payload():
+    app.dependency_overrides[actual_repo_auth_dependency] = mock_get_current_active_user
+    # tag_name missing
+    response = client.post("/repository/tags", json={"message": "A message"})
+    assert response.status_code == HTTPStatus.UNPROCESSABLE_ENTITY # 422
+    data = response.json()["detail"]
+    assert any(item["loc"] == ["body", "tag_name"] and item["type"] == "missing" for item in data)
+
+    # tag_name empty string
+    response = client.post("/repository/tags", json={"tag_name": ""})
+    assert response.status_code == HTTPStatus.UNPROCESSABLE_ENTITY # 422
+    data = response.json()["detail"]
+    assert any(item["loc"] == ["body", "tag_name"] and "min_length" in item["msg"] for item in data)
+
+    # force is not a boolean
+    response = client.post("/repository/tags", json={"tag_name": "test", "force": "not-a-bool"})
+    assert response.status_code == HTTPStatus.UNPROCESSABLE_ENTITY # 422
+    data = response.json()["detail"]
+    assert any(item["loc"] == ["body", "force"] and item["type"] == "bool_parsing" for item in data)
+
+    app.dependency_overrides = {}
+
+@patch('gitwrite_api.routers.repository.pygit2.Signature')
+@patch('gitwrite_api.routers.repository.core_create_tag')
+def test_api_create_tag_pygit2_import_error(mock_core_create_tag, mock_signature_constructor_module_level):
+    # This test needs to mock the import of pygit2 itself at the point it's used in the endpoint.
+    # The endpoint does `import pygit2` then `pygit2.Signature`.
+    # So, we need to make `import pygit2` raise an ImportError.
+
+    # The @patch for pygit2.Signature is fine, but the critical part is the import pygit2 failing.
+    # This is harder to patch directly for an `import module` statement inside a function.
+    # A common way is to patch `sys.modules` temporarily or ensure `pygit2` isn't in `sys.modules`
+    # and that it cannot be found.
+    # However, the endpoint's current structure is:
+    # try:
+    #     import pygit2
+    #     tagger_signature = pygit2.Signature(user_name, user_email)
+    # except ImportError:
+    #     raise HTTPException(status_code=500, detail="Server configuration error: pygit2 library not available.")
+
+    # To test this, we can patch `pygit2.Signature` to raise ImportError when called,
+    # if the `import pygit2` itself is assumed to succeed but `Signature` fails (less realistic for missing lib)
+    # OR, more accurately, if `import pygit2` itself fails.
+    # Let's try to make the `import pygit2` statement fail.
+    # We can achieve this by removing 'pygit2' from sys.modules and ensuring it's not findable.
+    # This is invasive. A simpler mock for this specific structure:
+    # Patch 'pygit2' in the scope of the router module to be an object that, when Signature is accessed, raises.
+    # Or, more directly, if `import pygit2` is at the top of repository.py, then patching `sys.modules`
+    # before the TestClient call might work. But it's inside the function.
+
+    # Let's assume the `import pygit2` line itself is what we want to fail.
+    # We can patch `builtins.__import__` to simulate this.
+    original_import = __builtins__['__import__']
+    def mock_import(name, globals=None, locals=None, fromlist=(), level=0):
+        if name == 'pygit2':
+            raise ImportError("Simulated pygit2 import error")
+        return original_import(name, globals, locals, fromlist, level)
+
+    with patch('builtins.__import__', side_effect=mock_import):
+        app.dependency_overrides[actual_repo_auth_dependency] = mock_get_current_active_user
+        payload = TagCreateRequest(tag_name="error-tag", message="Annotated tag message")
+        response = client.post("/repository/tags", json=payload.model_dump())
+
+        assert response.status_code == HTTPStatus.INTERNAL_SERVER_ERROR # 500
+        assert response.json()["detail"] == "Server configuration error: pygit2 library not available."
+
+    app.dependency_overrides = {}
+    # mock_core_create_tag and mock_signature_constructor_module_level should not have been called.
+    mock_core_create_tag.assert_not_called()
+    # mock_signature_constructor_module_level is for pygit2.Signature at module level if it were imported there.
+    # The one inside the function is what we are concerned about.
+
+# Re-check if pygit2.Signature is imported at module level or within function
+# It's `import pygit2` then `pygit2.Signature` inside `api_create_tag`.
+# The previous test `test_api_create_tag_pygit2_import_error` is a good approach.
+# It's important that the patch to `builtins.__import__` is active when the endpoint code runs.
+# Note: `patch('gitwrite_api.routers.repository.pygit2.Signature')` might not be needed if `import pygit2` fails.
+
+# Add a test for default tagger details if user has no username/email (covered by endpoint logic)
+@patch('gitwrite_api.routers.repository.core_create_tag')
+@patch('gitwrite_api.routers.repository.pygit2.Signature')
+def test_api_create_tag_annotated_default_user_details(mock_signature_constructor, mock_core_create_tag):
+    mock_tagger_sig = MagicMock()
+    mock_signature_constructor.return_value = mock_tagger_sig
+
+    mock_core_create_tag.return_value = { # Dummy success response
+        'name': 'default-user-tag', 'type': 'annotated', 'target': 'commit1', 'message': 'Test'
+    }
+
+    # Simulate a user object with missing email/username (if possible with the placeholder User model)
+    mock_user_no_details = PlaceholderUser(username="", email="") # Or None, depending on model
+    async def mock_get_user_no_details():
+        return mock_user_no_details
+
+    app.dependency_overrides[actual_repo_auth_dependency] = mock_get_user_no_details
+    payload = TagCreateRequest(tag_name="default-user-tag", message="Test message")
+    response = client.post("/repository/tags", json=payload.model_dump())
+
+    assert response.status_code == HTTPStatus.CREATED
+    # Check that pygit2.Signature was called with default name/email
+    # Default logic: username or "GitWrite API User", email or "api@gitwrite.com"
+    # If username/email are empty strings, they are falsy, so defaults should be used.
+    mock_signature_constructor.assert_called_once_with("GitWrite API User", "api@gitwrite.com")
+    mock_core_create_tag.assert_called_with(
+        repo_path_str=MOCK_REPO_PATH,
+        tag_name="default-user-tag",
+        target_commit_ish="HEAD",
+        message="Test message",
+        force=False,
+        tagger=mock_tagger_sig
+    )
+    app.dependency_overrides = {}
