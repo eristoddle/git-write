@@ -35,7 +35,7 @@ Status: **Completed**
 
 ### Task 6.3 - Agent_API_Dev: Revert and Sync Endpoints
 Objective: Expose `revert` and `sync` functionalities.
-Status: **Pending**
+Status: **Completed**
 
 1.  Create a `POST /repository/revert` endpoint that takes a `commit_ish` and calls `gitwrite_core.versioning.revert_commit`.
 2.  Create a `POST /repository/sync` endpoint that calls `gitwrite_core.repository.sync_repository` and accepts optional parameters.

@@ -80,6 +80,74 @@ None.
 Proceed with Task 6.3: Revert and Sync Endpoints as per the Implementation Plan.
 
 ---
+**Agent:** Jules (Implementation Agent)
+**Task Reference:** Phase 6, Task 6.3: Revert and Sync Endpoints
+
+**Summary:**
+Implemented API endpoints for reverting commits (`POST /repository/revert`) and synchronizing the repository with a remote (`POST /repository/sync`). This involved adding Pydantic models for request and response bodies, implementing endpoint logic with comprehensive error mapping from core exceptions, and writing extensive unit tests for both functionalities.
+
+**Details:**
+- **`gitwrite_api/routers/repository.py` modifications:**
+    - Added Pydantic models:
+        - `RevertCommitRequest` (for `commit_ish`)
+        - `RevertCommitResponse` (for status, message, `new_commit_oid`)
+        - `SyncFetchStatus`, `SyncLocalUpdateStatus`, `SyncPushStatus` (for nested details in sync response)
+        - `SyncRepositoryRequest` (for `remote_name`, `branch_name`, `push`, `allow_no_push`)
+        - `SyncRepositoryResponse` (for overall status and detailed fetch, local update, and push statuses)
+    - Implemented `POST /repository/revert`:
+        - Takes `commit_ish` in request body.
+        - Calls `gitwrite_core.versioning.revert_commit`.
+        - Handles success (200 OK with revert details).
+        - Handles `CoreCommitNotFoundError` (404 Not Found).
+        - Handles `CoreMergeConflictError` from revert (409 Conflict).
+        - Handles `CoreRepositoryNotFoundError` (500 Internal Server Error).
+        - Handles `CoreRepositoryEmptyError` and other `CoreGitWriteError` (400 Bad Request).
+        - Protected by authentication.
+    - Implemented `POST /repository/sync`:
+        - Takes optional `remote_name`, `branch_name`, `push`, `allow_no_push` in request body.
+        - Calls `gitwrite_core.repository.sync_repository`.
+        - Returns detailed sync status (200 OK) via `SyncRepositoryResponse`.
+        - Handles `CoreMergeConflictError` from sync (409 Conflict).
+        - Handles `CoreRepositoryNotFoundError` (500).
+        - Handles `CoreRepositoryEmptyError`, `CoreDetachedHeadError` (400).
+        - Handles `CoreRemoteNotFoundError`, `CoreBranchNotFoundError` (404).
+        - Handles `CoreFetchError`, `CorePushError` (503 Service Unavailable, or 409 for non-fast-forward push).
+        - Handles other `CoreGitWriteError` (400).
+        - Protected by authentication.
+    - Imported necessary core functions (`core_revert_commit`, `core_sync_repository`) and exceptions.
+- **`tests/test_api_repository.py` modifications:**
+    - Added unit tests for `POST /repository/revert`:
+        - Tested successful revert.
+        - Tested `CoreCommitNotFoundError` (404), `CoreMergeConflictError` (409), `CoreRepositoryNotFoundError` (500), `CoreRepositoryEmptyError` (400).
+        - Tested `CoreGitWriteError` (e.g., reverting initial commit) (400).
+        - Tested unauthorized access (401) and invalid payload (422).
+    - Added unit tests for `POST /repository/sync`:
+        - Tested successful sync with default and custom parameters (various outcomes like fast-forward, merge, push/no push).
+        - Tested scenarios where core returns a 'success_conflicts' status (200 OK with conflict details in body).
+        - Tested `CoreMergeConflictError` raised by core (409).
+        - Tested `CoreRepositoryNotFoundError` (500), `CoreRepositoryEmptyError` (400), `CoreDetachedHeadError` (400).
+        - Tested `CoreRemoteNotFoundError` (404), `CoreBranchNotFoundError` (404).
+        - Tested `CoreFetchError` (503), `CorePushError` (503/409).
+        - Tested generic `CoreGitWriteError` (400).
+        - Tested unauthorized access (401) and invalid payload (422).
+- **`Implementation_Plan.md` updated:**
+    - Marked Task 6.3 as "Completed".
+
+**Output/Result:**
+- Modified file: `gitwrite_api/routers/repository.py`
+- Modified file: `tests/test_api_repository.py`
+- Modified file: `Implementation_Plan.md`
+- This log entry in `Memory_Bank.md`.
+
+**Status:** Completed
+
+**Issues/Blockers:**
+None.
+
+**Next Steps (Optional):**
+Proceed with Task 6.4: Tagging Endpoints as per the Implementation Plan.
+
+---
 
 **Agent:** Jules (Implementation Agent)
 **Task Reference:** Phase 6, Task 6.2: Merge and Compare Endpoints

@@ -22,19 +22,26 @@ from ..models import SaveFileRequest, SaveFileResponse # Added for the new save 
 
 # Import core branching functions and exceptions
 from gitwrite_core.branching import create_and_switch_branch, switch_to_branch
+from gitwrite_core.versioning import revert_commit as core_revert_commit # Core function for revert
+from gitwrite_core.repository import sync_repository as core_sync_repository # Core function for sync
 from gitwrite_core.exceptions import (
     RepositoryNotFoundError as CoreRepositoryNotFoundError, # Alias to avoid conflict with potential local one
     RepositoryEmptyError as CoreRepositoryEmptyError,
     BranchAlreadyExistsError as CoreBranchAlreadyExistsError,
     BranchNotFoundError as CoreBranchNotFoundError,
-    MergeConflictError as CoreMergeConflictError, # Added for merge
+    MergeConflictError as CoreMergeConflictError, # Added for merge, also used by revert and sync
     GitWriteError as CoreGitWriteError,
-    DetachedHeadError as CoreDetachedHeadError # Added for merge
+    DetachedHeadError as CoreDetachedHeadError, # Added for merge, also used by sync
+    CommitNotFoundError as CoreCommitNotFoundError, # Added for compare, also used by revert
+    NotEnoughHistoryError as CoreNotEnoughHistoryError, # Added for compare
+    RemoteNotFoundError as CoreRemoteNotFoundError, # For sync
+    FetchError as CoreFetchError, # For sync
+    PushError as CorePushError # For sync
 )
 from gitwrite_core.branching import merge_branch_into_current # Core function for merge
 from gitwrite_core.versioning import get_diff as core_get_diff # Core function for compare
-from gitwrite_core.exceptions import CommitNotFoundError as CoreCommitNotFoundError # Added for compare
-from gitwrite_core.exceptions import NotEnoughHistoryError as CoreNotEnoughHistoryError # Added for compare
+# from gitwrite_core.exceptions import CommitNotFoundError as CoreCommitNotFoundError # Already imported above
+# from gitwrite_core.exceptions import NotEnoughHistoryError as CoreNotEnoughHistoryError # Already imported above
 
 
 # For now, let's define a placeholder dependency to make the code runnable without the actual security module
@@ -117,6 +124,46 @@ class CompareRefsResponse(BaseModel):
     ref1_display_name: str = Field(..., description="Display name for the first reference.")
     ref2_display_name: str = Field(..., description="Display name for the second reference.")
     patch_text: str = Field(..., description="The diff/patch output as a string.")
+
+# Revert Endpoint Models
+class RevertCommitRequest(BaseModel):
+    commit_ish: str = Field(..., min_length=1, description="The commit reference (hash, branch, tag) to revert.")
+
+class RevertCommitResponse(BaseModel):
+    status: str = Field(..., description="Outcome of the revert operation (e.g., 'success').")
+    message: str = Field(..., description="Detailed message about the revert outcome.")
+    new_commit_oid: Optional[str] = Field(None, description="The OID of the new commit created by the revert, if successful.")
+
+# Sync Endpoint Models
+class SyncFetchStatus(BaseModel):
+    received_objects: Optional[int] = None
+    total_objects: Optional[int] = None
+    message: str
+
+class SyncLocalUpdateStatus(BaseModel):
+    type: str # e.g., "none", "up_to_date", "fast_forwarded", "merged_ok", "conflicts_detected", "error", "no_remote_branch"
+    message: str
+    commit_oid: Optional[str] = None
+    conflicting_files: Optional[List[str]] = Field(default_factory=list)
+
+class SyncPushStatus(BaseModel):
+    pushed: bool
+    message: str
+
+class SyncRepositoryRequest(BaseModel):
+    remote_name: str = Field("origin", description="Name of the remote repository to sync with.")
+    branch_name: Optional[str] = Field(None, description="Name of the local branch to sync. Defaults to the current branch.")
+    push: bool = Field(True, description="Whether to push changes to the remote after fetching and merging/fast-forwarding.")
+    allow_no_push: bool = Field(False, description="If True and push is False, considers the operation successful without pushing. If False and push is False, this flag has no effect unless core logic changes.")
+
+class SyncRepositoryResponse(BaseModel):
+    status: str = Field(..., description="Overall status of the sync operation (e.g., 'success', 'success_conflicts', 'error_in_sub_operation').")
+    branch_synced: Optional[str] = Field(None, description="The local branch that was synced.")
+    remote: str = Field(..., description="The remote repository name used for syncing.")
+    fetch_status: SyncFetchStatus
+    local_update_status: SyncLocalUpdateStatus
+    push_status: SyncPushStatus
+
 
 # --- Helper for error handling ---
 def handle_core_response(response: Dict[str, Any], success_status: str = "success") -> Dict[str, Any]:
@@ -391,37 +438,8 @@ async def api_merge_branch(
             commit_oid=result.get('commit_oid')
         )
 
-    except CoreMergeConflictError as e:
-        # e.conflicting_files should be populated by the core function
-        return MergeBranchResponse(
-            status="conflict",
-            message=str(e.message), # Original message from core
-            current_branch=e.current_branch_name if hasattr(e, 'current_branch_name') else None, # If core adds this
-            merged_branch=e.merged_branch_name if hasattr(e, 'merged_branch_name') else request_data.source_branch, # If core adds this
-            conflicting_files=e.conflicting_files,
-        )
-        # Alternative: raise HTTPException(status_code=409, detail={"message": str(e), "conflicting_files": e.conflicting_files})
-        # For now, returning 200 with a specific body structure for conflicts, as per some API designs.
-        # Let's stick to raising 409 for conflicts as it's a clearer error signal.
-        # The Pydantic model for MergeBranchResponse can be used by the client to parse this.
-        # The plan states "Return 409 Conflict", so let's adjust.
-        # raise HTTPException(status_code=409, detail={"message": str(e.message), "conflicting_files": e.conflicting_files})
-        # To make the response body consistent with MergeBranchResponse on 409:
-        # We can't directly return a MergeBranchResponse with a 409 status from here.
-        # FastAPI handles the detail part of HTTPException.
-        # A custom exception handler for CoreMergeConflictError could do this globally.
-        # For now, let's construct the detail for HTTPException to include what we need.
-        detail_payload = {
-            "status": "conflict",
-            "message": str(e.message),
-            "conflicting_files": e.conflicting_files,
-            # Attempt to get branch names if the exception provides them, otherwise use what we know
-            "current_branch": getattr(e, 'current_branch_name', None), # Assuming core might add these to exception
-            "merged_branch": getattr(e, 'merged_branch_name', request_data.source_branch)
-        }
-        # Remove None values from detail_payload to keep it clean
-        detail_payload = {k: v for k, v in detail_payload.items() if v is not None}
-        raise HTTPException(status_code=409, detail=detail_payload)
+    # Note: Order of exception handling is important.
+    # Catch specific exceptions before their parents if they need different handling.
 
     except CoreBranchNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
@@ -431,10 +449,24 @@ async def api_merge_branch(
         raise HTTPException(status_code=400, detail=str(e))
     except CoreRepositoryNotFoundError: # Server-side configuration issue
         raise HTTPException(status_code=500, detail="Repository configuration error.")
+    # Catch CoreGitWriteError and check its type for MergeConflictError behavior
     except CoreGitWriteError as e:
-        # Examples: "Cannot merge a branch into itself", "User signature not configured"
-        # These are client/request errors or preconditions not met.
-        raise HTTPException(status_code=400, detail=f"Merge operation failed: {str(e)}")
+        if type(e).__name__ == 'MergeConflictError' and hasattr(e, 'conflicting_files'):
+            # This is likely a CoreMergeConflictError that wasn't caught by a more specific except
+            # due to potential type identity issues at runtime.
+            detail_payload = {
+                "status": "conflict",
+                "message": str(e.message), # Use e.message which CoreMergeConflictError sets
+                "conflicting_files": e.conflicting_files,
+                "current_branch": getattr(e, 'current_branch_name', None),
+                "merged_branch": getattr(e, 'merged_branch_name', request_data.source_branch)
+            }
+            cleaned_detail_payload = {k: v for k, v in detail_payload.items() if v is not None}
+            raise HTTPException(status_code=409, detail=cleaned_detail_payload)
+        else:
+            # Handle other CoreGitWriteErrors (e.g., "Cannot merge into self", "No signature")
+            raise HTTPException(status_code=400, detail=f"Merge operation failed: {str(e)}")
+
     except Exception as e: # Fallback for unexpected errors
         raise HTTPException(status_code=500, detail=f"An unexpected error occurred during merge: {str(e)}")
 
@@ -489,3 +521,124 @@ async def api_compare_refs(
         raise HTTPException(status_code=500, detail=f"Compare operation failed: {str(e)}")
     except Exception as e: # Fallback for unexpected errors
         raise HTTPException(status_code=500, detail=f"An unexpected error occurred during compare: {str(e)}")
+
+
+# --- Revert Endpoint ---
+
+@router.post("/revert", response_model=RevertCommitResponse)
+async def api_revert_commit(
+    request_data: RevertCommitRequest,
+    current_user: User = Depends(get_current_active_user)
+):
+    """
+    Reverts a specified commit.
+    This creates a new commit that undoes the changes from the specified commit.
+    Requires authentication.
+    """
+    repo_path = PLACEHOLDER_REPO_PATH
+    try:
+        result = core_revert_commit(
+            repo_path_str=repo_path,
+            commit_ish_to_revert=request_data.commit_ish
+        )
+        # Core function returns: {'status': 'success', 'new_commit_oid': str(new_commit_oid), 'message': '...'}
+        return RevertCommitResponse(
+            status=result['status'], # Should be 'success'
+            message=result['message'],
+            new_commit_oid=result.get('new_commit_oid')
+        )
+    except CoreCommitNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except CoreMergeConflictError as e:
+        # This means the revert operation itself caused conflicts.
+        # The core function should have aborted the revert and cleaned the working directory.
+        raise HTTPException(
+            status_code=409,
+            detail=f"Revert failed due to conflicts: {str(e)}. The working directory should be clean."
+        )
+    except CoreRepositoryNotFoundError: # Server-side configuration issue
+        raise HTTPException(status_code=500, detail="Repository configuration error.")
+    except CoreRepositoryEmptyError as e: # e.g. trying to revert in an empty repo
+        raise HTTPException(status_code=400, detail=str(e))
+    except CoreGitWriteError as e:
+        # Examples: "Cannot revert initial commit", "Revert resulted in empty commit" (if that's a case)
+        # These are typically client errors (bad request) or specific git conditions.
+        # Default to 400, but could be 500 if it seems like an internal unhandled git problem.
+        # The message from core_revert_commit is crucial.
+        if "Cannot revert commit" in str(e) and "no parents" in str(e): # Specific case for initial commit
+             raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=400, detail=f"Revert operation failed: {str(e)}")
+    except Exception as e: # Fallback for unexpected errors
+        raise HTTPException(status_code=500, detail=f"An unexpected error occurred during revert: {str(e)}")
+
+
+# --- Sync Endpoint ---
+
+@router.post("/sync", response_model=SyncRepositoryResponse)
+async def api_sync_repository(
+    request_data: SyncRepositoryRequest,
+    current_user: User = Depends(get_current_active_user)
+):
+    """
+    Synchronizes the local repository branch with its remote counterpart.
+    Fetches changes, integrates them (fast-forward or merge), and optionally pushes.
+    Requires authentication.
+    """
+    repo_path = PLACEHOLDER_REPO_PATH
+    try:
+        result = core_sync_repository(
+            repo_path_str=repo_path,
+            remote_name=request_data.remote_name,
+            branch_name_opt=request_data.branch_name,
+            push=request_data.push,
+            allow_no_push=request_data.allow_no_push
+        )
+        # The core function returns a detailed dictionary. We need to map this to SyncRepositoryResponse.
+        # Ensure sub-models are correctly populated.
+        return SyncRepositoryResponse(
+            status=result["status"],
+            branch_synced=result.get("branch_synced"),
+            remote=result["remote"],
+            fetch_status=SyncFetchStatus(**result["fetch_status"]),
+            local_update_status=SyncLocalUpdateStatus(**result["local_update_status"]),
+            push_status=SyncPushStatus(**result["push_status"])
+        )
+    except CoreMergeConflictError as e:
+        # Sync core function can raise this if merge during sync leads to conflicts.
+        # The core function's return dictionary would have 'status': 'success_conflicts'
+        # and details in 'local_update_status'.
+        # However, if it *raises* CoreMergeConflictError, it means the operation was halted.
+        # The plan asks to return 409.
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "message": f"Sync failed due to merge conflicts: {str(e.message)}",
+                "conflicting_files": e.conflicting_files if hasattr(e, 'conflicting_files') else [],
+                # Include branch names if available from exception, though CoreMergeConflictError might not have them directly for sync
+            }
+        )
+    except CoreRepositoryNotFoundError:
+        raise HTTPException(status_code=500, detail="Repository configuration error.")
+    except CoreRepositoryEmptyError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except CoreDetachedHeadError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except CoreRemoteNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except CoreBranchNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except CoreFetchError as e:
+        # 503 Service Unavailable might be appropriate as it's an external service interaction failing.
+        raise HTTPException(status_code=503, detail=f"Fetch operation failed: {str(e)}")
+    except CorePushError as e:
+        # Similar to FetchError, 503 or could be 400/409 if specific (e.g. non-fast-forward rejected and not handled)
+        # CorePushError might contain hints.
+        # If push is rejected due to non-fast-forward and core doesn't handle it by merging/rebasing first (sync should),
+        # then 409 might be suitable. For general push failures (auth, connection), 503.
+        if "non-fast-forward" in str(e).lower():
+            raise HTTPException(status_code=409, detail=f"Push rejected (non-fast-forward): {str(e)}. Try syncing again.")
+        raise HTTPException(status_code=503, detail=f"Push operation failed: {str(e)}")
+    except CoreGitWriteError as e: # General git errors during sync
+        raise HTTPException(status_code=400, detail=f"Sync operation failed: {str(e)}")
+    except Exception as e: # Fallback for unexpected errors
+        raise HTTPException(status_code=500, detail=f"An unexpected error occurred during sync: {str(e)}")

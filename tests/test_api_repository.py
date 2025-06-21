@@ -997,3 +997,362 @@ def test_api_switch_branch_invalid_payload():
     response = client.put("/repository/branch", json={"branch_name": ""})
     assert response.status_code == HTTPStatus.UNPROCESSABLE_ENTITY # 422
     app.dependency_overrides = {}
+
+
+# --- Tests for POST /repository/revert ---
+
+from gitwrite_api.routers.repository import RevertCommitRequest # For revert tests
+
+@patch('gitwrite_api.routers.repository.core_revert_commit')
+def test_api_revert_commit_success(mock_core_revert):
+    mock_core_revert.return_value = {
+        'status': 'success',
+        'message': 'Commit abcdef0 reverted successfully.',
+        'new_commit_oid': 'revertsha123'
+    }
+    app.dependency_overrides[actual_repo_auth_dependency] = mock_get_current_active_user
+    payload = RevertCommitRequest(commit_ish="abcdef0")
+    response = client.post("/repository/revert", json=payload.model_dump())
+
+    assert response.status_code == HTTPStatus.OK
+    data = response.json()
+    assert data["status"] == "success"
+    assert data["message"] == "Commit abcdef0 reverted successfully."
+    assert data["new_commit_oid"] == "revertsha123"
+    mock_core_revert.assert_called_once_with(
+        repo_path_str=MOCK_REPO_PATH,
+        commit_ish_to_revert="abcdef0"
+    )
+    app.dependency_overrides = {}
+
+@patch('gitwrite_api.routers.repository.core_revert_commit')
+def test_api_revert_commit_not_found(mock_core_revert):
+    mock_core_revert.side_effect = CoreCommitNotFoundError("Commit 'unknownsha' not found.")
+    app.dependency_overrides[actual_repo_auth_dependency] = mock_get_current_active_user
+    payload = RevertCommitRequest(commit_ish="unknownsha")
+    response = client.post("/repository/revert", json=payload.model_dump())
+
+    assert response.status_code == HTTPStatus.NOT_FOUND # 404
+    assert response.json()["detail"] == "Commit 'unknownsha' not found."
+    app.dependency_overrides = {}
+
+@patch('gitwrite_api.routers.repository.core_revert_commit')
+def test_api_revert_commit_merge_conflict(mock_core_revert):
+    mock_core_revert.side_effect = CoreMergeConflictError(
+        message="Revert resulted in conflicts.",
+        # conflicting_files=["file.txt"] # CoreMergeConflictError doesn't always have conflicting_files for revert
+    )
+    app.dependency_overrides[actual_repo_auth_dependency] = mock_get_current_active_user
+    payload = RevertCommitRequest(commit_ish="conflictsha")
+    response = client.post("/repository/revert", json=payload.model_dump())
+
+    assert response.status_code == HTTPStatus.CONFLICT # 409
+    # The detail message is constructed by the endpoint
+    expected_detail = "Revert failed due to conflicts: Revert resulted in conflicts.. The working directory should be clean."
+    assert response.json()["detail"] == expected_detail
+    app.dependency_overrides = {}
+
+@patch('gitwrite_api.routers.repository.core_revert_commit')
+def test_api_revert_commit_repo_not_found_error(mock_core_revert):
+    mock_core_revert.side_effect = CoreRepositoryNotFoundError("Repo config error for revert.")
+    app.dependency_overrides[actual_repo_auth_dependency] = mock_get_current_active_user
+    payload = RevertCommitRequest(commit_ish="anysha")
+    response = client.post("/repository/revert", json=payload.model_dump())
+
+    assert response.status_code == HTTPStatus.INTERNAL_SERVER_ERROR # 500
+    assert response.json()["detail"] == "Repository configuration error."
+    app.dependency_overrides = {}
+
+@patch('gitwrite_api.routers.repository.core_revert_commit')
+def test_api_revert_commit_repo_empty_error(mock_core_revert):
+    mock_core_revert.side_effect = CoreRepositoryEmptyError("Cannot revert in empty repository.")
+    app.dependency_overrides[actual_repo_auth_dependency] = mock_get_current_active_user
+    payload = RevertCommitRequest(commit_ish="anysha")
+    response = client.post("/repository/revert", json=payload.model_dump())
+
+    assert response.status_code == HTTPStatus.BAD_REQUEST # 400
+    assert response.json()["detail"] == "Cannot revert in empty repository."
+    app.dependency_overrides = {}
+
+
+@patch('gitwrite_api.routers.repository.core_revert_commit')
+def test_api_revert_initial_commit_error(mock_core_revert):
+    # Specific CoreGitWriteError for trying to revert initial commit
+    error_message = "Cannot revert commit abcdef0 as it has no parents (initial commit)."
+    mock_core_revert.side_effect = CoreGitWriteError(error_message)
+    app.dependency_overrides[actual_repo_auth_dependency] = mock_get_current_active_user
+    payload = RevertCommitRequest(commit_ish="abcdef0") # An initial commit SHA
+    response = client.post("/repository/revert", json=payload.model_dump())
+
+    assert response.status_code == HTTPStatus.BAD_REQUEST # 400, due to specific check in endpoint
+    assert response.json()["detail"] == error_message # Endpoint returns the core error message directly here
+    app.dependency_overrides = {}
+
+@patch('gitwrite_api.routers.repository.core_revert_commit')
+def test_api_revert_generic_git_write_error(mock_core_revert):
+    error_message = "Some other generic revert failure."
+    mock_core_revert.side_effect = CoreGitWriteError(error_message)
+    app.dependency_overrides[actual_repo_auth_dependency] = mock_get_current_active_user
+    payload = RevertCommitRequest(commit_ish="errorsha")
+    response = client.post("/repository/revert", json=payload.model_dump())
+
+    assert response.status_code == HTTPStatus.BAD_REQUEST # 400
+    assert response.json()["detail"] == f"Revert operation failed: {error_message}"
+    app.dependency_overrides = {}
+
+def test_api_revert_commit_unauthorized():
+    app.dependency_overrides = {}
+    async def mock_raise_401_for_revert():
+        from fastapi import HTTPException
+        raise HTTPException(status_code=HTTPStatus.UNAUTHORIZED, detail="Auth failed for revert")
+    app.dependency_overrides[actual_repo_auth_dependency] = mock_raise_401_for_revert
+
+    payload = RevertCommitRequest(commit_ish="autherrorsha")
+    response = client.post("/repository/revert", json=payload.model_dump())
+
+    assert response.status_code == HTTPStatus.UNAUTHORIZED
+    assert response.json()["detail"] == "Auth failed for revert"
+    app.dependency_overrides = {}
+
+def test_api_revert_commit_invalid_payload():
+    app.dependency_overrides[actual_repo_auth_dependency] = mock_get_current_active_user
+    # commit_ish missing
+    response = client.post("/repository/revert", json={})
+    assert response.status_code == HTTPStatus.UNPROCESSABLE_ENTITY # 422
+
+    # commit_ish empty
+    response = client.post("/repository/revert", json={"commit_ish": ""})
+    assert response.status_code == HTTPStatus.UNPROCESSABLE_ENTITY # 422
+    app.dependency_overrides = {}
+
+
+# --- Tests for POST /repository/sync ---
+
+from gitwrite_api.routers.repository import SyncRepositoryRequest # For sync tests
+from gitwrite_core.exceptions import ( # Import more exceptions for sync
+    RemoteNotFoundError as CoreRemoteNotFoundError,
+    FetchError as CoreFetchError,
+    PushError as CorePushError
+)
+
+# Mock data for successful sync response from core
+MOCK_CORE_SYNC_SUCCESS_RESULT = {
+    "status": "success",
+    "branch_synced": "main",
+    "remote": "origin",
+    "fetch_status": {"received_objects": 10, "total_objects": 10, "message": "Fetch complete."},
+    "local_update_status": {"type": "fast_forwarded", "message": "Fast-forwarded.", "commit_oid": "newheadsha", "conflicting_files": []},
+    "push_status": {"pushed": True, "message": "Push successful."}
+}
+
+@patch('gitwrite_api.routers.repository.core_sync_repository')
+def test_api_sync_repository_success_default_params(mock_core_sync):
+    mock_core_sync.return_value = MOCK_CORE_SYNC_SUCCESS_RESULT
+    app.dependency_overrides[actual_repo_auth_dependency] = mock_get_current_active_user
+
+    # Default request (empty body means Pydantic model will use default values)
+    response = client.post("/repository/sync", json={})
+
+    assert response.status_code == HTTPStatus.OK
+    data = response.json()
+    assert data["status"] == "success"
+    assert data["branch_synced"] == "main"
+    assert data["remote"] == "origin"
+    assert data["fetch_status"]["message"] == "Fetch complete."
+    assert data["local_update_status"]["type"] == "fast_forwarded"
+    assert data["push_status"]["pushed"] is True
+
+    mock_core_sync.assert_called_once_with(
+        repo_path_str=MOCK_REPO_PATH,
+        remote_name="origin", # Default from SyncRepositoryRequest model
+        branch_name_opt=None, # Default
+        push=True,            # Default
+        allow_no_push=False   # Default
+    )
+    app.dependency_overrides = {}
+
+@patch('gitwrite_api.routers.repository.core_sync_repository')
+def test_api_sync_repository_success_custom_params(mock_core_sync):
+    custom_result = {
+        **MOCK_CORE_SYNC_SUCCESS_RESULT,
+        "branch_synced": "develop",
+        "remote": "upstream",
+        "push_status": {"pushed": False, "message": "Push explicitly disabled."}
+    }
+    mock_core_sync.return_value = custom_result
+    app.dependency_overrides[actual_repo_auth_dependency] = mock_get_current_active_user
+
+    payload = SyncRepositoryRequest(
+        remote_name="upstream",
+        branch_name="develop",
+        push=False,
+        allow_no_push=True # Important for push=False to be "successful" without pushing
+    )
+    response = client.post("/repository/sync", json=payload.model_dump())
+
+    assert response.status_code == HTTPStatus.OK
+    data = response.json()
+    assert data["status"] == "success" # Core function determines this overall status
+    assert data["branch_synced"] == "develop"
+    assert data["remote"] == "upstream"
+    assert data["push_status"]["pushed"] is False
+    assert data["push_status"]["message"] == "Push explicitly disabled."
+
+    mock_core_sync.assert_called_once_with(
+        repo_path_str=MOCK_REPO_PATH,
+        remote_name="upstream",
+        branch_name_opt="develop",
+        push=False,
+        allow_no_push=True
+    )
+    app.dependency_overrides = {}
+
+
+@patch('gitwrite_api.routers.repository.core_sync_repository')
+def test_api_sync_repository_merge_conflict(mock_core_sync):
+    # Scenario: Core sync function raises CoreMergeConflictError
+    mock_core_sync.side_effect = CoreMergeConflictError(
+        message="Merge resulted in conflicts during sync.",
+        conflicting_files=["fileA.txt", "fileB.txt"]
+    )
+    app.dependency_overrides[actual_repo_auth_dependency] = mock_get_current_active_user
+    payload = SyncRepositoryRequest() # Default params
+    response = client.post("/repository/sync", json=payload.model_dump())
+
+    assert response.status_code == HTTPStatus.CONFLICT # 409
+    data = response.json()["detail"] # Detail is a dict here
+    assert "Sync failed due to merge conflicts" in data["message"]
+    assert data["conflicting_files"] == ["fileA.txt", "fileB.txt"]
+    app.dependency_overrides = {}
+
+@patch('gitwrite_api.routers.repository.core_sync_repository')
+def test_api_sync_repository_core_returns_conflict_status(mock_core_sync):
+    # Scenario: Core sync function *returns* a dict indicating conflicts, doesn't raise
+    conflict_result_from_core = {
+        "status": "success_conflicts", # Special status from core
+        "branch_synced": "main",
+        "remote": "origin",
+        "fetch_status": {"received_objects": 5, "total_objects": 5, "message": "Fetch complete."},
+        "local_update_status": {
+            "type": "conflicts_detected",
+            "message": "Merge resulted in conflicts. Please resolve them.",
+            "conflicting_files": ["fileC.txt"]
+        },
+        "push_status": {"pushed": False, "message": "Push skipped due to conflicts."}
+    }
+    mock_core_sync.return_value = conflict_result_from_core
+    app.dependency_overrides[actual_repo_auth_dependency] = mock_get_current_active_user
+    payload = SyncRepositoryRequest()
+    response = client.post("/repository/sync", json=payload.model_dump())
+
+    assert response.status_code == HTTPStatus.OK # 200, but body indicates conflict
+    data = response.json()
+    assert data["status"] == "success_conflicts"
+    assert data["local_update_status"]["type"] == "conflicts_detected"
+    assert data["local_update_status"]["conflicting_files"] == ["fileC.txt"]
+    assert data["push_status"]["pushed"] is False
+    app.dependency_overrides = {}
+
+
+@patch('gitwrite_api.routers.repository.core_sync_repository')
+def test_api_sync_repository_repo_not_found(mock_core_sync):
+    mock_core_sync.side_effect = CoreRepositoryNotFoundError("Sync failed: Repo not found.")
+    app.dependency_overrides[actual_repo_auth_dependency] = mock_get_current_active_user
+    response = client.post("/repository/sync", json=SyncRepositoryRequest().model_dump())
+    assert response.status_code == HTTPStatus.INTERNAL_SERVER_ERROR # 500
+    assert response.json()["detail"] == "Repository configuration error."
+    app.dependency_overrides = {}
+
+@patch('gitwrite_api.routers.repository.core_sync_repository')
+def test_api_sync_repository_repo_empty(mock_core_sync):
+    mock_core_sync.side_effect = CoreRepositoryEmptyError("Sync failed: Repo is empty.")
+    app.dependency_overrides[actual_repo_auth_dependency] = mock_get_current_active_user
+    response = client.post("/repository/sync", json=SyncRepositoryRequest().model_dump())
+    assert response.status_code == HTTPStatus.BAD_REQUEST # 400
+    assert response.json()["detail"] == "Sync failed: Repo is empty."
+    app.dependency_overrides = {}
+
+@patch('gitwrite_api.routers.repository.core_sync_repository')
+def test_api_sync_repository_detached_head(mock_core_sync):
+    mock_core_sync.side_effect = CoreDetachedHeadError("Sync failed: HEAD is detached.")
+    app.dependency_overrides[actual_repo_auth_dependency] = mock_get_current_active_user
+    response = client.post("/repository/sync", json=SyncRepositoryRequest().model_dump())
+    assert response.status_code == HTTPStatus.BAD_REQUEST # 400
+    assert response.json()["detail"] == "Sync failed: HEAD is detached."
+    app.dependency_overrides = {}
+
+@patch('gitwrite_api.routers.repository.core_sync_repository')
+def test_api_sync_repository_remote_not_found(mock_core_sync):
+    mock_core_sync.side_effect = CoreRemoteNotFoundError("Sync failed: Remote 'nonexistent' not found.")
+    app.dependency_overrides[actual_repo_auth_dependency] = mock_get_current_active_user
+    response = client.post("/repository/sync", json=SyncRepositoryRequest(remote_name="nonexistent").model_dump())
+    assert response.status_code == HTTPStatus.NOT_FOUND # 404
+    assert response.json()["detail"] == "Sync failed: Remote 'nonexistent' not found."
+    app.dependency_overrides = {}
+
+@patch('gitwrite_api.routers.repository.core_sync_repository')
+def test_api_sync_repository_branch_not_found(mock_core_sync):
+    mock_core_sync.side_effect = CoreBranchNotFoundError("Sync failed: Branch 'ghost' not found.")
+    app.dependency_overrides[actual_repo_auth_dependency] = mock_get_current_active_user
+    response = client.post("/repository/sync", json=SyncRepositoryRequest(branch_name="ghost").model_dump())
+    assert response.status_code == HTTPStatus.NOT_FOUND # 404
+    assert response.json()["detail"] == "Sync failed: Branch 'ghost' not found."
+    app.dependency_overrides = {}
+
+@patch('gitwrite_api.routers.repository.core_sync_repository')
+def test_api_sync_repository_fetch_error(mock_core_sync):
+    mock_core_sync.side_effect = CoreFetchError("Fetch operation failed due to network issue.")
+    app.dependency_overrides[actual_repo_auth_dependency] = mock_get_current_active_user
+    response = client.post("/repository/sync", json=SyncRepositoryRequest().model_dump())
+    assert response.status_code == HTTPStatus.SERVICE_UNAVAILABLE # 503
+    assert response.json()["detail"] == "Fetch operation failed: Fetch operation failed due to network issue."
+    app.dependency_overrides = {}
+
+@patch('gitwrite_api.routers.repository.core_sync_repository')
+def test_api_sync_repository_push_error_generic(mock_core_sync):
+    mock_core_sync.side_effect = CorePushError("Push operation failed: Remote disconnected.")
+    app.dependency_overrides[actual_repo_auth_dependency] = mock_get_current_active_user
+    response = client.post("/repository/sync", json=SyncRepositoryRequest().model_dump())
+    assert response.status_code == HTTPStatus.SERVICE_UNAVAILABLE # 503
+    assert response.json()["detail"] == "Push operation failed: Push operation failed: Remote disconnected."
+    app.dependency_overrides = {}
+
+@patch('gitwrite_api.routers.repository.core_sync_repository')
+def test_api_sync_repository_push_error_non_fast_forward(mock_core_sync):
+    mock_core_sync.side_effect = CorePushError("Push rejected: non-fast-forward update.")
+    app.dependency_overrides[actual_repo_auth_dependency] = mock_get_current_active_user
+    response = client.post("/repository/sync", json=SyncRepositoryRequest().model_dump())
+    assert response.status_code == HTTPStatus.CONFLICT # 409
+    assert "Push rejected (non-fast-forward)" in response.json()["detail"]
+    app.dependency_overrides = {}
+
+@patch('gitwrite_api.routers.repository.core_sync_repository')
+def test_api_sync_repository_git_write_error(mock_core_sync):
+    mock_core_sync.side_effect = CoreGitWriteError("A generic GitWrite error during sync.")
+    app.dependency_overrides[actual_repo_auth_dependency] = mock_get_current_active_user
+    response = client.post("/repository/sync", json=SyncRepositoryRequest().model_dump())
+    assert response.status_code == HTTPStatus.BAD_REQUEST # 400
+    assert response.json()["detail"] == "Sync operation failed: A generic GitWrite error during sync."
+    app.dependency_overrides = {}
+
+def test_api_sync_repository_unauthorized():
+    app.dependency_overrides = {}
+    async def mock_raise_401_for_sync():
+        from fastapi import HTTPException
+        raise HTTPException(status_code=HTTPStatus.UNAUTHORIZED, detail="Auth failed for sync")
+    app.dependency_overrides[actual_repo_auth_dependency] = mock_raise_401_for_sync
+
+    response = client.post("/repository/sync", json=SyncRepositoryRequest().model_dump())
+    assert response.status_code == HTTPStatus.UNAUTHORIZED
+    assert response.json()["detail"] == "Auth failed for sync"
+    app.dependency_overrides = {}
+
+def test_api_sync_repository_invalid_payload():
+    app.dependency_overrides[actual_repo_auth_dependency] = mock_get_current_active_user
+    # Example: 'push' field with invalid type
+    invalid_payload = {"push": "not-a-boolean"}
+    response = client.post("/repository/sync", json=invalid_payload)
+    assert response.status_code == HTTPStatus.UNPROCESSABLE_ENTITY # 422
+    data = response.json()["detail"]
+    assert any(item["type"] == "bool_parsing" and item["loc"] == ["body", "push"] for item in data)
+    app.dependency_overrides = {}
