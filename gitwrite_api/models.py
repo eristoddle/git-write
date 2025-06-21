@@ -38,7 +38,7 @@ class FileUploadCompleteRequest(BaseModel):
     completion_token: str = Field(..., description="The completion token obtained from the initiation step.")
 
 class FileUploadCompleteResponse(BaseModel):
-    commit_id: str = Field(..., description="The ID of the new commit created after successful upload and save.")
+    commit_id: Optional[str] = Field(None, description="The ID of the new commit created after successful upload and save, or None if no changes.")
     message: str = Field(..., description="A message indicating the outcome of the operation.")
 
 

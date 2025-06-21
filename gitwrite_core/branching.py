@@ -384,6 +384,7 @@ def merge_branch_into_current(repo_path_str: str, branch_to_merge_name: str) -> 
             repo.index.read()  # Explicitly reload the index
             repo.checkout_head(strategy=pygit2.GIT_CHECKOUT_FORCE)
             repo.state_cleanup()
+            repo.index.read(force=True) # Force reload index after cleanup
             return {
                 'status': 'merged_ok',
                 'branch_name': resolved_merged_branch_name, # Name of the branch that was merged

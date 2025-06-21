@@ -709,18 +709,15 @@ async def api_create_tag(
     if request_data.message: # Annotated tags require a tagger
         user_name = current_user.username if hasattr(current_user, 'username') and current_user.username else "GitWrite API User"
         user_email = current_user.email if hasattr(current_user, 'email') and current_user.email else "api@gitwrite.com"
-        # Need to import pygit2 for Signature
         try:
-            # Attempt to import pygit2. If it's not available in this environment,
-            # this would be a server-side issue. For now, assume it's available.
-            # import pygit2 # Removed from here
             tagger_signature = pygit2.Signature(user_name, user_email)
-        except ImportError:
-            # This should ideally not happen in a deployed environment.
-            # If pygit2 is missing, core functions would fail much earlier.
-            # However, defensive coding suggests handling it.
-            raise HTTPException(status_code=500, detail="Server configuration error: pygit2 library not available.")
-
+        except pygit2.GitError as e:
+            # More specific catch for errors during Signature creation if name/email are invalid for libgit2
+            raise HTTPException(status_code=400, detail=f"Failed to create tagger signature due to invalid user details: {str(e)}")
+        except Exception as e:
+            # Catch other unexpected errors during signature creation, potentially the "dev/string_type"
+            # This makes it a 500 error, indicating an internal server problem.
+            raise HTTPException(status_code=500, detail=f"Unexpected error creating tagger signature: {str(e)}")
 
     try:
         result = core_create_tag( # Ensure core_create_tag is imported

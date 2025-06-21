@@ -271,6 +271,7 @@ class TestSaveCommandCLI:
         repo_path = tmp_path / "new_repo_for_initial_save"
         repo_path.mkdir()
         pygit2.init_repository(str(repo_path)) # pygit2 import is kept
+        configure_git_user_for_cli(str(repo_path)) # Call the fixture
         os.chdir(repo_path) # os import is kept
         (repo_path / "first_file.txt").write_text("Hello world") # Path import is kept
         commit_message = "Initial commit"

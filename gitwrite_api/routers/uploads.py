@@ -21,6 +21,10 @@ from ..security import get_current_user # Placeholder for actual current user de
 # Placeholder for actual repository path logic
 # TODO: Replace with dynamic path based on user/request
 PLACEHOLDER_REPO_PATH_PREFIX = "/tmp/gitwrite_repos"
+# Import the core function for saving files
+from gitwrite_core.repository import save_and_commit_multiple_files as core_save_files
+# from gitwrite_core.exceptions import RepositoryNotFoundError as CoreRepositoryNotFoundError # if specific handling needed
+
 # Define a temporary directory for uploads
 TEMP_UPLOAD_DIR = "/tmp/gitwrite_uploads"
 
@@ -327,8 +331,7 @@ async def complete_file_upload(
     author_email = current_user.email
 
     # 4. Call the core function
-    # Need to import the core function
-    from gitwrite_core.repository import save_and_commit_multiple_files as core_save_files
+    # core_save_files is now imported at the top of the module.
     # from gitwrite_core.exceptions import RepositoryNotFoundError as CoreRepositoryNotFoundError # if specific handling needed
 
     core_result = core_save_files(

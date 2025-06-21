@@ -134,6 +134,7 @@ class TestMergeCommandCLI:
         repo.checkout(repo.branches.local['main'].name)
 
         os.chdir(repo_path_no_sig)
+        configure_git_user_for_cli(str(repo_path_no_sig)) # Call the fixture
         result = runner.invoke(cli, ["merge", "feature"])
         assert result.exit_code == 0, f"CLI Error: {result.output}"
         assert "Merged 'feature' into 'main'. New commit:" in result.output

@@ -203,7 +203,15 @@ def test_handle_file_upload_already_uploaded():
 
 # --- Tests for POST /repositories/{repo_id}/save/complete ---
 
-def test_complete_upload_success():
+def test_complete_upload_success(mock_core_save_files): # Added mock_core_save_files fixture
+    # Mock the core function's response for this test
+    mocked_commit_id = "sim_commit_test_complete_success"
+    mock_core_save_files.return_value = {
+        "status": "success",
+        "commit_id": mocked_commit_id,
+        "message": "Files committed successfully (mocked for basic success test)."
+    }
+
     # 1. Initiate
     init_resp = client.post(f"/repositories/{TEST_REPO_ID}/save/initiate", json={"commit_message": TEST_COMMIT_MSG, "files": [{"file_path": TEST_FILE1_PATH, "file_hash": TEST_FILE1_HASH}]})
     init_data = init_resp.json()
@@ -223,11 +231,17 @@ def test_complete_upload_success():
         f"/repositories/{TEST_REPO_ID}/save/complete",
         json={"completion_token": completion_token}
     )
-    assert complete_response.status_code == 200
+    assert complete_response.status_code == 200, f"Response content: {complete_response.text}" # Added detail
     complete_data = complete_response.json()
     assert "commit_id" in complete_data
-    assert "sim_commit_" in complete_data["commit_id"] # As it's simulated for now
+    assert complete_data["commit_id"] == mocked_commit_id # Check against mocked ID
     assert completion_token not in uploads.upload_sessions # Session should be cleared
+
+    # Verify the mock was called (optional, but good practice)
+    # This requires knowing the expected repo path and user details.
+    # For this simpler test, we primarily care that the endpoint flow works with a mock.
+    # More detailed call verification is in test_complete_upload_success_integration.
+    mock_core_save_files.assert_called_once()
 
 
 # Patch the core function for relevant tests
@@ -252,12 +266,13 @@ def test_complete_upload_success_integration(mock_core_save_files):
     upload_url = init_data["upload_urls"][TEST_FILE1_PATH]
     completion_token = init_data["completion_token"]
 
+    # Check if session is populated immediately after initiate
+    assert completion_token in uploads.upload_sessions, "Token not in sessions immediately after initiate"
+
     # 2. Upload file - this creates a temp file
     # Get the actual path of the temp file created by handle_file_upload
-    # Ensure TEST_TEMP_UPLOAD_DIR is clean before this specific part
-    if os.path.exists(TEST_TEMP_UPLOAD_DIR): # Should be handled by fixture, but defensive
-        shutil.rmtree(TEST_TEMP_UPLOAD_DIR)
-    os.makedirs(TEST_TEMP_UPLOAD_DIR, exist_ok=True)
+        # The clear_upload_state_and_temp_files fixture handles TEST_TEMP_UPLOAD_DIR cleanup.
+        # Redundant cleanup removed from here.
 
     dummy_file_content = b"dummy content for integration test"
     dummy_temp_file_name = "testfile_for_complete_integ.tmp" # A distinct name

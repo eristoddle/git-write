@@ -1333,7 +1333,7 @@ class TestCherryPickCommitCore(GitWriteCoreTestCaseBase):
         self.repo.merge(f1_commit_oid)
         self._create_file(self.repo, "base.txt", "Base content\nF1 modification")
         self._create_file(self.repo, "f1.txt", "F1 content")
-        self.repo.index.addall(["base.txt", "f1.txt"]) # Use addall for simplicity
+        self.repo.index.add_all(["base.txt", "f1.txt"]) # Use add_all for simplicity
         self.repo.index.write()
         m1_tree = self.repo.index.write_tree()
         m1_oid = self.repo.create_commit("HEAD", self.signature, self.signature, "M1: Merge F1 to main", m1_tree, [c1_oid, f1_commit_oid])
@@ -1344,7 +1344,7 @@ class TestCherryPickCommitCore(GitWriteCoreTestCaseBase):
         self.repo.merge(f2_commit_oid)
         self._create_file(self.repo, "base.txt", "Base content\nF1 modification\nF2 modification") # Resolution
         self._create_file(self.repo, "f2.txt", "F2 content")
-        self.repo.index.addall(["base.txt", "f2.txt"])
+        self.repo.index.add_all(["base.txt", "f2.txt"])
         self.repo.index.write()
         m2_tree = self.repo.index.write_tree()
         m2_merge_oid = self.repo.create_commit("HEAD", self.signature, self.signature, "M2: Merge F2 to main", m2_tree, [m1_oid, f2_commit_oid])
@@ -1418,7 +1418,7 @@ class TestCherryPickCommitCore(GitWriteCoreTestCaseBase):
 
         self.repo.merge(c_other)
         self._create_file(self.repo, "f.txt", "merged") # Dummy resolution
-        self.repo.index.addall(["f.txt", "f_other.txt", "f_main.txt"])
+        self.repo.index.add_all(["f.txt", "f_other.txt", "f_main.txt"])
         self.repo.index.write()
         merge_tree = self.repo.index.write_tree()
         merge_commit_oid = self.repo.create_commit("HEAD", self.signature, self.signature, "Merge", merge_tree, [c_main, c_other])
