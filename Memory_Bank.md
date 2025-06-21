@@ -140,4 +140,4 @@ Implemented two new API endpoints for repository branch management: `POST /repos
 None.
 
 **Next Steps (Optional):**
-Proceed with Task 6.2: Merge and Compare Endpoints as per the Implementation Plan.
+Proceed with Task 6.3: Revert and Sync Endpoints as per the Implementation Plan.
