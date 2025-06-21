@@ -5,6 +5,8 @@ import datetime
 
 # Assuming your FastAPI app instance is in gitwrite_api.main
 from gitwrite_api.main import app
+from pathlib import Path # Added for path manipulation in tests
+
 # Placeholder User model used in the router's dependency
 from gitwrite_api.routers.repository import User as PlaceholderUser
 
@@ -1807,6 +1809,222 @@ def test_api_create_tag_pygit2_import_error(mock_core_create_tag, mock_signature
     mock_core_create_tag.assert_not_called()
     # mock_signature_constructor_module_level is for pygit2.Signature at module level if it were imported there.
     # The one inside the function is what we are concerned about.
+
+# --- Tests for POST /repositories (Repository Initialization) ---
+
+from gitwrite_api.models import RepositoryCreateRequest
+# RepositoryCreateResponse is defined in routers.repository, used for asserting response structure.
+
+@patch('gitwrite_api.routers.repository.core_initialize_repository')
+@patch('gitwrite_api.routers.repository.uuid.uuid4') # Mock uuid.uuid4
+def test_api_initialize_repository_with_project_name_success(mock_uuid4, mock_core_init_repo):
+    app.dependency_overrides[actual_repo_auth_dependency] = mock_get_current_active_user
+    project_name = "test-project"
+    expected_repo_path = f"{MOCK_REPO_PATH}/gitwrite_user_repos/{project_name}" # Path core would return
+
+    mock_core_init_repo.return_value = {
+        "status": "success",
+        "message": f"Repository '{project_name}' initialized.",
+        "path": expected_repo_path
+    }
+
+    payload = RepositoryCreateRequest(project_name=project_name)
+    response = client.post("/repository/repositories", json=payload.model_dump())
+
+    assert response.status_code == HTTPStatus.CREATED # 201
+    data = response.json()
+    assert data["status"] == "created"
+    assert data["repository_id"] == project_name
+    assert data["path"] == expected_repo_path
+    assert project_name in data["message"]
+
+    # Check that core_initialize_repository was called correctly
+    # When project_name is provided, path_str is the base path for user repos,
+    # and project_name is passed as the specific name.
+    mock_core_init_repo.assert_called_once()
+    call_args = mock_core_init_repo.call_args[1] # Get kwargs
+    assert call_args['project_name'] == project_name
+    assert Path(call_args['path_str']) == Path(MOCK_REPO_PATH) / "gitwrite_user_repos"
+
+    mock_uuid4.assert_not_called() # uuid4 should not be called when project_name is provided
+    app.dependency_overrides = {}
+
+
+@patch('gitwrite_api.routers.repository.core_initialize_repository')
+@patch('gitwrite_api.routers.repository.uuid.uuid4')
+def test_api_initialize_repository_without_project_name_success(mock_uuid4, mock_core_init_repo):
+    app.dependency_overrides[actual_repo_auth_dependency] = mock_get_current_active_user
+    generated_uuid = "a1b2c3d4-e5f6-7890-1234-567890abcdef"
+    mock_uuid4.return_value = generated_uuid
+    # Path core would return when no project_name is given (full path including UUID)
+    expected_repo_path = f"{MOCK_REPO_PATH}/gitwrite_user_repos/{generated_uuid}"
+
+    mock_core_init_repo.return_value = {
+        "status": "success",
+        "message": f"Repository '{generated_uuid}' initialized.",
+        "path": expected_repo_path
+    }
+
+    payload = RepositoryCreateRequest(project_name=None) # No project name
+    response = client.post("/repository/repositories", json=payload.model_dump())
+
+    assert response.status_code == HTTPStatus.CREATED
+    data = response.json()
+    assert data["status"] == "created"
+    assert data["repository_id"] == generated_uuid
+    assert data["path"] == expected_repo_path
+    assert generated_uuid in data["message"]
+
+    mock_uuid4.assert_called_once()
+    # When project_name is None, path_str to core is the full path including the UUID,
+    # and project_name kwarg to core is None.
+    mock_core_init_repo.assert_called_once()
+    call_args = mock_core_init_repo.call_args[1]
+    assert call_args['project_name'] is None
+    assert Path(call_args['path_str']) == Path(MOCK_REPO_PATH) / "gitwrite_user_repos" / generated_uuid
+    app.dependency_overrides = {}
+
+
+@patch('gitwrite_api.routers.repository.core_initialize_repository')
+def test_api_initialize_repository_conflict_already_exists(mock_core_init_repo):
+    app.dependency_overrides[actual_repo_auth_dependency] = mock_get_current_active_user
+    project_name = "existing-project"
+    error_message = f"Error: Directory '{project_name}' already exists, is not empty, and is not a Git repository."
+    mock_core_init_repo.return_value = {
+        "status": "error", # Core might return 'error'
+        "message": error_message,
+        "path": f"{MOCK_REPO_PATH}/gitwrite_user_repos/{project_name}"
+    }
+
+    payload = RepositoryCreateRequest(project_name=project_name)
+    response = client.post("/repository/repositories", json=payload.model_dump())
+
+    assert response.status_code == HTTPStatus.CONFLICT # 409
+    data = response.json()
+    assert data["detail"] == error_message
+    app.dependency_overrides = {}
+
+@patch('gitwrite_api.routers.repository.core_initialize_repository')
+def test_api_initialize_repository_conflict_file_exists(mock_core_init_repo):
+    app.dependency_overrides[actual_repo_auth_dependency] = mock_get_current_active_user
+    project_name = "file-conflict-project"
+    error_message = f"Error: A file named '{project_name}' already exists at '{MOCK_REPO_PATH}/gitwrite_user_repos'."
+    mock_core_init_repo.return_value = {
+        "status": "error",
+        "message": error_message,
+        "path": f"{MOCK_REPO_PATH}/gitwrite_user_repos/{project_name}"
+    }
+
+    payload = RepositoryCreateRequest(project_name=project_name)
+    response = client.post("/repository/repositories", json=payload.model_dump())
+
+    assert response.status_code == HTTPStatus.CONFLICT # 409, as per endpoint logic for this message
+    data = response.json()
+    assert data["detail"] == error_message
+    app.dependency_overrides = {}
+
+
+@patch('gitwrite_api.routers.repository.core_initialize_repository')
+def test_api_initialize_repository_core_generic_error(mock_core_init_repo):
+    app.dependency_overrides[actual_repo_auth_dependency] = mock_get_current_active_user
+    project_name = "error-project"
+    error_message = "A generic error occurred in core initialization."
+    mock_core_init_repo.return_value = {
+        "status": "error",
+        "message": error_message,
+        "path": f"{MOCK_REPO_PATH}/gitwrite_user_repos/{project_name}" # Path might still be returned
+    }
+
+    payload = RepositoryCreateRequest(project_name=project_name)
+    response = client.post("/repository/repositories", json=payload.model_dump())
+
+    assert response.status_code == HTTPStatus.INTERNAL_SERVER_ERROR # 500
+    data = response.json()
+    assert data["detail"] == error_message
+    app.dependency_overrides = {}
+
+@patch('gitwrite_api.routers.repository.Path.mkdir') # Mock Path.mkdir to simulate OS error
+def test_api_initialize_repository_base_dir_creation_error(mock_mkdir):
+    app.dependency_overrides[actual_repo_auth_dependency] = mock_get_current_active_user
+    mock_mkdir.side_effect = OSError("Simulated permission denied to create base directory.")
+
+    payload = RepositoryCreateRequest(project_name="cant-create-base")
+    response = client.post("/repository/repositories", json=payload.model_dump())
+
+    assert response.status_code == HTTPStatus.INTERNAL_SERVER_ERROR # 500
+    data = response.json()
+    assert "Could not create base repository directory" in data["detail"]
+    assert "Simulated permission denied" in data["detail"]
+    app.dependency_overrides = {}
+
+
+def test_api_initialize_repository_unauthorized():
+    app.dependency_overrides = {} # Clear any existing overrides
+    async def mock_raise_401_for_init_repo():
+        from fastapi import HTTPException
+        raise HTTPException(status_code=HTTPStatus.UNAUTHORIZED, detail="Auth failed for repo init")
+
+    app.dependency_overrides[actual_repo_auth_dependency] = mock_raise_401_for_init_repo
+
+    payload = RepositoryCreateRequest(project_name="unauth-project")
+    response = client.post("/repository/repositories", json=payload.model_dump())
+
+    assert response.status_code == HTTPStatus.UNAUTHORIZED
+    assert response.json()["detail"] == "Auth failed for repo init"
+    app.dependency_overrides = {}
+
+
+def test_api_initialize_repository_invalid_payload():
+    app.dependency_overrides[actual_repo_auth_dependency] = mock_get_current_active_user
+
+    # project_name with invalid characters (violates Pydantic model pattern)
+    invalid_payload_chars = {"project_name": "test project with spaces!"}
+    response = client.post("/repository/repositories", json=invalid_payload_chars)
+    assert response.status_code == HTTPStatus.UNPROCESSABLE_ENTITY # 422
+    data = response.json()["detail"]
+    assert any(item["loc"] == ["body", "project_name"] and "pattern" in item["msg"] for item in data)
+
+    # project_name is empty string (violates Pydantic model min_length=1)
+    # Note: project_name is Optional, so omitting it is fine (tested above).
+    # This is for providing it as an empty string.
+    invalid_payload_empty = {"project_name": ""}
+    response = client.post("/repository/repositories", json=invalid_payload_empty)
+    assert response.status_code == HTTPStatus.UNPROCESSABLE_ENTITY # 422
+    data = response.json()["detail"]
+    assert any(item["loc"] == ["body", "project_name"] and "min_length" in item["msg"] for item in data)
+
+    app.dependency_overrides = {}
+
+# Test for the internal project_name validation in the endpoint (though Pydantic should catch most)
+# This test is more for the `if not request_data.project_name.isalnum()...` part.
+# Pydantic's pattern `^[a-zA-Z0-9_-]+$` is quite strict.
+# The internal check `if not request_data.project_name.isalnum() and '_' not in request_data.project_name and '-' not in request_data.project_name:`
+# is a bit looser. If Pydantic pattern allows something that this check blocks, it would be caught.
+# However, the Pydantic pattern is more restrictive, so this internal check might be redundant
+# or only catch edge cases if the Pydantic pattern were different.
+# For current setup, Pydantic validation will occur first.
+# Let's assume for a moment Pydantic allows a name like "project!"
+@patch('gitwrite_api.routers.repository.core_initialize_repository')
+def test_api_initialize_repository_endpoint_internal_validation_for_project_name(mock_core_init_repo):
+    app.dependency_overrides[actual_repo_auth_dependency] = mock_get_current_active_user
+
+    # To hit the internal validation, we'd need to bypass Pydantic's pattern.
+    # This is hard in a normal test flow. The Pydantic pattern is r"^[a-zA-Z0-9_-]+$"
+    # The internal check is: `if not request_data.project_name.isalnum() and '_' not in request_data.project_name and '-' not in request_data.project_name:`
+    # This means if it's NOT ( (alphanum) OR (contains '_') OR (contains '-')) -> then it's invalid.
+    # Example: "project!" - not alphanum, no underscore, no hyphen. This *would* be caught by internal.
+    # Pydantic `^[a-zA-Z0-9_-]+$` also rejects "project!".
+    # So, the internal check is currently overshadowed by a stricter Pydantic pattern.
+    # If Pydantic pattern was, say, `.*` (allow anything), then the internal check would matter more.
+    # For now, this test is more conceptual unless Pydantic rules change.
+
+    # Let's simulate the scenario where Pydantic somehow allows "project!"
+    # by directly calling the endpoint function with a manually crafted request object
+    # (this is more complex than using TestClient normally).
+    # For simplicity, we'll acknowledge this internal check is there but likely not hit
+    # due to Pydantic's stricter validation. No direct TestClient test for it unless Pydantic changes.
+    pass # Placeholder for if Pydantic validation was looser
+
 
 # Re-check if pygit2.Signature is imported at module level or within function
 # It's `import pygit2` then `pygit2.Signature` inside `api_create_tag`.
