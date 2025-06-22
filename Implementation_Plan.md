@@ -44,7 +44,7 @@ Status: **Completed**
 
 ### Task 7.2 - Agent_CLI_Dev: Cherry-Pick CLI Commands
 Objective: Expose the cherry-pick functionality through user-friendly CLI commands.
-Status: **Pending**
+Status: **Completed**
 
 1.  Create a `gitwrite review <branch>` command to list commits on another branch in a review-friendly format.
 2.  Create a `gitwrite cherry-pick <commit_id>` command in `gitwrite_cli/main.py` that calls the core `cherry_pick_commit` function.

@@ -33,8 +33,11 @@ from gitwrite_core.exceptions import (
     DetachedHeadError, # Added for sync
     FetchError, # Added for sync
     PushError, # Added for sync
-    RemoteNotFoundError # Added for sync
+    RemoteNotFoundError, # Added for sync
+    BranchNotFoundError as CoreBranchNotFoundError, # Added for review command
+    CommitNotFoundError # Added for cherry-pick
 )
+from gitwrite_core.versioning import get_commit_history, get_diff, revert_commit, save_changes, get_branch_review_commits, cherry_pick_commit # Added get_branch_review_commits and cherry_pick_commit
 from rich.table import Table # Ensure Table is imported for switch
 
 @click.group()
@@ -788,6 +791,85 @@ def list_cmd(ctx): # Renamed to avoid conflict if we had a variable named list
 def ignore():
     """Manages .gitignore entries."""
     pass
+
+@cli.command()
+@click.argument("branch_name")
+@click.option("-n", "--number", "count", type=int, default=None, help="Number of commits to show.")
+def review(branch_name, count):
+    """Shows commits on another branch that are not in the current HEAD."""
+    try:
+        repo_path_str = str(Path.cwd()) # Core function handles discovery from this path
+        commits = get_branch_review_commits(repo_path_str, branch_name, limit=count)
+
+        if not commits:
+            click.echo(f"No unique commits found on branch '{branch_name}' compared to HEAD.")
+            return
+
+        console = Console()
+        table = Table(title=f"Review: Commits on '{branch_name}' not in HEAD")
+        table.add_column("Commit", style="cyan", no_wrap=True)
+        table.add_column("Author", style="magenta")
+        table.add_column("Date", style="green")
+        table.add_column("Message", style="white")
+
+        for commit_data in commits:
+            table.add_row(
+                commit_data["short_hash"],
+                commit_data["author_name"],
+                commit_data["date"],
+                commit_data["message_short"]
+            )
+
+        if not table.rows: # Should be caught by `if not commits:`
+            click.echo(f"No unique commits to display for branch '{branch_name}'.")
+            return
+
+        console.print(table)
+
+    except RepositoryNotFoundError:
+        click.echo("Error: Not a Git repository (or any of the parent directories).", err=True)
+    except CoreBranchNotFoundError as e: # Renamed to avoid clash with pygit2.BranchNotFoundError if used locally
+        click.echo(f"Error: {e}", err=True)
+    except GitWriteError as e:
+        click.echo(f"Error during review: {e}", err=True)
+    except ImportError:
+        click.echo("Error: Rich library is not installed. Please ensure it is installed.", err=True)
+    except Exception as e:
+        click.echo(f"An unexpected error occurred during review: {e}", err=True)
+
+@cli.command("cherry-pick")
+@click.argument("commit_id")
+@click.option("--mainline", type=int, default=None, help="Parent number (1-based) to consider as the mainline, for merge commits.")
+def cherry_pick_cmd(commit_id, mainline):
+    """Applies the changes introduced by a specific commit to the current branch."""
+    try:
+        repo_path_str = str(Path.cwd())
+        result = cherry_pick_commit(repo_path_str, commit_id, mainline=mainline)
+
+        if result.get('status') == 'success':
+            click.echo(click.style(result.get('message', 'Cherry-pick successful.'), fg='green'))
+            click.echo(f"New commit: {result.get('new_commit_oid')[:7]}")
+        else:
+            # This case should ideally not be reached if core function throws exceptions for errors
+            click.echo(f"Cherry-pick operation reported unhandled status: {result.get('status', 'unknown')}", err=True)
+
+    except RepositoryNotFoundError:
+        click.echo("Error: Not a Git repository (or any of the parent directories).", err=True)
+    except CommitNotFoundError as e:
+        click.echo(f"Error: {e}", err=True)
+    except MergeConflictError as e:
+        click.echo(click.style(f"Error: Cherry-pick of commit '{commit_id}' resulted in conflicts.", fg='red'))
+        click.echo(str(e), err=True) # Core message often includes "working directory reset" or similar
+        if hasattr(e, 'conflicting_files') and e.conflicting_files:
+            click.echo("Conflicting files:", err=True)
+            for f_path in sorted(e.conflicting_files):
+                click.echo(f"  {f_path}", err=True)
+        # Unlike merge/revert, cherry-pick in core currently aborts on conflict.
+        # So, no instructions to "resolve and save" are typically needed here.
+    except GitWriteError as e: # Catch-all for other specific errors from core (e.g., mainline issues)
+        click.echo(f"Error during cherry-pick: {e}", err=True)
+    except Exception as e: # General catch-all for unexpected issues
+        click.echo(f"An unexpected error occurred during cherry-pick: {e}", err=True)
 
 @ignore.command("add")
 @click.argument("pattern")

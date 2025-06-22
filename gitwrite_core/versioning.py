@@ -626,3 +626,77 @@ def cherry_pick_commit(repo_path_str: str, commit_oid_to_pick: str, mainline: Op
                 raise GitWriteError(f"An unexpected error occurred during cherry-pick: {e}. Additionally, failed to reset repository: {reset_e}")
         repo.state_cleanup()
         raise GitWriteError(f"An unexpected error occurred during cherry-pick for commit '{commit_oid_to_pick}': {e}")
+
+
+def get_branch_review_commits(repo_path_str: str, branch_name_to_review: str, limit: Optional[int] = None) -> List[Dict]:
+    """
+    Retrieves commits present on branch_name_to_review but not on the current HEAD.
+
+    Args:
+        repo_path_str: Path to the repository.
+        branch_name_to_review: The name of the branch to review.
+        limit: Optional maximum number of commits to return.
+
+    Returns:
+        A list of dictionaries, where each dictionary contains details of a commit,
+        ordered from oldest to newest among the unique commits.
+
+    Raises:
+        RepositoryNotFoundError: If the repository is not found.
+        BranchNotFoundError: If the branch_name_to_review is not found.
+        GitWriteError: For other Git-related errors.
+    """
+    from .exceptions import BranchNotFoundError # Local import to avoid circular dependency issues at module load
+
+    try:
+        repo_discovered_path = pygit2.discover_repository(repo_path_str)
+        if repo_discovered_path is None:
+            raise RepositoryNotFoundError(f"No repository found at or above '{repo_path_str}'")
+        repo = pygit2.Repository(repo_discovered_path)
+    except pygit2.GitError as e:
+        raise RepositoryNotFoundError(f"Error opening repository at '{repo_path_str}': {e}")
+
+    if repo.is_bare:
+        raise GitWriteError("Cannot review branches in a bare repository.")
+    if repo.head_is_unborn:
+        raise GitWriteError("Cannot review branches when HEAD is unborn. Please make an initial commit.")
+
+    try:
+        branch_to_review_obj = repo.branches.get(branch_name_to_review)
+        if not branch_to_review_obj:
+            # Try remote branch if local not found
+            remote_branch_name = f"origin/{branch_name_to_review}" # Common convention
+            branch_to_review_obj = repo.branches.get(remote_branch_name)
+            if not branch_to_review_obj:
+                 raise BranchNotFoundError(f"Branch '{branch_name_to_review}' not found locally or as 'origin/{branch_name_to_review}'.")
+        branch_oid = branch_to_review_obj.target
+    except pygit2.GitError:
+        raise BranchNotFoundError(f"Branch '{branch_name_to_review}' not found.")
+    except KeyError: # For branches.get() if it doesn't find the branch
+        raise BranchNotFoundError(f"Branch '{branch_name_to_review}' not found.")
+
+
+    head_commit_oid = repo.head.target
+    if branch_oid == head_commit_oid:
+        return [] # The branch is the same as HEAD, no unique commits
+
+    commits_data = []
+    try:
+        # Walk commits on branch_to_review, hide commits reachable from current HEAD
+        # GIT_SORT_TOPOLOGICAL | GIT_SORT_REVERSE gives oldest first among the selection
+        walker = repo.walk(branch_oid, pygit2.GIT_SORT_TOPOLOGICAL | pygit2.GIT_SORT_REVERSE, hide=head_commit_oid)
+        for commit_obj in walker:
+            author_tz = timezone(timedelta(minutes=commit_obj.author.offset))
+            commits_data.append({
+                "short_hash": str(commit_obj.id)[:7],
+                "author_name": commit_obj.author.name,
+                "date": datetime.fromtimestamp(commit_obj.author.time, tz=author_tz).strftime('%Y-%m-%d %H:%M:%S %z'),
+                "message_short": commit_obj.message.splitlines()[0].strip(),
+                "oid": str(commit_obj.id),
+            })
+            if limit is not None and len(commits_data) >= limit:
+                break
+    except pygit2.GitError as e:
+        raise GitWriteError(f"Error walking commit history for branch '{branch_name_to_review}': {e}")
+
+    return commits_data

@@ -76,3 +76,7 @@ class PushError(GitWriteError):
 class RemoteNotFoundError(GitWriteError):
     """Raised when a specified remote is not found."""
     pass
+
+class BranchNotFoundError(GitWriteError):
+    """Raised when a specified branch cannot be found."""
+    pass

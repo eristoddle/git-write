@@ -138,3 +138,63 @@ None.
 
 **Next Steps (Optional):**
 Proceed with the next task as assigned by the Project Manager.
+
+---
+**Agent:** Jules (Implementation Agent)
+**Task Reference:** Phase 7, Task 7.2 - Agent_CLI_Dev: Cherry-Pick CLI Commands
+
+**Summary:**
+Implemented two new CLI commands: `gitwrite review <branch>` and `gitwrite cherry-pick <commit_id>`.
+The `review` command lists commits on a specified branch that are not present in the current HEAD, aiding in understanding changes before potential integration.
+The `cherry-pick` command allows applying a specific commit from any part of the history to the current branch.
+Core logic for reviewing branches was added, and comprehensive unit tests for both CLI commands were implemented.
+
+**Details:**
+-   **Core Logic for Review (`gitwrite_core/versioning.py`):**
+    -   Added new function `get_branch_review_commits(repo_path_str: str, branch_name_to_review: str, limit: Optional[int] = None) -> List[Dict]`.
+    -   This function identifies commits on the `branch_name_to_review` that are not ancestors of the current `HEAD`.
+    -   It returns a list of commit data (hash, author, date, message) suitable for display.
+    -   Handles `RepositoryNotFoundError`, `BranchNotFoundError`.
+    -   Added `BranchNotFoundError` to `gitwrite_core/exceptions.py`.
+-   **CLI Command `gitwrite review <branch_name>` (`gitwrite_cli/main.py`):**
+    -   Takes a `branch_name` argument and an optional `-n/--number` limit.
+    -   Calls `core.get_branch_review_commits`.
+    -   Displays results in a `rich.table.Table`.
+    -   Handles exceptions and provides user-friendly error messages.
+-   **CLI Command `gitwrite cherry-pick <commit_id>` (`gitwrite_cli/main.py`):**
+    -   Takes a `commit_id` argument and an optional `--mainline <num>` integer option.
+    -   Calls `core.cherry_pick_commit`.
+    -   Displays success message with new commit OID or error messages.
+    -   Handles `RepositoryNotFoundError`, `CommitNotFoundError`, `MergeConflictError` (listing conflicting files), and other `GitWriteError` exceptions.
+-   **Unit Tests (`tests/test_cli_review_cherry_pick.py`):**
+    -   Created a new test file for these commands.
+    -   **`review` command tests:**
+        -   Successful listing of unique commits.
+        -   Branch not found.
+        -   No unique commits.
+        -   Non-Git repository.
+        -   Usage of `--number` limit.
+    -   **`cherry-pick` command tests:**
+        -   Successful cherry-pick.
+        -   Cherry-pick with conflicts.
+        -   Commit not found.
+        -   Cherry-picking a merge commit (with and without mainline, valid/invalid mainline).
+        -   Non-Git repository.
+        -   Generic `GitWriteError` from core.
+    -   Tests mock core functions and assert CLI output and exit codes.
+
+**Output/Result:**
+-   Modified `gitwrite_core/versioning.py`
+-   Modified `gitwrite_core/exceptions.py`
+-   Modified `gitwrite_cli/main.py`
+-   Created `tests/test_cli_review_cherry_pick.py`
+-   This log entry in `Memory_Bank.md`.
+-   Updated `Implementation_Plan.md` (Task 7.2 marked as Completed).
+
+**Status:** Completed
+
+**Issues/Blockers:**
+None.
+
+**Next Steps (Optional):**
+Proceed with Task 7.3 - Agent_API_Dev: Cherry-Pick API Endpoints.
