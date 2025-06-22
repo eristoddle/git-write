@@ -1050,7 +1050,7 @@ class TestCherryPickCommitCore(GitWriteCoreTestCaseBase):
         self.repo.set_head(main_branch.name)
 
         # C3 on 'main' (diverging from C1, but compatible for cherry-pick of C2's changes)
-        self._make_commit(self.repo, "C3: Main changes", {"file_c.txt": "File C from main"})
+        c3_oid_for_test = self._make_commit(self.repo, "C3: Main changes", {"file_c.txt": "File C from main"})
 
         # Perform cherry-pick of C2 from 'feat' onto 'main'
         from gitwrite_core.versioning import cherry_pick_commit # Local import for test
@@ -1077,17 +1077,15 @@ class TestCherryPickCommitCore(GitWriteCoreTestCaseBase):
 
         # Verify parent (should be C3)
         self.assertEqual(len(picked_commit_on_main.parents), 1)
-        self.assertEqual(picked_commit_on_main.parents[0].id, self.repo.head.target) # Before cherry-pick, HEAD was C3
+        # The parent of the new commit should be `c3_oid_for_test`, which was HEAD before the cherry-pick.
+        self.assertEqual(picked_commit_on_main.parents[0].id, c3_oid_for_test)
 
         # Verify HEAD points to the new cherry-picked commit
-        # Note: The cherry_pick_commit function itself updates HEAD. So, after it runs,
-        # self.repo.head.target is already the new_commit_oid.
-        # So, picked_commit_on_main.parents[0].id should be the commit *before* the cherry-pick.
-        # Let's capture HEAD before the cherry-pick for clarity.
-        head_before_cherry_pick = self.repo.head.target # This was C3
-        # After cherry_pick_commit, HEAD is new_commit_oid_str
         self.assertEqual(self.repo.head.target, picked_commit_on_main.id)
-        self.assertEqual(picked_commit_on_main.parents[0].id, head_before_cherry_pick)
+        # An additional check that the parent was indeed what HEAD was pointing to right before this new commit
+        # (which is stored in c3_oid_for_test if HEAD correctly pointed to C3 before the call)
+        # This also implicitly checks that original_head_oid was used correctly as parent in cherry_pick_commit
+        self.assertEqual(picked_commit_on_main.parents[0].id, c3_oid_for_test) # Redundant with above but confirms understanding
 
 
         # Verify file content in the new commit and working directory
