@@ -52,11 +52,11 @@ Status: **Completed**
 
 ### Task 7.3 - Agent_API_Dev: Cherry-Pick API Endpoints
 Objective: Expose the cherry-pick functionality through the REST API.
-Status: **Pending**
+Status: **Completed**
 
-1.  Create a `GET /repository/commits/{branch_name}` endpoint for reviewing commits (enhancement of existing list commits).
-2.  Create a `POST /repository/cherry-pick` endpoint that takes a `commit_id` and calls the core `cherry_pick_commit` function.
-3.  Add unit tests for the new API endpoints.
+1.  Create a `GET /repository/review/{branch_name}` endpoint for reviewing commits on a branch that are not in HEAD.
+2.  Create a `POST /repository/cherry-pick` endpoint that takes a `commit_id` and an optional `mainline` parameter, then calls the core `cherry_pick_commit` function.
+3.  Add unit tests for the new API endpoints in `tests/test_api_cherry_pick.py`.
 
 ### Task 7.4 - Agent_Core_Dev: Beta Reader Workflow (EPUB Export)
 Objective: Implement the core logic for exporting repository content to EPUB format.

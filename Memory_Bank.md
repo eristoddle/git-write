@@ -198,3 +198,55 @@ None.
 
 **Next Steps (Optional):**
 Proceed with Task 7.3 - Agent_API_Dev: Cherry-Pick API Endpoints.
+
+---
+**Agent:** Jules (Implementation Agent)
+**Task Reference:** Phase 7, Task 7.3 - Agent_API_Dev: Cherry-Pick API Endpoints
+
+**Summary:**
+Implemented API endpoints to support reviewing commits on a branch and cherry-picking specific commits.
+A `GET /repository/review/{branch_name}` endpoint was created to list commits on a specified branch not present in the current HEAD, facilitating review before integration.
+A `POST /repository/cherry-pick` endpoint was created to apply a specific commit to the current branch, supporting an optional `mainline` parameter for merge commits.
+These endpoints leverage the corresponding core functions. Pydantic models for requests and responses were defined, and comprehensive unit tests were added.
+
+**Details:**
+-   **Pydantic Models (`gitwrite_api/models.py`):**
+    -   Added `CherryPickRequest(BaseModel)`: with `commit_id: str` and `mainline: Optional[int]`.
+    -   Added `CherryPickResponse(BaseModel)`: with `status: str`, `message: str`, `new_commit_oid: Optional[str]`, and `conflicting_files: Optional[List[str]]`.
+    -   Added `BranchReviewCommit(BaseModel)`: with `short_hash: str`, `author_name: str`, `date: str`, `message_short: str`, `oid: str`.
+    -   Added `BranchReviewResponse(BaseModel)`: with `status: str`, `branch_name: str`, `commits: List[BranchReviewCommit]`, `message: str`.
+-   **API Endpoint `GET /repository/review/{branch_name}` (`gitwrite_api/routers/repository.py`):**
+    -   Accepts `branch_name` path parameter and optional `limit` query parameter.
+    -   Calls `core_get_branch_review_commits` from `gitwrite_core.versioning`.
+    -   Returns `BranchReviewResponse` (200 OK).
+    -   Handles `BranchNotFoundError` (404), `RepositoryNotFoundError` (500), `GitWriteError` (e.g., unborn HEAD - 400, other 500).
+-   **API Endpoint `POST /repository/cherry-pick` (`gitwrite_api/routers/repository.py`):**
+    -   Accepts `CherryPickRequest` in the body.
+    -   Calls `core_cherry_pick_commit` from `gitwrite_core.versioning`.
+    -   Returns `CherryPickResponse` (200 OK).
+        -   Handles successful cherry-pick.
+        -   Handles conflicts by returning `status="conflict"` and `conflicting_files`.
+        -   Handles `CommitNotFoundError` (404).
+        -   Handles `RepositoryNotFoundError` (500).
+        -   Handles `GitWriteError` for issues like unborn HEAD, missing/invalid mainline for merge commits (400).
+-   **Unit Tests (`tests/test_api_cherry_pick.py`):**
+    -   Created a new test file for these API endpoints.
+    -   **Review endpoint tests:** Success, with limit, no unique commits, branch not found, repo not found, unborn HEAD, unauthorized.
+    -   **Cherry-pick endpoint tests:** Success, success with mainline, conflict, commit not found, merge commit without mainline, invalid mainline, unborn HEAD, repo not found, generic GitWriteError, unauthorized, invalid payloads.
+    -   Mocked core functions and asserted responses and status codes.
+    -   Installed `pytest`, `pygit2`, `click`, `fastapi`, `uvicorn`, `httpx`, `rich`, `python-jose[cryptography]`, `passlib[bcrypt]`, `python-multipart` to run tests.
+
+**Output/Result:**
+-   Modified `gitwrite_api/models.py`
+-   Modified `gitwrite_api/routers/repository.py`
+-   Created `tests/test_api_cherry_pick.py`
+-   This log entry in `Memory_Bank.md`.
+-   Updated `Implementation_Plan.md` (Task 7.3 marked as Completed).
+
+**Status:** Completed
+
+**Issues/Blockers:**
+None.
+
+**Next Steps (Optional):**
+Proceed with Task 7.4 - Agent_Core_Dev: Beta Reader Workflow (EPUB Export).

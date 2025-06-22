@@ -55,3 +55,29 @@ class SaveFileResponse(BaseModel):
 
 class RepositoryCreateRequest(BaseModel):
     project_name: Optional[str] = Field(None, min_length=1, pattern=r"^[a-zA-Z0-9_-]+$", description="Optional name for the repository. If provided, it will be used as the directory name. Must be alphanumeric with hyphens/underscores.")
+
+# Models for Cherry-Pick and Branch Review API Endpoints
+
+class CherryPickRequest(BaseModel):
+    commit_id: str = Field(..., description="The OID of the commit to cherry-pick.")
+    mainline: Optional[int] = Field(None, gt=0, description="For merge commits, the parent number (1-based) to consider as the mainline.")
+
+class CherryPickResponse(BaseModel):
+    status: str = Field(..., description="Outcome of the cherry-pick operation (e.g., 'success', 'conflict').")
+    message: str = Field(..., description="Detailed message about the cherry-pick outcome.")
+    new_commit_oid: Optional[str] = Field(None, description="The OID of the new commit created by the cherry-pick, if successful.")
+    conflicting_files: Optional[List[str]] = Field(None, description="List of files with conflicts, if any.")
+
+
+class BranchReviewCommit(BaseModel):
+    short_hash: str = Field(..., description="Abbreviated commit hash.")
+    author_name: str = Field(..., description="Name of the commit author.")
+    date: str = Field(..., description="Author date of the commit (ISO 8601 format).") # Assuming core returns string for now
+    message_short: str = Field(..., description="First line of the commit message.")
+    oid: str = Field(..., description="Full commit OID.")
+
+class BranchReviewResponse(BaseModel):
+    status: str = Field(..., description="Outcome of the branch review operation.")
+    branch_name: str = Field(..., description="The name of the branch that was reviewed.")
+    commits: List[BranchReviewCommit] = Field(..., description="List of commits on the branch not present in HEAD.")
+    message: str = Field(..., description="Detailed message about the review outcome.")

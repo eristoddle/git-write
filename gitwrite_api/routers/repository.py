@@ -14,6 +14,10 @@ from gitwrite_core.repository import (
     add_pattern_to_gitignore as core_add_pattern_to_gitignore,
     initialize_repository as core_initialize_repository
 )
+from gitwrite_core.versioning import (
+    get_branch_review_commits as core_get_branch_review_commits,
+    cherry_pick_commit as core_cherry_pick_commit
+)
 
 # Import security dependency (assuming path based on project structure)
 # Adjust the import path if your security module is located differently.
@@ -36,7 +40,7 @@ from gitwrite_core.exceptions import (
     BranchAlreadyExistsError as CoreBranchAlreadyExistsError,
     BranchNotFoundError as CoreBranchNotFoundError,
     MergeConflictError as CoreMergeConflictError, # Added for merge, also used by revert and sync
-    GitWriteError as CoreGitWriteError,
+    GitWriteError as CoreGitWriteError, # Also used by get_branch_review_commits
     DetachedHeadError as CoreDetachedHeadError, # Added for merge, also used by sync
     CommitNotFoundError as CoreCommitNotFoundError, # Added for compare, also used by revert
     NotEnoughHistoryError as CoreNotEnoughHistoryError, # Added for compare
@@ -55,6 +59,12 @@ from gitwrite_core.exceptions import TagAlreadyExistsError as CoreTagAlreadyExis
 import uuid
 from pathlib import Path
 from ..models import RepositoryCreateRequest # Import the request model
+
+# Models for Branch Review API
+from ..models import BranchReviewResponse, BranchReviewCommit
+
+# Models for Cherry-Pick API
+from ..models import CherryPickRequest, CherryPickResponse
 
 
 # For now, let's define a placeholder dependency to make the code runnable without the actual security module
@@ -815,6 +825,121 @@ async def api_list_ignore_patterns(current_user: User = Depends(get_current_acti
         raise HTTPException(status_code=500, detail="Repository configuration error.")
     # Note: Specific business logic exceptions from core layer (if any) should be caught if they are not already
     # handled by the result['status'] checks. For now, focusing on existing structure.
+
+
+# --- Branch Review Endpoint ---
+
+@router.get("/review/{branch_name}", response_model=BranchReviewResponse)
+async def api_review_branch_commits(
+    branch_name: str,
+    limit: Optional[int] = Query(None, description="Maximum number of commits to return.", gt=0),
+    current_user: User = Depends(get_current_active_user)
+):
+    """
+    Retrieves commits present on the specified branch that are not on the current HEAD.
+    This is useful for reviewing changes before a potential merge or cherry-pick.
+    Requires authentication.
+    """
+    repo_path = PLACEHOLDER_REPO_PATH
+    try:
+        commits_list_core = core_get_branch_review_commits(
+            repo_path_str=repo_path,
+            branch_name_to_review=branch_name,
+            limit=limit
+        )
+
+        # Convert core dicts to BranchReviewCommit Pydantic models
+        # The core function already returns list of dicts with keys:
+        # "short_hash", "author_name", "date", "message_short", "oid"
+        review_commits = [BranchReviewCommit(**commit_data) for commit_data in commits_list_core]
+
+        return BranchReviewResponse(
+            status="success",
+            branch_name=branch_name,
+            commits=review_commits,
+            message=f"Found {len(review_commits)} reviewable commits on branch '{branch_name}'."
+                     if review_commits else f"No unique reviewable commits found on branch '{branch_name}' compared to HEAD."
+        )
+    except CoreBranchNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except CoreRepositoryNotFoundError: # Indicates server-side configuration issue
+        raise HTTPException(status_code=500, detail="Repository configuration error or not found.")
+    except CoreGitWriteError as e: # Catch-all for other git-related errors from core
+        # This could be "HEAD is unborn" or other general issues.
+        # A 400 Bad Request might be more appropriate if it's a precondition failure.
+        if "HEAD is unborn" in str(e):
+            raise HTTPException(status_code=400, detail=f"Cannot review branch: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to review branch commits: {str(e)}")
+    except Exception as e: # Fallback for unexpected errors
+        raise HTTPException(status_code=500, detail=f"An unexpected error occurred: {str(e)}")
+
+
+# --- Cherry-Pick Endpoint ---
+
+@router.post("/cherry-pick", response_model=CherryPickResponse)
+async def api_cherry_pick_commit(
+    request_data: CherryPickRequest,
+    current_user: User = Depends(get_current_active_user)
+):
+    """
+    Applies a specific commit from any part of the history to the current branch.
+    Requires authentication.
+    """
+    repo_path = PLACEHOLDER_REPO_PATH
+    try:
+        result = core_cherry_pick_commit(
+            repo_path_str=repo_path,
+            commit_oid_to_pick=request_data.commit_id,
+            mainline=request_data.mainline
+        )
+        # Core function returns:
+        # {'status': 'success', 'new_commit_oid': str(new_commit_oid_val), 'message': '...'}
+        return CherryPickResponse(
+            status=result['status'], # Should be 'success'
+            message=result['message'],
+            new_commit_oid=result.get('new_commit_oid')
+        )
+    except CoreCommitNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except CoreMergeConflictError as e:
+        # CoreMergeConflictError has 'message' and 'conflicting_files' attributes
+        return CherryPickResponse(
+            status="conflict",
+            message=str(e.message), # Use the specific message from the exception
+            new_commit_oid=None,
+            conflicting_files=e.conflicting_files if hasattr(e, 'conflicting_files') else []
+        )
+        # If we want to raise HTTPException 409 instead of returning 200 with status="conflict"
+        # raise HTTPException(
+        #     status_code=409,
+        #     detail={
+        #         "message": str(e.message),
+        #         "conflicting_files": e.conflicting_files if hasattr(e, 'conflicting_files') else []
+        #     }
+        # )
+    except CoreRepositoryNotFoundError: # Server-side configuration issue
+        raise HTTPException(status_code=500, detail="Repository configuration error.")
+    except CoreGitWriteError as e:
+        # This can cover various scenarios:
+        # - "Cannot cherry-pick in a bare repository."
+        # - "Cannot cherry-pick onto an unborn HEAD."
+        # - "Commit ... is a merge commit. Please specify the 'mainline' parameter..."
+        # - "Invalid mainline number..."
+        # - "Mainline option specified, but commit ... is not a merge commit."
+        # - Other general Git errors during cherry-pick.
+        # Most of these are client errors (400 or 422).
+        error_detail = str(e)
+        if "unborn HEAD" in error_detail or \
+           "merge commit" in error_detail or \
+           "mainline" in error_detail or \
+           "bare repository" in error_detail:
+            raise HTTPException(status_code=400, detail=error_detail)
+        # For other CoreGitWriteErrors that are less clearly client-fault, 500 might be safer.
+        # However, the prompt leans towards 400/422 for GitWriteErrors in this context.
+        # Let's assume other GitWriteErrors are also bad requests unless specified.
+        raise HTTPException(status_code=400, detail=f"Cherry-pick operation failed: {error_detail}")
+    except Exception as e: # Fallback for unexpected errors
+        raise HTTPException(status_code=500, detail=f"An unexpected error occurred during cherry-pick: {str(e)}")
 
 
 # --- Repository Initialization Endpoint ---
