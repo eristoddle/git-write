@@ -3,7 +3,9 @@ import pygit2.enums # Added for MergeFavor
 # import pygit2.ops # ModuleNotFoundError with pygit2 1.18.0
 from pathlib import Path
 from datetime import datetime, timezone, timedelta
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Tuple
+import re # For get_word_level_diff
+import difflib # For get_word_level_diff
 
 from gitwrite_core.exceptions import RepositoryNotFoundError, CommitNotFoundError, NotEnoughHistoryError, MergeConflictError, GitWriteError
 
@@ -647,6 +649,8 @@ def get_branch_review_commits(repo_path_str: str, branch_name_to_review: str, li
         GitWriteError: For other Git-related errors.
     """
     from .exceptions import BranchNotFoundError # Local import to avoid circular dependency issues at module load
+    import difflib # For get_word_level_diff
+    import re # For get_word_level_diff
 
     try:
         repo_discovered_path = pygit2.discover_repository(repo_path_str)
@@ -700,3 +704,275 @@ def get_branch_review_commits(repo_path_str: str, branch_name_to_review: str, li
         raise GitWriteError(f"Error walking commit history for branch '{branch_name_to_review}': {e}")
 
     return commits_data
+
+
+def get_word_level_diff(patch_text: str) -> List[Dict[str, Any]]:
+    """
+    Processes a standard diff patch string and returns a structured
+    representation with word-level differences.
+
+    Args:
+        patch_text: A string containing the diff output (e.g., from `git diff`).
+
+    Returns:
+        A list of dictionaries, where each dictionary represents a file diff.
+        Each file diff contains a list of hunks, and each hunk contains a list
+        of lines. Lines are marked as 'context', 'deletion', or 'addition'.
+        Deletion and addition lines will have a 'words' key containing a list
+        of word segment dictionaries (e.g., {'type': 'removed', 'content': 'word'}).
+    """
+    if not patch_text:
+        return []
+
+    file_diffs: List[Dict[str, Any]] = []
+    file_patches = re.split(r'(?=^diff --git a/)', patch_text, flags=re.MULTILINE)
+
+    for file_patch in file_patches:
+        if not file_patch.strip():
+            continue
+
+        lines = file_patch.splitlines()
+        if not lines:
+            continue
+
+        current_file_path_a = "unknown_file_a"
+        current_file_path_b = "unknown_file_b"
+        # Default change_type, can be overridden by specific lines
+        file_info: Dict[str, Any] = {"hunks": [], "change_type": "modified"}
+        current_hunk_lines: List[Tuple[str, str]] = []
+        in_hunk_body = False
+
+        if lines[0].startswith("diff --git a/"):
+            parts = lines[0].split(' ')
+            if len(parts) >= 4:
+                current_file_path_a = parts[2][2:]
+                current_file_path_b = parts[3][2:]
+                if current_file_path_a != current_file_path_b:
+                    # This is a potential rename/copy, store paths. Specific lines will confirm.
+                    file_info["old_file_path"] = current_file_path_a
+                    file_info["new_file_path"] = current_file_path_b
+                    # Default to 'renamed' if paths differ, can be 'copied' if "copy from/to" appears
+                    file_info["change_type"] = "renamed"
+            file_info["file_path"] = current_file_path_b # Default display path
+
+        for line_content in lines[1:]:
+            if line_content.startswith("--- a/"):
+                in_hunk_body = False
+                path = line_content[len("--- a/"):].strip()
+                current_file_path_a = path
+                if file_info.get("change_type") != "renamed" and file_info.get("change_type") != "copied": # Don't override rename/copy
+                    if path == "/dev/null":
+                        file_info["change_type"] = "added"
+                    else:
+                        file_info["change_type"] = "modified" # Path changed, but not /dev/null -> modified
+                if path != "/dev/null" and "old_file_path" not in file_info : # if rename from not seen yet
+                     file_info["old_file_path"] = path
+            elif line_content.startswith("+++ b/"):
+                in_hunk_body = False
+                path = line_content[len("+++ b/"):].strip()
+                current_file_path_b = path
+                if file_info.get("change_type") != "renamed" and file_info.get("change_type") != "copied":
+                    if path == "/dev/null":
+                        file_info["change_type"] = "deleted"
+                    # else: change_type remains as determined by --- or diff --git
+                if path != "/dev/null" and "new_file_path" not in file_info : # if rename to not seen yet
+                     file_info["new_file_path"] = path
+                file_info["file_path"] = path # +++ path is the primary path for display
+            elif line_content.startswith("rename from "):
+                in_hunk_body = False
+                file_info["change_type"] = "renamed"
+                file_info["old_file_path"] = line_content[len("rename from "):].strip()
+                current_file_path_a = file_info["old_file_path"]
+            elif line_content.startswith("rename to "):
+                in_hunk_body = False
+                file_info["change_type"] = "renamed"
+                file_info["new_file_path"] = line_content[len("rename to "):].strip()
+                current_file_path_b = file_info["new_file_path"]
+                file_info["file_path"] = current_file_path_b # Update primary display path
+            elif line_content.startswith("new file mode"):
+                in_hunk_body = False
+                file_info["change_type"] = "added"
+            elif line_content.startswith("deleted file mode"):
+                in_hunk_body = False
+                file_info["change_type"] = "deleted"
+            elif line_content.startswith("copy from "):
+                in_hunk_body = False
+                file_info["change_type"] = "copied"
+                file_info["old_file_path"] = line_content[len("copy from "):].strip()
+                current_file_path_a = file_info["old_file_path"]
+            elif line_content.startswith("copy to "):
+                in_hunk_body = False
+                file_info["change_type"] = "copied"
+                file_info["new_file_path"] = line_content[len("copy to "):].strip()
+                current_file_path_b = file_info["new_file_path"]
+                file_info["file_path"] = current_file_path_b
+            elif line_content.startswith("index ") or line_content.startswith("similarity index"):
+                in_hunk_body = False
+            elif line_content.startswith("Binary files") and "differ" in line_content:
+                in_hunk_body = False
+                file_info["is_binary"] = True
+                file_info["hunks"] = []
+                current_hunk_lines = []
+                break
+            elif line_content.startswith("@@"):
+                if current_hunk_lines:
+                    processed_hunk = _process_hunk_lines_for_structured_diff(current_hunk_lines)
+                    file_info["hunks"].append({"lines": processed_hunk})
+                    current_hunk_lines = []
+                in_hunk_body = True
+            elif line_content.startswith("\\ No newline at end of file"):
+                if current_hunk_lines: # Process pending lines for the current hunk first
+                    processed_hunk = _process_hunk_lines_for_structured_diff(current_hunk_lines)
+                    file_info["hunks"].append({"lines": processed_hunk})
+                    current_hunk_lines = []
+                if file_info["hunks"]: # Append to the last hunk's lines
+                    file_info["hunks"][-1]["lines"].append({"type": "no_newline", "content": line_content})
+            elif in_hunk_body and (line_content.startswith(("+", "-", " "))):
+                current_hunk_lines.append((line_content[0], line_content[1:]))
+
+        if current_hunk_lines:
+            processed_hunk = _process_hunk_lines_for_structured_diff(current_hunk_lines)
+            file_info["hunks"].append({"lines": processed_hunk})
+
+        # Finalize file_path for display
+        if file_info.get("change_type") == "deleted":
+            file_info["file_path"] = current_file_path_a
+        elif not file_info.get("file_path") and file_info.get("new_file_path"): # For renames if file_path wasn't set from +++
+             file_info["file_path"] = file_info["new_file_path"]
+        elif not file_info.get("file_path"): # Fallback if not set by +++ or rename
+            file_info["file_path"] = current_file_path_b if current_file_path_b != "unknown_from_diff_b" else current_file_path_a
+
+        # If old_file_path or new_file_path is set, ensure file_path is one of them, preferably new_file_path
+        if file_info.get("old_file_path") and file_info.get("new_file_path"):
+            file_info["file_path"] = file_info["new_file_path"]
+
+
+        if file_info.get("old_file_path") and file_info.get("new_file_path"):
+            file_info["file_path"] = file_info["new_file_path"]
+
+        # Clean up path keys based on change type
+        final_change_type = file_info.get("change_type")
+        if final_change_type == "added":
+            file_info.pop("old_file_path", None)
+            # new_file_path might be redundant if file_path is already new_file.txt, but let's keep for now if set.
+            # Test will tell if new_file_path should also be removed for "added".
+            # Based on test_simple_addition_only_file, new_file_path is NOT expected.
+            file_info.pop("new_file_path", None)
+        elif final_change_type == "deleted":
+            file_info.pop("new_file_path", None)
+            # old_file_path might be redundant if file_path is already old_file.txt
+            # Based on test_simple_deletion_only_file, old_file_path is NOT expected.
+            file_info.pop("old_file_path", None)
+        elif final_change_type == "modified":
+            file_info.pop("old_file_path", None)
+            file_info.pop("new_file_path", None)
+        # For "renamed" and "copied", old_file_path and new_file_path are expected to remain.
+
+        if file_info["hunks"] or file_info.get("is_binary"):
+            file_diffs.append(file_info)
+
+    return file_diffs
+
+
+def _process_hunk_lines_for_structured_diff(hunk_lines: List[Tuple[str, str]]) -> List[Dict[str, Any]]:
+    """
+    Helper function to process lines within a hunk for word-level diffs
+    and return a structured list.
+    """
+    processed_lines: List[Dict[str, Any]] = []
+    i = 0
+    while i < len(hunk_lines):
+        origin, content = hunk_lines[i]
+        # print(f"DEBUG: Processing line: origin='{origin}', content='{content}'") # Debug print
+
+        if origin == '-' and (i + 1 < len(hunk_lines)) and hunk_lines[i+1][0] == '+':
+            # print(f"DEBUG: Matched +/- pair: '{content}' vs '{hunk_lines[i+1][1]}'") # Debug print
+            old_content_str = content
+            new_content_str = hunk_lines[i+1][1]
+
+            # Perform word-level diff
+            sm = difflib.SequenceMatcher(None, old_content_str.split(), new_content_str.split())
+
+            deleted_words_structured: List[Dict[str, str]] = []
+            added_words_structured: List[Dict[str, str]] = []
+
+            has_word_diff = any(tag != 'equal' for tag, _, _, _, _ in sm.get_opcodes())
+
+            if not has_word_diff:
+                processed_lines.append({"type": "deletion", "content": old_content_str, "words": [{"type": "removed", "content": old_content_str.strip()}] if old_content_str.strip() else []})
+                processed_lines.append({"type": "addition", "content": new_content_str, "words": [{"type": "added", "content": new_content_str.strip()}] if new_content_str.strip() else []})
+            else:
+                for tag_op, i1, i2, j1, j2 in sm.get_opcodes():
+                    old_words_segment = old_content_str.split()[i1:i2]
+                    new_words_segment = new_content_str.split()[j1:j2]
+                    old_chunk = " ".join(old_words_segment)
+                    new_chunk = " ".join(new_words_segment)
+
+                    if tag_op == 'replace':
+                        if old_chunk: deleted_words_structured.append({"type": "removed", "content": old_chunk})
+                        if new_chunk: added_words_structured.append({"type": "added", "content": new_chunk})
+                    elif tag_op == 'delete':
+                        if old_chunk: deleted_words_structured.append({"type": "removed", "content": old_chunk})
+                    elif tag_op == 'insert':
+                        if new_chunk: added_words_structured.append({"type": "added", "content": new_chunk})
+                    elif tag_op == 'equal':
+                        if old_chunk: deleted_words_structured.append({"type": "context", "content": old_chunk})
+                        if new_chunk: added_words_structured.append({"type": "context", "content": new_chunk})
+
+                deleted_words_structured = _condense_word_segments(deleted_words_structured, old_content_str.split())
+                added_words_structured = _condense_word_segments(added_words_structured, new_content_str.split())
+
+                processed_lines.append({"type": "deletion", "content": old_content_str, "words": deleted_words_structured})
+                processed_lines.append({"type": "addition", "content": new_content_str, "words": added_words_structured})
+
+            i += 2
+            continue
+
+        if origin == '-':
+            word_list = [{"type": "removed", "content": content.strip()}] if content.strip() else []
+            processed_lines.append({"type": "deletion", "content": content, "words": word_list})
+        elif origin == '+':
+            word_list = [{"type": "added", "content": content.strip()}] if content.strip() else []
+            processed_lines.append({"type": "addition", "content": content, "words": word_list})
+        elif origin == ' ':
+            processed_lines.append({"type": "context", "content": content})
+
+        i += 1
+
+    return processed_lines
+
+
+def _condense_word_segments(segments: List[Dict[str, str]], original_words: List[str]) -> List[Dict[str, str]]:
+    """
+    Condenses adjacent word segments of the same type and ensures correct spacing.
+    This is a simplified version and might need more robust space handling based on original text.
+    """
+    if not segments:
+        return []
+
+    condensed: List[Dict[str, str]] = []
+    current_segment_content: List[str] = []
+    current_segment_type = ""
+
+    original_word_idx = 0
+
+    for i, segment in enumerate(segments):
+        num_words_in_segment = len(segment["content"].split())
+
+        if not current_segment_type or segment["type"] != current_segment_type:
+            if current_segment_content:
+                condensed.append({"type": current_segment_type, "content": " ".join(current_segment_content)})
+            current_segment_content = [segment["content"]]
+            current_segment_type = segment["type"]
+        else:
+            current_segment_content.append(segment["content"])
+
+        original_word_idx += num_words_in_segment
+
+    if current_segment_type and current_segment_content:
+        condensed.append({"type": current_segment_type, "content": " ".join(current_segment_content)})
+
+    for seg in condensed:
+        seg["content"] = seg["content"].strip()
+
+    return [s for s in condensed if s["content"]]

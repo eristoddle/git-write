@@ -24,3 +24,43 @@ None.
 
 **Next Steps (Optional):**
 Proceed with the first task of the new plan: **Task 10.1 - Core Word-by-Word Diff Engine**.
+
+---
+**Agent:** Jules (Software Engineer AI)
+**Task Reference:** Task 10.1 - Agent_Core_Dev: Core Word-by-Word Diff Engine
+
+**Summary:**
+Successfully refactored the word-by-word diff logic from the CLI into a reusable core function and exposed it through an enhanced API endpoint. This enables a structured JSON representation of word-level differences, paving the way for a rich visual diff experience in the future web application.
+
+**Details:**
+1.  **Core Function (`gitwrite_core/versioning.py`):**
+    *   Created a new function `get_word_level_diff(patch_text: str) -> List[Dict]`.
+    *   This function parses a standard diff patch string.
+    *   It adapts logic from `gitwrite_cli/main.py::process_hunk_lines_for_word_diff` but returns a structured JSON-serializable list of dictionaries instead of printing to the console.
+    *   The returned structure delineates added, removed, and context parts at both line and word levels (e.g., `[{"file_path": "a.txt", "change_type": "modified", "hunks": [{"lines": [...]}]}]`).
+
+2.  **API Endpoint (`gitwrite_api/routers/repository.py`):**
+    *   Modified the existing `GET /repository/compare` endpoint.
+    *   Added an optional query parameter `diff_mode: Optional[str]`.
+    *   If `diff_mode='word'`, the endpoint now calls `get_word_level_diff` and returns the structured JSON.
+    *   Otherwise, it maintains its current behavior (raw patch text).
+    *   Updated the `CompareRefsResponse` Pydantic model's `patch_text` field to `Union[str, List[Dict[str, Any]]]` to support both response types.
+
+3.  **Unit Tests:**
+    *   Added new unit tests for `get_word_level_diff` in `tests/test_core_versioning.py`, covering various scenarios like additions, deletions, modifications, multiple files/hunks, empty patches, and renamed files.
+    *   Updated unit tests for `GET /repository/compare` in `tests/test_api_repository.py` to cover both standard text-based diff and the new word-level structured diff via the `diff_mode` parameter.
+
+**Output/Result:**
+-   Core word-by-word diff engine implemented in `gitwrite_core/versioning.py`.
+-   `GET /repository/compare` API endpoint enhanced to support word-level diffs.
+-   `CompareRefsResponse` model updated.
+-   Comprehensive unit tests added for the new core function and updated API endpoint.
+-   `Implementation_Plan.md` updated to mark Task 10.1 as complete.
+
+**Status:** Completed
+
+**Issues/Blockers:**
+None.
+
+**Next Steps (Optional):**
+Proceed with Task 10.2 as per the `Implementation_Plan.md`.

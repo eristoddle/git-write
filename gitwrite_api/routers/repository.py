@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, Query, Body
-from typing import Any, Dict, Optional, List
+from typing import Any, Dict, Optional, List, Union
 from pydantic import BaseModel, Field
 import datetime # For commit date serialization
 import pygit2 # Moved import to top
@@ -45,7 +45,7 @@ from gitwrite_core.exceptions import (
     PushError as CorePushError # For sync
 )
 from gitwrite_core.branching import merge_branch_into_current # Core function for merge
-from gitwrite_core.versioning import get_diff as core_get_diff # Core function for compare
+from gitwrite_core.versioning import get_diff as core_get_diff, get_word_level_diff as core_get_word_level_diff # Core functions for compare
 # from gitwrite_core.exceptions import CommitNotFoundError as CoreCommitNotFoundError # Already imported above
 # from gitwrite_core.exceptions import NotEnoughHistoryError as CoreNotEnoughHistoryError # Already imported above
 from gitwrite_core.tagging import create_tag as core_create_tag # Core function for tagging
@@ -137,7 +137,7 @@ class CompareRefsResponse(BaseModel):
     ref2_oid: str = Field(..., description="Resolved OID of the second reference.")
     ref1_display_name: str = Field(..., description="Display name for the first reference.")
     ref2_display_name: str = Field(..., description="Display name for the second reference.")
-    patch_text: str = Field(..., description="The diff/patch output as a string.")
+    patch_text: Union[str, List[Dict[str, Any]]] = Field(..., description="The diff/patch output, either as a raw string or a structured list of dictionaries for word-level diff.")
 
 # Revert Endpoint Models
 class RevertCommitRequest(BaseModel):
@@ -524,6 +524,7 @@ async def api_merge_branch(
 async def api_compare_refs(
     ref1: Optional[str] = Query(None, description="The first reference (e.g., commit hash, branch, tag). Defaults to HEAD~1."),
     ref2: Optional[str] = Query(None, description="The second reference (e.g., commit hash, branch, tag). Defaults to HEAD."),
+    diff_mode: Optional[str] = Query(None, description="Set to 'word' for word-level diff."),
     current_user: User = Depends(get_current_active_user)
 ):
     """
@@ -540,20 +541,23 @@ async def api_compare_refs(
             ref1_str=ref1,
             ref2_str=ref2
         )
-        # Core function returns:
-        # {
-        #     "ref1_oid": str,
-        #     "ref2_oid": str,
-        #     "ref1_display_name": str,
-        #     "ref2_display_name": str,
-        #     "patch_text": str
-        # }
+
+        # Determine the output format based on diff_mode
+        diff_output: Union[str, List[Dict[str, Any]]]
+        if diff_mode == 'word':
+            if diff_result["patch_text"]:
+                diff_output = core_get_word_level_diff(diff_result["patch_text"])
+            else:
+                diff_output = [] # Return empty list for no textual diff
+        else:
+            diff_output = diff_result["patch_text"]
+
         return CompareRefsResponse(
             ref1_oid=diff_result["ref1_oid"],
             ref2_oid=diff_result["ref2_oid"],
             ref1_display_name=diff_result["ref1_display_name"],
             ref2_display_name=diff_result["ref2_display_name"],
-            patch_text=diff_result["patch_text"]
+            patch_text=diff_output
         )
     except CoreCommitNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))

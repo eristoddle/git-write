@@ -21,7 +21,7 @@ Architectural Notes: This phase focuses on enhancing core functionalities and ex
 
 ### Task 10.1 - Agent_Core_Dev: Core Word-by-Word Diff Engine
 Objective: Refactor the existing CLI word-diff logic into a reusable core function and expose it via the API.
-Status: **Pending**
+Status: **Completed**
 
 1.  Analyze the `process_hunk_lines_for_word_diff` function and its dependencies in `gitwrite_cli/main.py`.
 2.  Create a new function in `gitwrite_core/versioning.py`, e.g., `get_word_level_diff(patch_text: str) -> List[Dict]`.

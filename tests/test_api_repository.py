@@ -343,3 +343,93 @@ def test_api_initialize_repository_with_project_name_success_original_style(mock
     app.dependency_overrides = {}
 
 # (The rest of the original tests would follow here)
+
+# --- Tests for /repository/compare ---
+@patch('gitwrite_api.routers.repository.core_get_diff')
+@patch('gitwrite_api.routers.repository.core_get_word_level_diff')
+def test_api_compare_refs_default_mode(mock_get_word_diff, mock_get_diff):
+    mock_get_diff.return_value = {
+        "ref1_oid": "abc", "ref2_oid": "def",
+        "ref1_display_name": "HEAD~1", "ref2_display_name": "HEAD",
+        "patch_text": "--- a/file.txt\n+++ b/file.txt\n@@ -1 +1 @@\n-old\n+new"
+    }
+    app.dependency_overrides[actual_repo_auth_dependency] = mock_get_current_active_user
+
+    response = client.get("/repository/compare?ref1=HEAD~1&ref2=HEAD")
+    assert response.status_code == HTTPStatus.OK
+    data = response.json()
+    assert data["patch_text"] == "--- a/file.txt\n+++ b/file.txt\n@@ -1 +1 @@\n-old\n+new"
+    assert isinstance(data["patch_text"], str)
+    mock_get_diff.assert_called_once_with(repo_path_str=MOCK_REPO_PATH, ref1_str="HEAD~1", ref2_str="HEAD")
+    mock_get_word_diff.assert_not_called()
+    app.dependency_overrides = {}
+
+@patch('gitwrite_api.routers.repository.core_get_diff')
+@patch('gitwrite_api.routers.repository.core_get_word_level_diff')
+def test_api_compare_refs_word_mode(mock_get_word_diff, mock_get_diff):
+    raw_patch_text = "--- a/file.txt\n+++ b/file.txt\n@@ -1 +1 @@\n-old content\n+new content"
+    mock_get_diff.return_value = {
+        "ref1_oid": "abc", "ref2_oid": "def",
+        "ref1_display_name": "HEAD~1", "ref2_display_name": "HEAD",
+        "patch_text": raw_patch_text
+    }
+    structured_diff_expected = [
+        {"file_path": "file.txt", "hunks": [{"lines": [
+            {"type": "deletion", "content": "old content", "words": [{"type": "removed", "content": "old content"}]},
+            {"type": "addition", "content": "new content", "words": [{"type": "added", "content": "new content"}]}
+        ]}]}
+    ]
+    mock_get_word_diff.return_value = structured_diff_expected
+
+    app.dependency_overrides[actual_repo_auth_dependency] = mock_get_current_active_user
+
+    response = client.get("/repository/compare?ref1=HEAD~1&ref2=HEAD&diff_mode=word")
+    assert response.status_code == HTTPStatus.OK
+    data = response.json()
+
+    assert data["patch_text"] == structured_diff_expected
+    assert isinstance(data["patch_text"], list)
+    mock_get_diff.assert_called_once_with(repo_path_str=MOCK_REPO_PATH, ref1_str="HEAD~1", ref2_str="HEAD")
+    mock_get_word_diff.assert_called_once_with(raw_patch_text)
+    app.dependency_overrides = {}
+
+@patch('gitwrite_api.routers.repository.core_get_diff')
+@patch('gitwrite_api.routers.repository.core_get_word_level_diff')
+def test_api_compare_refs_word_mode_no_diff(mock_get_word_diff, mock_get_diff):
+    mock_get_diff.return_value = {
+        "ref1_oid": "abc", "ref2_oid": "def",
+        "ref1_display_name": "HEAD~1", "ref2_display_name": "HEAD",
+        "patch_text": "" # No textual diff
+    }
+    # core_get_word_level_diff should return [] if patch_text is empty
+    mock_get_word_diff.return_value = []
+
+    app.dependency_overrides[actual_repo_auth_dependency] = mock_get_current_active_user
+
+    response = client.get("/repository/compare?diff_mode=word") # Using default refs
+    assert response.status_code == HTTPStatus.OK
+    data = response.json()
+
+    assert data["patch_text"] == [] # Expect empty list for structured diff of no changes
+    assert isinstance(data["patch_text"], list)
+    mock_get_diff.assert_called_once_with(repo_path_str=MOCK_REPO_PATH, ref1_str=None, ref2_str=None)
+    # core_get_word_level_diff is NOT called if patch_text is empty
+    mock_get_word_diff.assert_not_called()
+    app.dependency_overrides = {}
+
+@patch('gitwrite_api.routers.repository.core_get_diff')
+def test_api_compare_refs_invalid_diff_mode(mock_get_diff):
+    mock_get_diff.return_value = {
+        "ref1_oid": "abc", "ref2_oid": "def",
+        "ref1_display_name": "HEAD~1", "ref2_display_name": "HEAD",
+        "patch_text": "some raw patch"
+    }
+    app.dependency_overrides[actual_repo_auth_dependency] = mock_get_current_active_user
+
+    response = client.get("/repository/compare?diff_mode=invalid")
+    assert response.status_code == HTTPStatus.OK
+    data = response.json()
+    assert data["patch_text"] == "some raw patch" # Should fall back to raw patch
+    assert isinstance(data["patch_text"], str)
+    mock_get_diff.assert_called_once()
+    app.dependency_overrides = {}
