@@ -250,3 +250,55 @@ None.
 
 **Next Steps (Optional):**
 Proceed with Task 7.4 - Agent_Core_Dev: Beta Reader Workflow (EPUB Export).
+
+---
+**Agent:** Jules (Implementation Agent)
+**Task Reference:** Phase 7, Task 7.4 - Agent_Core_Dev: Beta Reader Workflow (EPUB Export)
+
+**Summary:**
+Implemented the core functionality within `gitwrite_core` to export specified Markdown files from a Git repository at a given commit-ish to an EPUB file. This involved adding `pypandoc` as a dependency, creating an `export.py` module, and implementing the `export_to_epub` function with comprehensive error handling and unit tests.
+
+**Details:**
+-   **Dependency Management:**
+    -   Added `pypandoc = "^1.13"` to `pyproject.toml`.
+    -   Ensured `pandoc` (the underlying CLI tool) is installed in the environment (using `sudo apt-get install pandoc`).
+-   **Core Module (`gitwrite_core/export.py`):**
+    -   Created a new module `gitwrite_core/export.py`.
+    -   Implemented the function `export_to_epub(repo_path_str: str, commit_ish_str: str, file_list: List[str], output_epub_path_str: str) -> Dict[str, str]`.
+-   **Functionality of `export_to_epub`:**
+    -   Uses `pygit2` to access the Git repository and retrieve specific file contents from the tree of the resolved `commit_ish_str` (commit hash, branch name, or tag).
+    -   Concatenates the UTF-8 decoded content of the specified Markdown files, separated by a standard Markdown horizontal rule.
+    -   Utilizes `pypandoc.convert_text()` to convert the combined Markdown string into an EPUB file, saved to `output_epub_path_str`.
+    -   The function returns a dictionary `{"status": "success", "message": "..."}` on successful generation.
+-   **Error Handling and Custom Exceptions:**
+    -   The function raises specific custom exceptions derived from `GitWriteError` for various failure scenarios:
+        -   `PandocError`: If `pypandoc.get_pandoc_path()` fails (Pandoc not found) or if `pypandoc.convert_text()` encounters a runtime error.
+        -   `RepositoryNotFoundError`: If the provided repository path is not a directory, not a valid Git repository, or an invalid path.
+        -   `CommitNotFoundError`: If the `commit_ish_str` cannot be resolved to a valid commit object (handles invalid refs, tags not pointing to commits, or refs pointing to non-commit objects like blobs/trees).
+        -   `FileNotFoundInCommitError`: If a file specified in `file_list` is not found in the resolved commit's tree or if the entry is not a blob (e.g., it's a directory).
+        -   `GitWriteError`: For other issues like an empty repository, an empty `file_list`, non-UTF-8 file content, or if all specified files are empty/contain only whitespace, or if output directory creation fails.
+    -   Added new exceptions to `gitwrite_core/exceptions.py`: `PandocError`, `FileNotFoundInCommitError`.
+-   **Unit Testing (`tests/test_core_export.py`):**
+    -   Created a new test file `tests/test_core_export.py`.
+    -   Implemented 19 passing unit tests and 1 skipped test (for annotated tags pointing to non-commits, which is hard to set up reliably with pygit2).
+    -   Tests cover:
+        -   Successful EPUB generation with various `commit_ish` types (HEAD, branch, tag).
+        -   All defined error handling paths (Pandoc not found, repo/commit/file errors, empty content, non-UTF-8, output issues, Pandoc conversion errors).
+        -   Mocking of `pypandoc` functions and `pathlib.Path.mkdir` for isolated testing.
+        -   A helper function `init_test_repo_corrected` was created to simplify test repository setup.
+
+**Output/Result:**
+-   Modified `pyproject.toml` (added `pypandoc`).
+-   Created `gitwrite_core/export.py` (contains `export_to_epub` function).
+-   Modified `gitwrite_core/exceptions.py` (added `PandocError`, `FileNotFoundInCommitError`).
+-   Created `tests/test_core_export.py` (contains unit tests for export functionality).
+-   This log entry in `Memory_Bank.md`.
+-   Updated `Implementation_Plan.md` (Task 7.4 marked as Completed).
+
+**Status:** Completed
+
+**Issues/Blockers:**
+None. Iterative debugging of `IndentationError`s caused by diff tool issues was time-consuming but ultimately resolved.
+
+**Next Steps (Optional):**
+Proceed with Task 7.5 - Agent_CLI_Dev & Agent_API_Dev: Export Endpoints.

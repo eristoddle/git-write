@@ -60,7 +60,7 @@ Status: **Completed**
 
 ### Task 7.4 - Agent_Core_Dev: Beta Reader Workflow (EPUB Export)
 Objective: Implement the core logic for exporting repository content to EPUB format.
-Status: **Pending**
+Status: **Completed**
 Guidance: This will likely require integrating a library like `pypandoc`. The function should be able to take a list of markdown files from a specific commit and compile them into an EPUB.
 
 1.  Add `pypandoc` as a dependency.

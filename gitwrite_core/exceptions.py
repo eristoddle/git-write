@@ -77,6 +77,12 @@ class RemoteNotFoundError(GitWriteError):
     """Raised when a specified remote is not found."""
     pass
 
-class BranchNotFoundError(GitWriteError):
-    """Raised when a specified branch cannot be found."""
+# Removed duplicate BranchNotFoundError
+
+class PandocError(GitWriteError):
+    """Raised for errors related to Pandoc execution or availability."""
+    pass
+
+class FileNotFoundInCommitError(GitWriteError):
+    """Raised when a specified file is not found in the given commit."""
     pass
