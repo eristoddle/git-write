@@ -365,3 +365,58 @@ None.
 
 **Next Steps (Optional):**
 Proceed with the next phase (Phase 8: TypeScript SDK Development) as per `Implementation_Plan.md`.
+
+---
+**Agent:** Jules (Implementation Agent)
+**Task Reference:** Phase 8, Task 8.1 - Agent_SDK_Dev: Update SDK for API Parity
+
+**Summary:**
+Updated the TypeScript SDK (`gitwrite_sdk`) to include client methods and types for all currently implemented API endpoints in `gitwrite_api`. This brings the SDK to parity with the existing REST API, covering functionalities for repository management, version control operations, collaboration features, and content export.
+
+**Details:**
+-   **Type Definitions (`gitwrite_sdk/src/types.ts`):**
+    -   Added TypeScript interfaces for request payloads and response data for 13 API endpoints previously not covered by the SDK. These include:
+        -   Repository initialization (`RepositoryCreateRequest`, `RepositoryCreateResponse`)
+        -   Branch creation and switching (`BranchCreateRequest`, `BranchSwitchRequest`, `BranchResponse`)
+        -   Merging (`MergeBranchRequest`, `MergeBranchResponse`)
+        -   Comparison (`CompareRefsParams`, `CompareRefsResponse`)
+        -   Reverting commits (`RevertCommitRequest`, `RevertCommitResponse`)
+        -   Repository synchronization (`SyncRepositoryRequest`, `SyncRepositoryResponse`, `SyncFetchStatus`, `SyncLocalUpdateStatus`, `SyncPushStatus`)
+        -   Tag creation (`TagCreateRequest`, `TagCreateResponse`)
+        -   .gitignore management (`IgnoreListResponse`, `IgnorePatternRequest`, `IgnoreAddResponse`)
+        -   Branch review (`BranchReviewCommit`, `ReviewBranchParams`, `BranchReviewResponse`)
+        -   Cherry-picking (`CherryPickRequest`, `CherryPickResponse`)
+        -   EPUB export (`EPUBExportRequest`, `EPUBExportResponse`)
+    -   Ensured these types accurately reflect the Pydantic models used in the FastAPI backend.
+
+-   **Client Method Implementations (`gitwrite_sdk/src/apiClient.ts`):**
+    -   Added 13 new public methods to the `GitWriteClient` class, corresponding to the newly typed API endpoints:
+        -   `initializeRepository(payload?: RepositoryCreateRequest): Promise<RepositoryCreateResponse>`
+        -   `createBranch(payload: BranchCreateRequest): Promise<BranchResponse>`
+        -   `switchBranch(payload: BranchSwitchRequest): Promise<BranchResponse>`
+        -   `mergeBranch(payload: MergeBranchRequest): Promise<MergeBranchResponse>`
+        -   `compareRefs(params?: CompareRefsParams): Promise<CompareRefsResponse>`
+        -   `revertCommit(payload: RevertCommitRequest): Promise<RevertCommitResponse>`
+        -   `syncRepository(payload: SyncRepositoryRequest): Promise<SyncRepositoryResponse>`
+        -   `createTag(payload: TagCreateRequest): Promise<TagCreateResponse>`
+        -   `listIgnorePatterns(): Promise<IgnoreListResponse>`
+        -   `addIgnorePattern(payload: IgnorePatternRequest): Promise<IgnoreAddResponse>`
+        -   `reviewBranch(branchName: string, params?: ReviewBranchParams): Promise<BranchReviewResponse>`
+        -   `cherryPickCommit(payload: CherryPickRequest): Promise<CherryPickResponse>`
+        -   `exportToEPUB(payload: EPUBExportRequest): Promise<EPUBExportResponse>`
+    -   Utilized the generic `this.get`, `this.post`, `this.put` helper methods for making HTTP requests.
+    -   Handled URL construction for path parameters (e.g., `/review/{branch_name}`) and query parameters.
+
+**Output/Result:**
+-   Modified `gitwrite_sdk/src/types.ts`
+-   Modified `gitwrite_sdk/src/apiClient.ts`
+-   This log entry in `Memory_Bank.md`.
+-   Updated `Implementation_Plan.md` (Task 8.1 marked as Completed).
+
+**Status:** Completed
+
+**Issues/Blockers:**
+None.
+
+**Next Steps (Optional):**
+Proceed with Task 8.2 - Agent_SDK_Dev: Comprehensive SDK Testing.

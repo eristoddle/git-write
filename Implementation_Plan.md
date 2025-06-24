@@ -83,7 +83,7 @@ Architectural Notes: This phase will resume and complete the SDK development, en
 
 ### Task 8.1 - Agent_SDK_Dev: Update SDK for API Parity
 Objective: Add client methods for all implemented API endpoints.
-Status: **Pending**
+Status: **Completed**
 
 1.  Review all endpoints in `gitwrite_api/routers/`.
 2.  For each missing endpoint, add a corresponding method in `gitwrite_sdk/src/apiClient.ts`.

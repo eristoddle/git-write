@@ -93,6 +93,304 @@ export interface SaveFileResponseData {
   commit_id?: string; // Optional, as it might not be present on error
 }
 
+// Types for API Parity - Task 8.1
+
+// From gitwrite_api/models.py and gitwrite_api/routers/repository.py
+
+/**
+ * Request payload for initializing a repository.
+ * POST /repository/repositories
+ * Maps to RepositoryCreateRequest in API.
+ */
+export interface RepositoryCreateRequest {
+  project_name?: string | null;
+}
+
+/**
+ * Response data for initializing a repository.
+ * Maps to RepositoryCreateResponse in API.
+ */
+export interface RepositoryCreateResponse {
+  status: string;
+  message: string;
+  repository_id: string;
+  path: string;
+}
+
+/**
+ * Request payload for creating a branch.
+ * POST /repository/branches
+ * Maps to BranchCreateRequest in API.
+ */
+export interface BranchCreateRequest {
+  branch_name: string;
+}
+
+/**
+ * Request payload for switching a branch.
+ * PUT /repository/branch
+ * Maps to BranchSwitchRequest in API.
+ */
+export interface BranchSwitchRequest {
+  branch_name: string;
+}
+
+/**
+ * Response data for branch operations (create/switch).
+ * Maps to BranchResponse in API.
+ */
+export interface BranchResponse {
+  status: string;
+  branch_name: string;
+  message: string;
+  head_commit_oid?: string | null;
+  previous_branch_name?: string | null;
+  is_detached?: boolean | null;
+}
+
+/**
+ * Request payload for merging a branch.
+ * POST /repository/merges
+ * Maps to MergeBranchRequest in API.
+ */
+export interface MergeBranchRequest {
+  source_branch: string;
+}
+
+/**
+ * Response data for merging a branch.
+ * Maps to MergeBranchResponse in API.
+ */
+export interface MergeBranchResponse {
+  status: string;
+  message: string;
+  current_branch?: string | null;
+  merged_branch?: string | null;
+  commit_oid?: string | null;
+  conflicting_files?: string[] | null;
+}
+
+/**
+ * Query parameters for comparing references.
+ * GET /repository/compare
+ */
+export interface CompareRefsParams {
+  ref1?: string | null;
+  ref2?: string | null;
+}
+
+/**
+ * Response data for comparing references.
+ * Maps to CompareRefsResponse in API.
+ */
+export interface CompareRefsResponse {
+  ref1_oid: string;
+  ref2_oid: string;
+  ref1_display_name: string;
+  ref2_display_name: string;
+  patch_text: string;
+}
+
+/**
+ * Request payload for reverting a commit.
+ * POST /repository/revert
+ * Maps to RevertCommitRequest in API.
+ */
+export interface RevertCommitRequest {
+  commit_ish: string;
+}
+
+/**
+ * Response data for reverting a commit.
+ * Maps to RevertCommitResponse in API.
+ */
+export interface RevertCommitResponse {
+  status: string;
+  message: string;
+  new_commit_oid?: string | null;
+}
+
+/**
+ * Sub-model for fetch status in sync operation.
+ * Maps to SyncFetchStatus in API.
+ */
+export interface SyncFetchStatus {
+  received_objects?: number | null;
+  total_objects?: number | null;
+  message: string;
+}
+
+/**
+ * Sub-model for local update status in sync operation.
+ * Maps to SyncLocalUpdateStatus in API.
+ */
+export interface SyncLocalUpdateStatus {
+  type: string;
+  message: string;
+  commit_oid?: string | null;
+  conflicting_files: string[];
+}
+
+/**
+ * Sub-model for push status in sync operation.
+ * Maps to SyncPushStatus in API.
+ */
+export interface SyncPushStatus {
+  pushed: boolean;
+  message: string;
+}
+
+/**
+ * Request payload for syncing a repository.
+ * POST /repository/sync
+ * Maps to SyncRepositoryRequest in API.
+ */
+export interface SyncRepositoryRequest {
+  remote_name?: string;
+  branch_name?: string | null;
+  push?: boolean;
+  allow_no_push?: boolean;
+}
+
+/**
+ * Response data for syncing a repository.
+ * Maps to SyncRepositoryResponse in API.
+ */
+export interface SyncRepositoryResponse {
+  status: string;
+  branch_synced?: string | null;
+  remote: string;
+  fetch_status: SyncFetchStatus;
+  local_update_status: SyncLocalUpdateStatus;
+  push_status: SyncPushStatus;
+}
+
+/**
+ * Request payload for creating a tag.
+ * POST /repository/tags
+ * Maps to TagCreateRequest in API.
+ */
+export interface TagCreateRequest {
+  tag_name: string;
+  message?: string | null;
+  commit_ish?: string;
+  force?: boolean;
+}
+
+/**
+ * Response data for creating a tag.
+ * Maps to TagCreateResponse in API.
+ */
+export interface TagCreateResponse {
+  status: string;
+  tag_name: string;
+  tag_type: string;
+  target_commit_oid: string;
+  message?: string | null;
+}
+
+/**
+ * Response data for listing .gitignore patterns.
+ * GET /repository/ignore
+ * Maps to IgnoreListResponse in API.
+ */
+export interface IgnoreListResponse {
+  status: string;
+  patterns: string[];
+  message: string;
+}
+
+/**
+ * Request payload for adding a pattern to .gitignore.
+ * POST /repository/ignore
+ * Maps to IgnorePatternRequest in API.
+ */
+export interface IgnorePatternRequest {
+  pattern: string;
+}
+
+/**
+ * Response data for adding a pattern to .gitignore.
+ * Maps to IgnoreAddResponse in API.
+ */
+export interface IgnoreAddResponse {
+  status: string;
+  message: string;
+}
+
+/**
+ * Represents a commit for branch review.
+ * Maps to BranchReviewCommit in API (from gitwrite_api/models.py).
+ */
+export interface BranchReviewCommit {
+  short_hash: string;
+  author_name: string;
+  date: string; // ISO 8601 format
+  message_short: string;
+  oid: string;
+}
+
+/**
+ * Query parameters for reviewing a branch.
+ * GET /repository/review/{branch_name}
+ */
+export interface ReviewBranchParams {
+  limit?: number | null;
+}
+
+/**
+ * Response data for reviewing a branch.
+ * Maps to BranchReviewResponse in API (from gitwrite_api/models.py).
+ */
+export interface BranchReviewResponse {
+  status: string;
+  branch_name: string;
+  commits: BranchReviewCommit[];
+  message: string;
+}
+
+/**
+ * Request payload for cherry-picking a commit.
+ * POST /repository/cherry-pick
+ * Maps to CherryPickRequest in API (from gitwrite_api/models.py).
+ */
+export interface CherryPickRequest {
+  commit_id: string;
+  mainline?: number | null;
+}
+
+/**
+ * Response data for cherry-picking a commit.
+ * Maps to CherryPickResponse in API (from gitwrite_api/models.py).
+ */
+export interface CherryPickResponse {
+  status: string;
+  message: string;
+  new_commit_oid?: string | null;
+  conflicting_files?: string[] | null;
+}
+
+/**
+ * Request payload for exporting to EPUB.
+ * POST /repository/export/epub
+ * Maps to EPUBExportRequest in API (from gitwrite_api/models.py).
+ */
+export interface EPUBExportRequest {
+  commit_ish?: string;
+  file_list: string[];
+  output_filename?: string;
+}
+
+/**
+ * Response data for exporting to EPUB.
+ * Maps to EPUBExportResponse in API (from gitwrite_api/models.py).
+ */
+export interface EPUBExportResponse {
+  status: string;
+  message: string;
+  server_file_path?: string | null;
+}
+
 // Interfaces for Multi-Part Upload (Task 6.5)
 
 /**

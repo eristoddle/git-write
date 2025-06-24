@@ -14,6 +14,31 @@ import {
   UploadCompleteRequestPayload,
   UploadCompleteResponseData,
   UploadURLData,
+  // Types for new methods (Task 8.1)
+  RepositoryCreateRequest,
+  RepositoryCreateResponse,
+  BranchCreateRequest,
+  BranchResponse,
+  BranchSwitchRequest,
+  MergeBranchRequest,
+  MergeBranchResponse,
+  CompareRefsParams,
+  CompareRefsResponse,
+  RevertCommitRequest,
+  RevertCommitResponse,
+  SyncRepositoryRequest,
+  SyncRepositoryResponse,
+  TagCreateRequest,
+  TagCreateResponse,
+  IgnoreListResponse,
+  IgnorePatternRequest,
+  IgnoreAddResponse,
+  ReviewBranchParams,
+  BranchReviewResponse,
+  CherryPickRequest,
+  CherryPickResponse,
+  EPUBExportRequest,
+  EPUBExportResponse,
 } from './types';
 
 // Define a type for the token, which can be a string or null
@@ -260,7 +285,172 @@ export class GitWriteClient {
       completePayload
     );
 
-    return completeResponse.data;
+    return response.data;
+  }
+
+  // New methods for API Parity (Task 8.1)
+
+  /**
+   * Initializes a new GitWrite repository.
+   * Corresponds to API endpoint: POST /repository/repositories
+   * @param payload Optional project name for the repository.
+   */
+  public async initializeRepository(payload?: RepositoryCreateRequest): Promise<RepositoryCreateResponse> {
+    const response = await this.post<RepositoryCreateResponse, AxiosResponse<RepositoryCreateResponse>, RepositoryCreateRequest | undefined>(
+      '/repository/repositories',
+      payload
+    );
+    return response.data;
+  }
+
+  /**
+   * Creates a new branch from the current HEAD and switches to it.
+   * Corresponds to API endpoint: POST /repository/branches
+   * @param payload Contains the name of the branch to create.
+   */
+  public async createBranch(payload: BranchCreateRequest): Promise<BranchResponse> {
+    const response = await this.post<BranchResponse, AxiosResponse<BranchResponse>, BranchCreateRequest>(
+      '/repository/branches',
+      payload
+    );
+    return response.data;
+  }
+
+  /**
+   * Switches to an existing local branch.
+   * Corresponds to API endpoint: PUT /repository/branch
+   * @param payload Contains the name of the branch to switch to.
+   */
+  public async switchBranch(payload: BranchSwitchRequest): Promise<BranchResponse> {
+    const response = await this.put<BranchResponse, AxiosResponse<BranchResponse>, BranchSwitchRequest>(
+      '/repository/branch',
+      payload
+    );
+    return response.data;
+  }
+
+  /**
+   * Merges a specified source branch into the current branch.
+   * Corresponds to API endpoint: POST /repository/merges
+   * @param payload Contains the name of the source branch to merge.
+   */
+  public async mergeBranch(payload: MergeBranchRequest): Promise<MergeBranchResponse> {
+    const response = await this.post<MergeBranchResponse, AxiosResponse<MergeBranchResponse>, MergeBranchRequest>(
+      '/repository/merges',
+      payload
+    );
+    return response.data;
+  }
+
+  /**
+   * Compares two references in the repository and returns the diff.
+   * Corresponds to API endpoint: GET /repository/compare
+   * @param params Optional ref1 and ref2. Defaults to HEAD~1 and HEAD.
+   */
+  public async compareRefs(params?: CompareRefsParams): Promise<CompareRefsResponse> {
+    const response = await this.get<CompareRefsResponse>('/repository/compare', { params });
+    return response.data;
+  }
+
+  /**
+   * Reverts a specified commit.
+   * Corresponds to API endpoint: POST /repository/revert
+   * @param payload Contains the commit reference to revert.
+   */
+  public async revertCommit(payload: RevertCommitRequest): Promise<RevertCommitResponse> {
+    const response = await this.post<RevertCommitResponse, AxiosResponse<RevertCommitResponse>, RevertCommitRequest>(
+      '/repository/revert',
+      payload
+    );
+    return response.data;
+  }
+
+  /**
+   * Synchronizes the local repository branch with its remote counterpart.
+   * Corresponds to API endpoint: POST /repository/sync
+   * @param payload Contains remote name, branch name, and push options.
+   */
+  public async syncRepository(payload: SyncRepositoryRequest): Promise<SyncRepositoryResponse> {
+    const response = await this.post<SyncRepositoryResponse, AxiosResponse<SyncRepositoryResponse>, SyncRepositoryRequest>(
+      '/repository/sync',
+      payload
+    );
+    return response.data;
+  }
+
+  /**
+   * Creates a new tag (lightweight or annotated) in the repository.
+   * Corresponds to API endpoint: POST /repository/tags
+   * @param payload Contains tag name, message, commit-ish, and force option.
+   */
+  public async createTag(payload: TagCreateRequest): Promise<TagCreateResponse> {
+    const response = await this.post<TagCreateResponse, AxiosResponse<TagCreateResponse>, TagCreateRequest>(
+      '/repository/tags',
+      payload
+    );
+    return response.data;
+  }
+
+  /**
+   * Lists all patterns in the .gitignore file of the repository.
+   * Corresponds to API endpoint: GET /repository/ignore
+   */
+  public async listIgnorePatterns(): Promise<IgnoreListResponse> {
+    const response = await this.get<IgnoreListResponse>('/repository/ignore');
+    return response.data;
+  }
+
+  /**
+   * Adds a new pattern to the .gitignore file in the repository.
+   * Corresponds to API endpoint: POST /repository/ignore
+   * @param payload Contains the pattern to add.
+   */
+  public async addIgnorePattern(payload: IgnorePatternRequest): Promise<IgnoreAddResponse> {
+    const response = await this.post<IgnoreAddResponse, AxiosResponse<IgnoreAddResponse>, IgnorePatternRequest>(
+      '/repository/ignore',
+      payload
+    );
+    return response.data;
+  }
+
+  /**
+   * Retrieves commits present on the specified branch that are not on the current HEAD.
+   * Corresponds to API endpoint: GET /repository/review/{branch_name}
+   * @param branchName The name of the branch to review.
+   * @param params Optional parameters, e.g., limit.
+   */
+  public async reviewBranch(branchName: string, params?: ReviewBranchParams): Promise<BranchReviewResponse> {
+    const response = await this.get<BranchReviewResponse>(
+      `/repository/review/${branchName}`,
+      { params }
+    );
+    return response.data;
+  }
+
+  /**
+   * Applies a specific commit from any part of the history to the current branch.
+   * Corresponds to API endpoint: POST /repository/cherry-pick
+   * @param payload Contains the commit ID and optional mainline parameter.
+   */
+  public async cherryPickCommit(payload: CherryPickRequest): Promise<CherryPickResponse> {
+    const response = await this.post<CherryPickResponse, AxiosResponse<CherryPickResponse>, CherryPickRequest>(
+      '/repository/cherry-pick',
+      payload
+    );
+    return response.data;
+  }
+
+  /**
+   * Exports specified markdown files from the repository to an EPUB file.
+   * Corresponds to API endpoint: POST /repository/export/epub
+   * @param payload Contains commit-ish, file list, and output filename.
+   */
+  public async exportToEPUB(payload: EPUBExportRequest): Promise<EPUBExportResponse> {
+    const response = await this.post<EPUBExportResponse, AxiosResponse<EPUBExportResponse>, EPUBExportRequest>(
+      '/repository/export/epub',
+      payload
+    );
+    return response.data;
   }
 }
 
