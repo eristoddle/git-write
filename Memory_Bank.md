@@ -420,3 +420,57 @@ None.
 
 **Next Steps (Optional):**
 Proceed with Task 8.2 - Agent_SDK_Dev: Comprehensive SDK Testing.
+
+---
+**Agent:** Jules (Implementation Agent)
+**Task Reference:** Phase 8, Task 8.2 - Agent_SDK_Dev: Comprehensive SDK Testing
+
+**Summary:**
+Implemented comprehensive unit tests for all new methods added to the TypeScript SDK (`gitwrite_sdk`) in Task 8.1. This ensures robust testing coverage for SDK functionalities corresponding to repository initialization, branch management, merging, comparison, reverting, syncing, tagging, .gitignore handling, branch review, cherry-picking, and EPUB export.
+
+**Details:**
+-   **Test File:** `gitwrite_sdk/tests/apiClient.test.ts`
+-   **Methodology:**
+    -   For each of the 13 new SDK methods, `describe` blocks were added.
+    -   `beforeEach` was used to set up the `GitWriteClient` and mock authentication.
+    -   **Success Case Tests:**
+        -   Mocked API responses using `mockRequest` (the mocked generic Axios request method).
+        -   Asserted that `mockRequest` was called with correct URLs, methods, payloads/params.
+        -   Asserted that SDK methods returned the expected data based on mock responses.
+        -   Covered cases with and without optional parameters for methods like `compareRefs` and `reviewBranch`.
+    -   **Error Case Tests:**
+        -   Mocked `mockRequest` to reject with Axios-like error objects.
+        -   Asserted that SDK methods correctly throw or propagate these errors.
+-   **Specific Client Methods Tested:**
+    -   `initializeRepository`
+    -   `createBranch`
+    -   `switchBranch`
+    -   `mergeBranch`
+    -   `compareRefs`
+    -   `revertCommit`
+    -   `syncRepository`
+    -   `createTag`
+    -   `listIgnorePatterns`
+    -   `addIgnorePattern`
+    -   `reviewBranch`
+    -   `cherryPickCommit`
+    -   `exportToEPUB`
+-   **Test Execution and Debugging:**
+    -   Initially encountered a `ts-jest` preset not found error, resolved by running `npm install` within the `gitwrite_sdk` directory using a subshell `(cd gitwrite_sdk && npm install)`.
+    -   A typo (`response.data` instead of `completeResponse.data`) in `gitwrite_sdk/src/apiClient.ts` (line 288, within `saveFiles` method) was identified during test runs and corrected.
+    -   Two test assertions for methods called without optional parameters (`compareRefs` and `reviewBranch`) were updated to expect `params: undefined` instead of `params: {}` for the mocked Axios call, aligning with actual behavior.
+    -   All 58 tests in the suite now pass.
+
+**Output/Result:**
+-   Modified `gitwrite_sdk/tests/apiClient.test.ts` (added comprehensive tests for 13 methods).
+-   Modified `gitwrite_sdk/src/apiClient.ts` (corrected a typo in the `saveFiles` method).
+-   This log entry in `Memory_Bank.md`.
+-   Updated `Implementation_Plan.md` (Task 8.2 marked as Completed).
+
+**Status:** Completed
+
+**Issues/Blockers:**
+Minor issues with bash session state for `cd` commands were worked around using subshells. Initial test failures led to identifying and fixing a pre-existing typo in the SDK source and refining test assertions.
+
+**Next Steps (Optional):**
+Proceed with Phase 9: Publishing & Documentation Workflows, starting with Task 9.1.
