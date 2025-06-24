@@ -15,13 +15,18 @@ from gitwrite_core.exceptions import (
     MergeConflictError,
     GitWriteError
 )
+from gitwrite_api.models import User, UserRole # Import User and UserRole
 
 # Mock user for dependency override
-MOCK_USER = {"username": "testuser", "email": "test@example.com", "active": True}
+# MOCK_USER = {"username": "testuser", "email": "test@example.com", "active": True}
+MOCK_DEFAULT_USER_WITH_ROLES = User(username="testuser", email="test@example.com", roles=[UserRole.OWNER], disabled=False) # Example role
 MOCK_REPO_PATH = "/tmp/gitwrite_repos_api" # Align with router's PLACEHOLDER_REPO_PATH
 
 def mock_get_current_active_user():
-    return MOCK_USER
+    # This mock will be used by the require_role dependency.
+    # For general tests in this file not specifically testing RBAC denial,
+    # providing a user with a permissive role (e.g., OWNER) is fine.
+    return MOCK_DEFAULT_USER_WITH_ROLES
 
 @pytest.fixture(autouse=True)
 def override_auth_dependency():

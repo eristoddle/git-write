@@ -474,3 +474,53 @@ Minor issues with bash session state for `cd` commands were worked around using 
 
 **Next Steps (Optional):**
 Proceed with Phase 9: Publishing & Documentation Workflows, starting with Task 9.1.
+
+---
+**Agent:** Jules (Implementation Agent)
+**Task Reference:** Phase 9, Task 9.1 - Agent_API_Dev: Role-Based Access Control (RBAC)
+
+**Summary:**
+Implemented a Role-Based Access Control (RBAC) system for the GitWrite API. This introduces user roles (Owner, Editor, Writer, Beta Reader) and protects key API endpoints, ensuring that only users with appropriate permissions can perform certain actions.
+
+**Details:**
+-   **Role Definition (`gitwrite_api/models.py`):**
+    -   Created `UserRole(str, Enum)` with values: `OWNER`, `EDITOR`, `WRITER`, `BETA_READER`.
+    -   Added `roles: List[UserRole]` field to `User` and `UserInDB` Pydantic models.
+-   **User Data Update (`gitwrite_api/security.py`):**
+    -   Updated `FAKE_USERS_DB` to include a `roles` list for the default user (`johndoe` assigned `OWNER`).
+    -   Added new sample users (`editoruser`, `writeruser`, `betauser`) with corresponding roles to facilitate testing.
+-   **RBAC Dependency (`gitwrite_api/security.py`):**
+    -   Created a `require_role(required_roles: List[UserRole])` dependency function.
+    -   This dependency retrieves the current active user and checks if their assigned roles overlap with the `required_roles` for the endpoint.
+    -   Raises `HTTPException` (403 Forbidden) if the user lacks the necessary role(s) or has no roles assigned.
+-   **Endpoint Protection (`gitwrite_api/routers/repository.py`):**
+    -   Imported `UserRole` and `require_role`.
+    -   Replaced `Depends(get_current_active_user)` with `Depends(require_role([...]))` on selected endpoints:
+        -   `POST /repository/repositories` (Initialize Repository): Requires `UserRole.OWNER`.
+        -   `POST /repository/save` (Save File): Requires `UserRole.OWNER`, `UserRole.EDITOR`, or `UserRole.WRITER`.
+        -   `GET /repository/review/{branch_name}` (Review Branch): Requires `UserRole.OWNER`, `UserRole.EDITOR`, or `UserRole.BETA_READER`.
+        -   `POST /repository/export/epub` (Export EPUB): Requires `UserRole.OWNER`, `UserRole.EDITOR`, `UserRole.WRITER`, or `UserRole.BETA_READER`.
+-   **Unit Test Implementation (`tests/test_api_repository.py`):**
+    -   Added new mock user instances with different roles (`MOCK_OWNER_USER`, `MOCK_EDITOR_USER`, etc.).
+    -   Created a helper `mock_get_current_active_user_with_role(user: User)` to supply users with specific roles for testing protected endpoints.
+    -   Added RBAC test cases for each protected endpoint (`api_initialize_repository`, `api_save_file`, `api_review_branch_commits`, `api_export_to_epub`).
+    -   These tests verify:
+        -   Access is granted to users with appropriate roles.
+        -   Access is denied (403 Forbidden) to users with insufficient roles.
+        -   Access is denied (403 Forbidden) to users with no roles assigned.
+
+**Output/Result:**
+-   Modified `gitwrite_api/models.py` (added `UserRole` enum, updated user models).
+-   Modified `gitwrite_api/security.py` (updated `FAKE_USERS_DB`, added `require_role` dependency).
+-   Modified `gitwrite_api/routers/repository.py` (applied `require_role` to endpoints).
+-   Modified `tests/test_api_repository.py` (added RBAC-specific mock users and unit tests).
+-   This log entry in `Memory_Bank.md`.
+-   Updated `Implementation_Plan.md` (Task 9.1 marked as Completed).
+
+**Status:** Completed
+
+**Issues/Blockers:**
+None.
+
+**Next Steps (Optional):**
+Proceed with the next task in Phase 9 as per `Implementation_Plan.md`.

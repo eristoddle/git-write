@@ -9,10 +9,13 @@ from gitwrite_api.main import app
 from gitwrite_api.models import User # Corrected import
 from gitwrite_core.exceptions import RepositoryNotFoundError, CommitNotFoundError, FileNotFoundInCommitError, PandocError # Corrected import
 
+from gitwrite_api.models import UserRole # Import UserRole
+
 # Fixture for a mock authenticated user
 @pytest.fixture
 def mock_authenticated_user():
-    return User(username="testuser", email="test@example.com", full_name="Test User", disabled=False)
+    # Provide a user with a role that is allowed by the export endpoint
+    return User(username="testuser", email="test@example.com", full_name="Test User", disabled=False, roles=[UserRole.OWNER])
 
 # Fixture for the TestClient
 @pytest.fixture
@@ -31,7 +34,8 @@ def override_get_current_active_user(mock_authenticated_user):
     # For now, this targets the repository router as it's most relevant for these tests.
 
 # Global reference for re-applying mock user after unauth test
-mock_authenticated_user_global_ref = User(username="testuser", email="test@example.com", full_name="Test User", disabled=False)
+# Ensure this user also has a role, matching the updated mock_authenticated_user
+mock_authenticated_user_global_ref = User(username="testuser", email="test@example.com", full_name="Test User", disabled=False, roles=[UserRole.OWNER])
 
 @pytest.fixture(autouse=True)
 def setup_global_mock_user_ref(mock_authenticated_user):

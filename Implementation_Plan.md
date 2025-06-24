@@ -106,7 +106,7 @@ Objective: Implement features supporting formal publishing workflows.
 
 ### Task 9.1 - Agent_API_Dev: Role-Based Access Control (RBAC)
 Objective: Implement a more granular permission system beyond simple authentication.
-Status: **Pending**
+Status: **Completed**
 
 1.  Design a role system (e.g., Owner, Editor, Writer, Beta Reader).
 2.  Integrate RBAC checks into API endpoints to restrict actions based on user roles.

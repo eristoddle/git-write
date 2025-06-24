@@ -22,12 +22,8 @@ from gitwrite_core.versioning import (
 # Import security dependency (assuming path based on project structure)
 # Adjust the import path if your security module is located differently.
 # For this example, let's assume a flat structure for simplicity or direct placement:
-# from ..security import get_current_active_user
-# from ..models import User  # If User model is needed for dependency
-
-# Placeholder for security dependency - replace with actual import
-# from gitwrite_api.security import get_current_active_user
-from ..models import User # Import the canonical User model
+from ..security import get_current_active_user, require_role # Actual import
+from ..models import User, UserRole # Import the canonical User model and UserRole
 from ..models import SaveFileRequest, SaveFileResponse # Added for the new save endpoint
 
 # Import core branching functions and exceptions
@@ -69,11 +65,6 @@ from ..models import CherryPickRequest, CherryPickResponse
 # Models for EPUB Export API
 from ..models import EPUBExportRequest, EPUBExportResponse
 
-
-# For now, let's define a placeholder dependency to make the code runnable without the actual security module
-async def get_current_active_user(): # Placeholder
-    # In a real app, this would verify a token and return a user model
-    return {"username": "testuser", "email": "test@example.com", "active": True}
 
 # Placeholder Pydantic model for User removed, as it's now imported from ..models
 
@@ -303,7 +294,7 @@ async def api_list_commits(
 @router.post("/save", response_model=SaveFileResponse)
 async def api_save_file(
     save_request: SaveFileRequest = Body(...),
-    current_user: User = Depends(get_current_active_user)
+    current_user: User = Depends(require_role([UserRole.OWNER, UserRole.EDITOR, UserRole.WRITER]))
 ):
     """
     Saves a file to the repository and commits the change.
@@ -832,7 +823,7 @@ async def api_list_ignore_patterns(current_user: User = Depends(get_current_acti
 @router.post("/export/epub", response_model=EPUBExportResponse)
 async def api_export_to_epub(
     request_data: EPUBExportRequest,
-    current_user: User = Depends(get_current_active_user)
+    current_user: User = Depends(require_role([UserRole.OWNER, UserRole.EDITOR, UserRole.WRITER, UserRole.BETA_READER]))
 ):
     """
     Exports specified markdown files from the repository at a given commit-ish to an EPUB file.
@@ -908,7 +899,7 @@ async def api_export_to_epub(
 async def api_review_branch_commits(
     branch_name: str,
     limit: Optional[int] = Query(None, description="Maximum number of commits to return.", gt=0),
-    current_user: User = Depends(get_current_active_user)
+    current_user: User = Depends(require_role([UserRole.OWNER, UserRole.EDITOR, UserRole.BETA_READER]))
 ):
     """
     Retrieves commits present on the specified branch that are not on the current HEAD.
@@ -1022,7 +1013,7 @@ async def api_cherry_pick_commit(
 @router.post("/repositories", response_model=RepositoryCreateResponse, status_code=201)
 async def api_initialize_repository(
     request_data: RepositoryCreateRequest,
-    current_user: User = Depends(get_current_active_user)
+    current_user: User = Depends(require_role([UserRole.OWNER]))
 ):
     """
     Initializes a new GitWrite repository.

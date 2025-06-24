@@ -1,6 +1,14 @@
 from typing import Optional, List, Dict
+from enum import Enum
 
 from pydantic import BaseModel, Field
+
+
+class UserRole(str, Enum):
+    OWNER = "owner"
+    EDITOR = "editor"
+    WRITER = "writer"
+    BETA_READER = "beta_reader"
 
 
 class User(BaseModel):
@@ -8,6 +16,7 @@ class User(BaseModel):
     email: Optional[str] = None
     full_name: Optional[str] = None
     disabled: Optional[bool] = None
+    roles: List[UserRole] = Field(default_factory=list)
 
 
 class UserInDB(User):

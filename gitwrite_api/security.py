@@ -46,6 +46,8 @@ oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/token") # Adjusted tokenUrl to b
 
 # This is a placeholder for user database.
 # In a real application, this would query a database.
+from .models import UserRole # Import UserRole
+
 FAKE_USERS_DB = {
     "johndoe": {
         "username": "johndoe",
@@ -53,6 +55,31 @@ FAKE_USERS_DB = {
         "email": "johndoe@example.com",
         "hashed_password": get_password_hash("secret"), # Hash a default password
         "disabled": False,
+        "roles": [UserRole.OWNER],  # Assign OWNER role
+    },
+    "editoruser": {
+        "username": "editoruser",
+        "full_name": "Editor User",
+        "email": "editor@example.com",
+        "hashed_password": get_password_hash("editpass"),
+        "disabled": False,
+        "roles": [UserRole.EDITOR],
+    },
+    "writeruser": {
+        "username": "writeruser",
+        "full_name": "Writer User",
+        "email": "writer@example.com",
+        "hashed_password": get_password_hash("writepass"),
+        "disabled": False,
+        "roles": [UserRole.WRITER],
+    },
+    "betauser": {
+        "username": "betauser",
+        "full_name": "Beta Reader User",
+        "email": "beta@example.com",
+        "hashed_password": get_password_hash("betapass"),
+        "disabled": False,
+        "roles": [UserRole.BETA_READER],
     }
 }
 
@@ -90,3 +117,25 @@ async def get_current_active_user(current_user: User = Depends(get_current_user)
     if current_user.disabled:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Inactive user")
     return current_user
+
+
+def require_role(required_roles: list[UserRole]):
+    """
+    Dependency that checks if the current user has at least one of the required roles.
+    """
+    async def role_checker(current_user: User = Depends(get_current_active_user)) -> User:
+        if not current_user.roles:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="User has no assigned roles.",
+            )
+
+        has_required_role = any(role in current_user.roles for role in required_roles)
+
+        if not has_required_role:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"User does not have the required role(s): {', '.join(role.value for role in required_roles)}",
+            )
+        return current_user
+    return role_checker
