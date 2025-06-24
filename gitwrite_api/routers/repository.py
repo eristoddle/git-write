@@ -27,7 +27,7 @@ from gitwrite_core.versioning import (
 
 # Placeholder for security dependency - replace with actual import
 # from gitwrite_api.security import get_current_active_user
-# from gitwrite_api.models import User # Example, if User model is needed by get_current_active_user
+from ..models import User # Import the canonical User model
 from ..models import SaveFileRequest, SaveFileResponse # Added for the new save endpoint
 
 # Import core branching functions and exceptions
@@ -56,7 +56,7 @@ from gitwrite_core.tagging import create_tag as core_create_tag # Core function 
 from gitwrite_core.exceptions import TagAlreadyExistsError as CoreTagAlreadyExistsError # For tagging
 
 # For Repository Initialization
-import uuid
+import uuid # Make sure uuid is imported here for use in export
 from pathlib import Path
 from ..models import RepositoryCreateRequest # Import the request model
 
@@ -75,10 +75,7 @@ async def get_current_active_user(): # Placeholder
     # In a real app, this would verify a token and return a user model
     return {"username": "testuser", "email": "test@example.com", "active": True}
 
-class User(BaseModel): # Placeholder Pydantic model for User
-    username: str
-    email: Optional[str] = None
-    active: Optional[bool] = None
+# Placeholder Pydantic model for User removed, as it's now imported from ..models
 
 
 router = APIRouter(
@@ -854,11 +851,15 @@ async def api_export_to_epub(
     job_id = str(uuid.uuid4())
     job_export_dir = export_base_dir / job_id
     try:
-        job_export_dir.mkdir(parents=True, exist_ok=False)
+        # export_base_dir is already created with parents=True, exist_ok=True
+        # Allow job_export_dir to exist, in case of test reruns or specific scenarios.
+        job_export_dir.mkdir(exist_ok=True)
     except OSError as e:
         raise HTTPException(status_code=500, detail=f"Could not create unique export job directory: {str(e)}")
 
-    output_epub_server_path = job_export_dir / request_data.output_filename
+    # Use default if output_filename is None (though Pydantic model now provides a default)
+    actual_output_filename = request_data.output_filename if request_data.output_filename else "export.epub"
+    output_epub_server_path = job_export_dir / actual_output_filename
 
     # It's good practice to import closer to usage if they are specific to an endpoint and large
     # However, for core functions and exceptions, top-level in router file is also common.

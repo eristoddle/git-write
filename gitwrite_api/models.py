@@ -88,7 +88,7 @@ class BranchReviewResponse(BaseModel):
 class EPUBExportRequest(BaseModel):
     commit_ish: str = Field(default="HEAD", description="The commit-ish (e.g., commit hash, branch name, tag) to export from. Defaults to 'HEAD'.")
     file_list: List[str] = Field(..., min_items=1, description="A list of paths to markdown files (relative to repo root) to include in the EPUB.")
-    output_filename: str = Field(..., min_length=1, pattern=r"^[a-zA-Z0-9_.-]+\.epub$", description="Desired filename for the EPUB (e.g., 'my-book.epub'). Must end with '.epub'.")
+    output_filename: Optional[str] = Field(default="export.epub", min_length=1, pattern=r"^[a-zA-Z0-9_.-]+\.epub$", description="Desired filename for the EPUB (e.g., 'my-book.epub'). Must end with '.epub'. Defaults to 'export.epub'.")
 
 class EPUBExportResponse(BaseModel):
     status: str = Field(..., description="Outcome of the EPUB export operation (e.g., 'success', 'error').")
