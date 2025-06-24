@@ -35,9 +35,12 @@ from gitwrite_core.exceptions import (
     PushError, # Added for sync
     RemoteNotFoundError, # Added for sync
     BranchNotFoundError as CoreBranchNotFoundError, # Added for review command
-    CommitNotFoundError # Added for cherry-pick
+    CommitNotFoundError, # Added for cherry-pick
+    PandocError, # Added for EPUB export
+    FileNotFoundInCommitError # Added for EPUB export
 )
 from gitwrite_core.versioning import get_commit_history, get_diff, revert_commit, save_changes, get_branch_review_commits, cherry_pick_commit # Added get_branch_review_commits and cherry_pick_commit
+from gitwrite_core.export import export_to_epub # Added for EPUB export
 from rich.table import Table # Ensure Table is imported for switch
 
 @click.group()
@@ -909,6 +912,75 @@ def list_patterns():
         click.echo(result['message'], err=True)
     else: # Should not happen
         click.echo("An unexpected issue occurred while listing patterns.", err=True)
+
+@cli.group()
+def export():
+    """Exports repository content to various formats."""
+    pass
+
+@export.command("epub")
+@click.option("-o", "--output-path", "output_path_str", type=click.Path(dir_okay=False, writable=True), required=True, help="Path to save the EPUB file (e.g., my-book.epub).")
+@click.option("-c", "--commit", "commit_ish", default="HEAD", help="Commit-ish (commit, branch, tag) to export from. Defaults to HEAD.")
+@click.argument("files", nargs=-1, type=click.Path(exists=False, dir_okay=False), required=True) # Using exists=False as files are from repo, not local FS necessarily
+@click.pass_context
+def export_epub(ctx, output_path_str: str, commit_ish: str, files: tuple[str, ...]):
+    """
+    Exports specified markdown files from the repository to an EPUB file.
+
+    FILES arguments are paths to markdown files relative to the repository root.
+    e.g., gitwrite export epub -o mynovel.epub chapter1.md chapter2.md
+    """
+    if not files:
+        click.echo("Error: At least one markdown file must be specified for export.", err=True)
+        ctx.exit(1)
+        return
+
+    file_list = list(files)
+    repo_path_cli = str(Path.cwd())
+
+    try:
+        # Ensure output directory exists if path includes directories
+        output_path_obj = Path(output_path_str)
+        output_path_obj.parent.mkdir(parents=True, exist_ok=True)
+
+        result = export_to_epub(
+            repo_path_str=repo_path_cli,
+            commit_ish_str=commit_ish,
+            file_list=file_list,
+            output_epub_path_str=output_path_str # Core function expects full path
+        )
+        # Core function returns: {"status": "success", "message": "..."}
+        if result["status"] == "success":
+            click.echo(click.style(result["message"], fg="green"))
+        else:
+            # This case should ideally not be reached if core function throws exceptions for errors
+            click.echo(f"EPUB export failed: {result.get('message', 'Unknown core error')}", err=True)
+            ctx.exit(1)
+
+    except RepositoryNotFoundError as e:
+        click.echo(f"Error: Not a Git repository (or any of the parent directories): {e}", err=True)
+        ctx.exit(1)
+    except CommitNotFoundError as e:
+        click.echo(f"Error: Commit '{commit_ish}' not found: {e}", err=True)
+        ctx.exit(1)
+    except FileNotFoundInCommitError as e:
+        click.echo(f"Error: File not found in commit '{commit_ish}': {e}", err=True)
+        ctx.exit(1)
+    except PandocError as e:
+        click.echo(f"Error during EPUB generation: {e}", err=True)
+        if "Pandoc not found" in str(e):
+            click.echo("Hint: Please ensure Pandoc is installed and accessible in your system's PATH.", err=True)
+        ctx.exit(1)
+    except GitWriteError as e: # Catch-all for other specific errors from core export
+        # e.g., empty file list (already checked), non-UTF-8 content, empty content, output dir creation issues (partially handled)
+        click.echo(f"Error during export: {e}", err=True)
+        ctx.exit(1)
+    except OSError as e: # For issues like creating output_path_obj.parent
+        click.echo(f"Error creating output directory for '{output_path_str}': {e}", err=True)
+        ctx.exit(1)
+    except Exception as e: # Fallback for truly unexpected errors
+        click.echo(f"An unexpected error occurred during EPUB export: {e}", err=True)
+        ctx.exit(1)
 
 
 if __name__ == "__main__":

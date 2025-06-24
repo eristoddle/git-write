@@ -66,6 +66,9 @@ from ..models import BranchReviewResponse, BranchReviewCommit
 # Models for Cherry-Pick API
 from ..models import CherryPickRequest, CherryPickResponse
 
+# Models for EPUB Export API
+from ..models import EPUBExportRequest, EPUBExportResponse
+
 
 # For now, let's define a placeholder dependency to make the code runnable without the actual security module
 async def get_current_active_user(): # Placeholder
@@ -825,6 +828,77 @@ async def api_list_ignore_patterns(current_user: User = Depends(get_current_acti
         raise HTTPException(status_code=500, detail="Repository configuration error.")
     # Note: Specific business logic exceptions from core layer (if any) should be caught if they are not already
     # handled by the result['status'] checks. For now, focusing on existing structure.
+
+
+# --- EPUB Export Endpoint ---
+
+@router.post("/export/epub", response_model=EPUBExportResponse)
+async def api_export_to_epub(
+    request_data: EPUBExportRequest,
+    current_user: User = Depends(get_current_active_user)
+):
+    """
+    Exports specified markdown files from the repository at a given commit-ish to an EPUB file.
+    The EPUB file is saved on the server.
+    Requires authentication.
+    """
+    repo_path_str = PLACEHOLDER_REPO_PATH
+
+    export_base_dir = Path(PLACEHOLDER_REPO_PATH) / "exports"
+
+    try:
+        export_base_dir.mkdir(parents=True, exist_ok=True)
+    except OSError as e:
+        raise HTTPException(status_code=500, detail=f"Could not create base export directory: {str(e)}")
+
+    job_id = str(uuid.uuid4())
+    job_export_dir = export_base_dir / job_id
+    try:
+        job_export_dir.mkdir(parents=True, exist_ok=False)
+    except OSError as e:
+        raise HTTPException(status_code=500, detail=f"Could not create unique export job directory: {str(e)}")
+
+    output_epub_server_path = job_export_dir / request_data.output_filename
+
+    # It's good practice to import closer to usage if they are specific to an endpoint and large
+    # However, for core functions and exceptions, top-level in router file is also common.
+    # Let's ensure specific exceptions are available.
+    from gitwrite_core.export import export_to_epub
+    from gitwrite_core.exceptions import PandocError, FileNotFoundInCommitError
+
+    try:
+        result = export_to_epub(
+            repo_path_str=repo_path_str,
+            commit_ish_str=request_data.commit_ish,
+            file_list=request_data.file_list,
+            output_epub_path_str=str(output_epub_server_path.resolve())
+        )
+
+        if result["status"] == "success":
+            return EPUBExportResponse(
+                status="success",
+                message=result["message"],
+                server_file_path=str(output_epub_server_path.resolve())
+            )
+        else:
+            raise HTTPException(status_code=500, detail=result.get("message", "EPUB export failed due to an unknown core error."))
+
+    except CoreRepositoryNotFoundError as e:
+        raise HTTPException(status_code=500, detail=f"Repository not found or configuration error: {str(e)}")
+    except CoreCommitNotFoundError as e:
+        raise HTTPException(status_code=404, detail=f"Commit not found: {str(e)}")
+    except FileNotFoundInCommitError as e:
+        raise HTTPException(status_code=404, detail=f"File not found in commit: {str(e)}")
+    except PandocError as e:
+        if "Pandoc not found" in str(e):
+            raise HTTPException(status_code=503, detail=f"EPUB generation service unavailable: Pandoc not found. {str(e)}")
+        else:
+            raise HTTPException(status_code=400, detail=f"EPUB conversion failed: {str(e)}")
+    except CoreGitWriteError as e:
+        raise HTTPException(status_code=400, detail=f"EPUB export failed due to a GitWrite core error: {str(e)}")
+    except Exception as e:
+        # Consider logging this e.g. logger.error(f"Unexpected error during EPUB export: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"An unexpected server error occurred during EPUB export: {str(e)}")
 
 
 # --- Branch Review Endpoint ---

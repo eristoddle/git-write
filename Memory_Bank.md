@@ -302,3 +302,66 @@ None. Iterative debugging of `IndentationError`s caused by diff tool issues was 
 
 **Next Steps (Optional):**
 Proceed with Task 7.5 - Agent_CLI_Dev & Agent_API_Dev: Export Endpoints.
+
+---
+**Agent:** Jules (Implementation Agent)
+**Task Reference:** Phase 7, Task 7.5 - Agent_CLI_Dev & Agent_API_Dev: Export Endpoints
+
+**Summary:**
+Implemented CLI and API endpoints to expose the EPUB export functionality previously added to `gitwrite_core`.
+The CLI command `gitwrite export epub` allows users to specify an output path, commit-ish, and a list of Markdown files to compile into an EPUB.
+The API endpoint `POST /repository/export/epub` accepts similar parameters and saves the generated EPUB to a unique path on the server, returning this path in the response.
+Both interfaces leverage `gitwrite_core.export.export_to_epub` and include comprehensive error handling. Pydantic models for the API request and response were defined, and unit tests for both CLI and API were created.
+
+**Details:**
+-   **Pydantic Models for API (`gitwrite_api/models.py`):**
+    -   Created `EPUBExportRequest(BaseModel)`:
+        -   `commit_ish: str` (default: "HEAD")
+        -   `file_list: List[str]` (min_items: 1)
+        -   `output_filename: str` (pattern: `^[a-zA-Z0-9_.-]+\.epub$`)
+    -   Created `EPUBExportResponse(BaseModel)`:
+        -   `status: str`
+        -   `message: str`
+        -   `server_file_path: Optional[str]`
+-   **API Endpoint (`gitwrite_api/routers/repository.py`):**
+    -   Added `POST /repository/export/epub`.
+    -   Accepts `EPUBExportRequest`.
+    -   Generates a unique export directory (`PLACEHOLDER_REPO_PATH/exports/<uuid>/`) for each EPUB.
+    -   Calls `core.export_to_epub`, passing the constructed server path for the output EPUB.
+    -   Returns `EPUBExportResponse` with `server_file_path` on success.
+    -   Handles `CoreRepositoryNotFoundError` (500), `CoreCommitNotFoundError` (404), `CoreFileNotFoundInCommitError` (404), `CorePandocError` (503 if Pandoc not found, 400 if conversion error), `CoreGitWriteError` (400), and `OSError` for directory creation issues (500).
+-   **CLI Command (`gitwrite_cli/main.py`):**
+    -   Created new command group `gitwrite export`.
+    -   Added subcommand `epub` to `export`: `gitwrite export epub`.
+    -   Options:
+        -   `-o, --output-path <path>` (Required): Destination for the EPUB file.
+        -   `-c, --commit <commit_ish>` (Optional, default: "HEAD").
+    -   Arguments: `FILES ...` (Required, list of Markdown files).
+    -   Calls `core.export_to_epub` with `Path.cwd()` as repo path.
+    -   Prints success/error messages; handles core exceptions similarly to the API, exiting with status 1 on error.
+    -   Ensures output directory's parent exists before calling core function.
+-   **Unit Tests:**
+    -   Created `tests/test_api_export.py`:
+        -   Tested `POST /repository/export/epub` for success, various core error propagations (400, 404, 500, 503), OS errors for directory creation, invalid payloads (422), and unauthorized access (401).
+        -   Mocked `gitwrite_core.export.export_to_epub`, `pathlib.Path`, and `uuid.uuid4`.
+    -   Created `tests/test_cli_export.py`:
+        -   Tested `gitwrite export epub` using `CliRunner`.
+        -   Covered success cases, default commit usage, missing file arguments, missing output path, and various core error propagations.
+        -   Mocked `gitwrite_core.export.export_to_epub`, `Path.cwd()`, and `pathlib.Path.mkdir`.
+
+**Output/Result:**
+-   Modified `gitwrite_api/models.py` (added `EPUBExportRequest`, `EPUBExportResponse`).
+-   Modified `gitwrite_api/routers/repository.py` (added `POST /repository/export/epub` endpoint).
+-   Modified `gitwrite_cli/main.py` (added `gitwrite export epub` command and necessary imports).
+-   Created `tests/test_api_export.py`.
+-   Created `tests/test_cli_export.py`.
+-   This log entry in `Memory_Bank.md`.
+-   Updated `Implementation_Plan.md` (Task 7.5 marked as Completed).
+
+**Status:** Completed
+
+**Issues/Blockers:**
+None.
+
+**Next Steps (Optional):**
+Proceed with the next phase (Phase 8: TypeScript SDK Development) as per `Implementation_Plan.md`.

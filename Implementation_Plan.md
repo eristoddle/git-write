@@ -69,7 +69,7 @@ Guidance: This will likely require integrating a library like `pypandoc`. The fu
 
 ### Task 7.5 - Agent_CLI_Dev & Agent_API_Dev: Export Endpoints
 Objective: Expose the EPUB export functionality through the CLI and API.
-Status: **Pending**
+Status: **Completed**
 
 1.  Create a `gitwrite export epub` command in the CLI.
 2.  Create a `POST /repository/export/epub` endpoint in the API.
