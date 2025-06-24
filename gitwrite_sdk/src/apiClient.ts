@@ -285,7 +285,7 @@ export class GitWriteClient {
       completePayload
     );
 
-    return response.data;
+    return completeResponse.data;
   }
 
   // New methods for API Parity (Task 8.1)

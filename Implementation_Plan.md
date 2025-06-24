@@ -92,7 +92,7 @@ Status: **Completed**
 
 ### Task 8.2 - Agent_SDK_Dev: Comprehensive SDK Testing
 Objective: Ensure the SDK is robust and reliable with a full test suite.
-Status: **Pending**
+Status: **Completed**
 
 1.  In `gitwrite_sdk/tests/apiClient.test.ts`, add test cases for all new SDK methods.
 2.  Use `axios-mock-adapter` or Jest's mocking capabilities to simulate API responses.

@@ -531,4 +531,483 @@ describe('GitWriteClient', () => {
         expect(mockRequest).toHaveBeenCalledTimes(1); // Only initiate call
     });
   });
+
+  // New tests for methods added in Task 8.1
+  describe('initializeRepository', () => {
+    beforeEach(() => {
+      client.setToken('test-init-repo-token');
+    });
+
+    it('should initialize a repository with a project name', async () => {
+      const payload: import('../src/types').RepositoryCreateRequest = { project_name: 'new-project' };
+      const mockResponse: import('../src/types').RepositoryCreateResponse = {
+        status: 'created',
+        message: 'Repository created',
+        repository_id: 'new-project',
+        path: '/path/to/new-project',
+      };
+      mockRequest.mockResolvedValueOnce({ data: mockResponse });
+
+      const result = await client.initializeRepository(payload);
+
+      expect(mockRequest).toHaveBeenCalledWith({
+        method: 'POST',
+        url: '/repository/repositories',
+        data: payload,
+      });
+      expect(result).toEqual(mockResponse);
+    });
+
+    it('should initialize a repository without a project name (API generates ID)', async () => {
+        const mockResponse: import('../src/types').RepositoryCreateResponse = {
+          status: 'created',
+          message: 'Repository created with generated ID',
+          repository_id: 'uuid-generated-id',
+          path: '/path/to/uuid-generated-id',
+        };
+        mockRequest.mockResolvedValueOnce({ data: mockResponse });
+
+        const result = await client.initializeRepository(); // No payload
+
+        expect(mockRequest).toHaveBeenCalledWith({
+          method: 'POST',
+          url: '/repository/repositories',
+          data: undefined, // Or expect not to have data field if client.post handles undefined data correctly
+        });
+        expect(result).toEqual(mockResponse);
+      });
+
+    it('should throw an error if API call fails', async () => {
+      const error = new Error('API Error');
+      mockRequest.mockRejectedValueOnce(error);
+      await expect(client.initializeRepository({ project_name: 'fail-project' })).rejects.toThrow('API Error');
+    });
+  });
+
+  describe('createBranch', () => {
+    beforeEach(() => {
+      client.setToken('test-create-branch-token');
+    });
+
+    it('should create a new branch', async () => {
+      const payload: import('../src/types').BranchCreateRequest = { branch_name: 'feature/new-feature' };
+      const mockResponse: import('../src/types').BranchResponse = {
+        status: 'success',
+        branch_name: 'feature/new-feature',
+        message: 'Branch created and switched to',
+        head_commit_oid: 'abcdef123',
+      };
+      mockRequest.mockResolvedValueOnce({ data: mockResponse });
+
+      const result = await client.createBranch(payload);
+
+      expect(mockRequest).toHaveBeenCalledWith({
+        method: 'POST',
+        url: '/repository/branches',
+        data: payload,
+      });
+      expect(result).toEqual(mockResponse);
+    });
+
+    it('should throw an error if API call fails', async () => {
+      const error = new Error('API Error');
+      mockRequest.mockRejectedValueOnce(error);
+      await expect(client.createBranch({ branch_name: 'fail-branch' })).rejects.toThrow('API Error');
+    });
+  });
+
+  describe('switchBranch', () => {
+    beforeEach(() => {
+      client.setToken('test-switch-branch-token');
+    });
+
+    it('should switch to an existing branch', async () => {
+      const payload: import('../src/types').BranchSwitchRequest = { branch_name: 'develop' };
+      const mockResponse: import('../src/types').BranchResponse = {
+        status: 'success',
+        branch_name: 'develop',
+        message: 'Switched to branch develop',
+        head_commit_oid: 'fedcba321',
+        previous_branch_name: 'main',
+        is_detached: false,
+      };
+      mockRequest.mockResolvedValueOnce({ data: mockResponse });
+
+      const result = await client.switchBranch(payload);
+
+      expect(mockRequest).toHaveBeenCalledWith({
+        method: 'PUT',
+        url: '/repository/branch',
+        data: payload,
+      });
+      expect(result).toEqual(mockResponse);
+    });
+
+    it('should throw an error if API call fails', async () => {
+      const error = new Error('API Error');
+      mockRequest.mockRejectedValueOnce(error);
+      await expect(client.switchBranch({ branch_name: 'fail-branch' })).rejects.toThrow('API Error');
+    });
+  });
+
+  describe('mergeBranch', () => {
+    beforeEach(() => {
+      client.setToken('test-merge-branch-token');
+    });
+
+    it('should merge a branch into the current branch', async () => {
+      const payload: import('../src/types').MergeBranchRequest = { source_branch: 'feature/new-feature' };
+      const mockResponse: import('../src/types').MergeBranchResponse = {
+        status: 'success',
+        message: 'Merge successful',
+        current_branch: 'develop',
+        merged_branch: 'feature/new-feature',
+        commit_oid: 'mergecommitsha',
+      };
+      mockRequest.mockResolvedValueOnce({ data: mockResponse });
+
+      const result = await client.mergeBranch(payload);
+
+      expect(mockRequest).toHaveBeenCalledWith({
+        method: 'POST',
+        url: '/repository/merges',
+        data: payload,
+      });
+      expect(result).toEqual(mockResponse);
+    });
+
+    it('should throw an error if API call fails', async () => {
+      const error = new Error('API Error');
+      mockRequest.mockRejectedValueOnce(error);
+      await expect(client.mergeBranch({ source_branch: 'fail-branch' })).rejects.toThrow('API Error');
+    });
+  });
+
+  describe('compareRefs', () => {
+    beforeEach(() => {
+      client.setToken('test-compare-refs-token');
+    });
+
+    it('should compare two references', async () => {
+      const params: import('../src/types').CompareRefsParams = { ref1: 'HEAD~1', ref2: 'HEAD' };
+      const mockResponse: import('../src/types').CompareRefsResponse = {
+        ref1_oid: 'abcdef',
+        ref2_oid: '123456',
+        ref1_display_name: 'HEAD~1',
+        ref2_display_name: 'HEAD',
+        patch_text: '--- a/file.txt\n+++ b/file.txt\n@@ -1 +1 @@\n-old\n+new',
+      };
+      mockRequest.mockResolvedValueOnce({ data: mockResponse });
+
+      const result = await client.compareRefs(params);
+
+      expect(mockRequest).toHaveBeenCalledWith({
+        method: 'GET',
+        url: '/repository/compare',
+        params: params,
+      });
+      expect(result).toEqual(mockResponse);
+    });
+
+    it('should compare refs with default parameters (API handles defaults)', async () => {
+        const mockResponse: import('../src/types').CompareRefsResponse = {
+            ref1_oid: 'abcdef',
+            ref2_oid: '123456',
+            ref1_display_name: 'HEAD~1', // Defaulted by API
+            ref2_display_name: 'HEAD',   // Defaulted by API
+            patch_text: '--- a/file.txt\n+++ b/file.txt\n@@ -1 +1 @@\n-old\n+new',
+        };
+        mockRequest.mockResolvedValueOnce({ data: mockResponse });
+
+        const result = await client.compareRefs(); // No params
+
+        expect(mockRequest).toHaveBeenCalledWith({
+            method: 'GET',
+            url: '/repository/compare',
+            params: undefined,
+        });
+        expect(result).toEqual(mockResponse);
+    });
+
+    it('should throw an error if API call fails', async () => {
+      const error = new Error('API Error');
+      mockRequest.mockRejectedValueOnce(error);
+      await expect(client.compareRefs()).rejects.toThrow('API Error');
+    });
+  });
+
+  describe('revertCommit', () => {
+    beforeEach(() => {
+      client.setToken('test-revert-commit-token');
+    });
+
+    it('should revert a commit', async () => {
+      const payload: import('../src/types').RevertCommitRequest = { commit_ish: 'abcdef123' };
+      const mockResponse: import('../src/types').RevertCommitResponse = {
+        status: 'success',
+        message: 'Commit reverted',
+        new_commit_oid: 'revertcommitsha',
+      };
+      mockRequest.mockResolvedValueOnce({ data: mockResponse });
+
+      const result = await client.revertCommit(payload);
+
+      expect(mockRequest).toHaveBeenCalledWith({
+        method: 'POST',
+        url: '/repository/revert',
+        data: payload,
+      });
+      expect(result).toEqual(mockResponse);
+    });
+
+    it('should throw an error if API call fails', async () => {
+      const error = new Error('API Error');
+      mockRequest.mockRejectedValueOnce(error);
+      await expect(client.revertCommit({ commit_ish: 'fail-commit' })).rejects.toThrow('API Error');
+    });
+  });
+
+  describe('syncRepository', () => {
+    beforeEach(() => {
+      client.setToken('test-sync-repo-token');
+    });
+
+    it('should sync the repository', async () => {
+      const payload: import('../src/types').SyncRepositoryRequest = { remote_name: 'origin', branch_name: 'main', push: true };
+      const mockResponse: import('../src/types').SyncRepositoryResponse = {
+        status: 'success',
+        branch_synced: 'main',
+        remote: 'origin',
+        fetch_status: { message: 'Fetched successfully', received_objects: 10, total_objects: 10 },
+        local_update_status: { type: 'fast-forward', message: 'Updated successfully', commit_oid: 'newheadsha', conflicting_files: [] },
+        push_status: { pushed: true, message: 'Pushed successfully' },
+      };
+      mockRequest.mockResolvedValueOnce({ data: mockResponse });
+
+      const result = await client.syncRepository(payload);
+
+      expect(mockRequest).toHaveBeenCalledWith({
+        method: 'POST',
+        url: '/repository/sync',
+        data: payload,
+      });
+      expect(result).toEqual(mockResponse);
+    });
+
+    it('should throw an error if API call fails', async () => {
+      const error = new Error('API Error');
+      mockRequest.mockRejectedValueOnce(error);
+      await expect(client.syncRepository({ remote_name: 'origin' })).rejects.toThrow('API Error');
+    });
+  });
+
+  describe('createTag', () => {
+    beforeEach(() => {
+      client.setToken('test-create-tag-token');
+    });
+
+    it('should create a new tag', async () => {
+      const payload: import('../src/types').TagCreateRequest = { tag_name: 'v1.0.0', message: 'Version 1.0.0' };
+      const mockResponse: import('../src/types').TagCreateResponse = {
+        status: 'success',
+        tag_name: 'v1.0.0',
+        tag_type: 'annotated',
+        target_commit_oid: 'tagtargetsha',
+        message: 'Tag created',
+      };
+      mockRequest.mockResolvedValueOnce({ data: mockResponse });
+
+      const result = await client.createTag(payload);
+
+      expect(mockRequest).toHaveBeenCalledWith({
+        method: 'POST',
+        url: '/repository/tags',
+        data: payload,
+      });
+      expect(result).toEqual(mockResponse);
+    });
+
+    it('should throw an error if API call fails', async () => {
+      const error = new Error('API Error');
+      mockRequest.mockRejectedValueOnce(error);
+      await expect(client.createTag({ tag_name: 'fail-tag' })).rejects.toThrow('API Error');
+    });
+  });
+
+  describe('listIgnorePatterns', () => {
+    beforeEach(() => {
+      client.setToken('test-list-ignore-token');
+    });
+
+    it('should list .gitignore patterns', async () => {
+      const mockResponse: import('../src/types').IgnoreListResponse = {
+        status: 'success',
+        patterns: ['*.log', 'node_modules/'],
+        message: 'Patterns listed',
+      };
+      mockRequest.mockResolvedValueOnce({ data: mockResponse });
+
+      const result = await client.listIgnorePatterns();
+
+      expect(mockRequest).toHaveBeenCalledWith({
+        method: 'GET',
+        url: '/repository/ignore',
+      });
+      expect(result).toEqual(mockResponse);
+    });
+
+    it('should throw an error if API call fails', async () => {
+      const error = new Error('API Error');
+      mockRequest.mockRejectedValueOnce(error);
+      await expect(client.listIgnorePatterns()).rejects.toThrow('API Error');
+    });
+  });
+
+  describe('addIgnorePattern', () => {
+    beforeEach(() => {
+      client.setToken('test-add-ignore-token');
+    });
+
+    it('should add a pattern to .gitignore', async () => {
+      const payload: import('../src/types').IgnorePatternRequest = { pattern: '*.tmp' };
+      const mockResponse: import('../src/types').IgnoreAddResponse = {
+        status: 'success',
+        message: 'Pattern added',
+      };
+      mockRequest.mockResolvedValueOnce({ data: mockResponse });
+
+      const result = await client.addIgnorePattern(payload);
+
+      expect(mockRequest).toHaveBeenCalledWith({
+        method: 'POST',
+        url: '/repository/ignore',
+        data: payload,
+      });
+      expect(result).toEqual(mockResponse);
+    });
+
+    it('should throw an error if API call fails', async () => {
+      const error = new Error('API Error');
+      mockRequest.mockRejectedValueOnce(error);
+      await expect(client.addIgnorePattern({ pattern: '*.fail' })).rejects.toThrow('API Error');
+    });
+  });
+
+  describe('reviewBranch', () => {
+    beforeEach(() => {
+      client.setToken('test-review-branch-token');
+    });
+
+    it('should review a branch with limit', async () => {
+      const branchName = 'feature/xyz';
+      const params: import('../src/types').ReviewBranchParams = { limit: 5 };
+      const mockResponse: import('../src/types').BranchReviewResponse = {
+        status: 'success',
+        branch_name: branchName,
+        commits: [{ short_hash: 'abc', author_name: 'tester', date: '2023-01-01', message_short: 'feat: new thing', oid: 'abcdef123' }],
+        message: 'Commits reviewed',
+      };
+      mockRequest.mockResolvedValueOnce({ data: mockResponse });
+
+      const result = await client.reviewBranch(branchName, params);
+
+      expect(mockRequest).toHaveBeenCalledWith({
+        method: 'GET',
+        url: `/repository/review/${branchName}`,
+        params: params,
+      });
+      expect(result).toEqual(mockResponse);
+    });
+
+    it('should review a branch without limit', async () => {
+        const branchName = 'feature/xyz';
+        const mockResponse: import('../src/types').BranchReviewResponse = {
+          status: 'success',
+          branch_name: branchName,
+          commits: [{ short_hash: 'abc', author_name: 'tester', date: '2023-01-01', message_short: 'feat: new thing', oid: 'abcdef123' }],
+          message: 'Commits reviewed',
+        };
+        mockRequest.mockResolvedValueOnce({ data: mockResponse });
+
+        const result = await client.reviewBranch(branchName); // No params
+
+        expect(mockRequest).toHaveBeenCalledWith({
+          method: 'GET',
+          url: `/repository/review/${branchName}`,
+          params: undefined,
+        });
+        expect(result).toEqual(mockResponse);
+      });
+
+    it('should throw an error if API call fails', async () => {
+      const error = new Error('API Error');
+      mockRequest.mockRejectedValueOnce(error);
+      await expect(client.reviewBranch('fail-branch')).rejects.toThrow('API Error');
+    });
+  });
+
+  describe('cherryPickCommit', () => {
+    beforeEach(() => {
+      client.setToken('test-cherry-pick-token');
+    });
+
+    it('should cherry-pick a commit', async () => {
+      const payload: import('../src/types').CherryPickRequest = { commit_id: 'pickmesha' };
+      const mockResponse: import('../src/types').CherryPickResponse = {
+        status: 'success',
+        message: 'Commit cherry-picked',
+        new_commit_oid: 'newcherrysha',
+      };
+      mockRequest.mockResolvedValueOnce({ data: mockResponse });
+
+      const result = await client.cherryPickCommit(payload);
+
+      expect(mockRequest).toHaveBeenCalledWith({
+        method: 'POST',
+        url: '/repository/cherry-pick',
+        data: payload,
+      });
+      expect(result).toEqual(mockResponse);
+    });
+
+    it('should throw an error if API call fails', async () => {
+      const error = new Error('API Error');
+      mockRequest.mockRejectedValueOnce(error);
+      await expect(client.cherryPickCommit({ commit_id: 'fail-commit' })).rejects.toThrow('API Error');
+    });
+  });
+
+  describe('exportToEPUB', () => {
+    beforeEach(() => {
+      client.setToken('test-export-epub-token');
+    });
+
+    it('should export to EPUB', async () => {
+      const payload: import('../src/types').EPUBExportRequest = {
+        file_list: ['chapter1.md', 'chapter2.md'],
+        output_filename: 'mybook.epub',
+      };
+      const mockResponse: import('../src/types').EPUBExportResponse = {
+        status: 'success',
+        message: 'EPUB exported successfully',
+        server_file_path: '/path/to/exports/uuid/mybook.epub',
+      };
+      mockRequest.mockResolvedValueOnce({ data: mockResponse });
+
+      const result = await client.exportToEPUB(payload);
+
+      expect(mockRequest).toHaveBeenCalledWith({
+        method: 'POST',
+        url: '/repository/export/epub',
+        data: payload,
+      });
+      expect(result).toEqual(mockResponse);
+    });
+
+    it('should throw an error if API call fails', async () => {
+      const error = new Error('API Error');
+      mockRequest.mockRejectedValueOnce(error);
+      await expect(client.exportToEPUB({ file_list: ['fail.md'] })).rejects.toThrow('API Error');
+    });
+  });
 });
