@@ -115,9 +115,12 @@ def test_export_epub_success_default_filename(client, mock_authenticated_user):
         # API will use this default.
         default_filename = "export.epub"
         expected_job_id = "abcdef12-abcd-ef12-abcd-ef12abcdef12"
-        expected_core_output_path_str = f"/tmp/gitwrite_repos_api/exports/{expected_job_id}/{default_filename}"
+        # Construct path and resolve it to get the canonical path for assertion
+        expected_core_output_path = Path(f"/tmp/gitwrite_repos_api/exports/{expected_job_id}/{default_filename}")
+        expected_core_output_path_str = str(expected_core_output_path.resolve())
 
-        mock_export.return_value = {"status": "success", "message": "Export successful", "output_epub_path_str": expected_core_output_path_str}
+        # The mock should return what the core function would return. The API only uses status/message from this return.
+        mock_export.return_value = {"status": "success", "message": "Export successful"}
 
         response = client.post(
             "/repository/export/epub",
@@ -130,14 +133,16 @@ def test_export_epub_success_default_filename(client, mock_authenticated_user):
         )
         assert response.status_code == 200
         assert response.json()["status"] == "success"
-        assert response.json()["server_file_path"] == expected_core_output_path_str # Corrected variable name
+        # The API returns a resolved path string. Compare against the resolved expected path.
+        assert response.json()["server_file_path"] == str(Path(f"/tmp/gitwrite_repos_api/exports/{expected_job_id}/{default_filename}").resolve())
         assert response.json()["message"] == "Export successful" # Check message from core
 
+        # The core function is called with the resolved path string.
         mock_export.assert_called_once_with(
             repo_path_str="/tmp/gitwrite_repos_api",
             commit_ish_str="test_commit_id",
             file_list=["file1.md"],
-            output_epub_path_str=expected_core_output_path_str # Corrected variable name
+            output_epub_path_str=str(Path(f"/tmp/gitwrite_repos_api/exports/{expected_job_id}/{default_filename}").resolve())
         )
 
 

@@ -921,9 +921,10 @@ def export():
 @export.command("epub")
 @click.option("-o", "--output-path", "output_path_str", type=click.Path(dir_okay=False, writable=True), required=True, help="Path to save the EPUB file (e.g., my-book.epub).")
 @click.option("-c", "--commit", "commit_ish", default="HEAD", help="Commit-ish (commit, branch, tag) to export from. Defaults to HEAD.")
+@click.argument("repo_path", type=click.Path(exists=True, file_okay=False, dir_okay=True, readable=True))
 @click.argument("files", nargs=-1, type=click.Path(exists=False, dir_okay=False), required=True) # Using exists=False as files are from repo, not local FS necessarily
 @click.pass_context
-def export_epub(ctx, output_path_str: str, commit_ish: str, files: tuple[str, ...]):
+def export_epub(ctx, output_path_str: str, commit_ish: str, repo_path: str, files: tuple[str, ...]):
     """
     Exports specified markdown files from the repository to an EPUB file.
 
@@ -936,7 +937,7 @@ def export_epub(ctx, output_path_str: str, commit_ish: str, files: tuple[str, ..
         return
 
     file_list = list(files)
-    repo_path_cli = str(Path.cwd())
+    # repo_path_cli = str(Path.cwd()) # No longer using cwd, using the repo_path argument
 
     try:
         # Ensure output directory exists if path includes directories
@@ -944,7 +945,7 @@ def export_epub(ctx, output_path_str: str, commit_ish: str, files: tuple[str, ..
         output_path_obj.parent.mkdir(parents=True, exist_ok=True)
 
         result = export_to_epub(
-            repo_path_str=repo_path_cli,
+            repo_path_str=repo_path, # Use the repo_path argument
             commit_ish_str=commit_ish,
             file_list=file_list,
             output_epub_path_str=output_path_str # Core function expects full path
