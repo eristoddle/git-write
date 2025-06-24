@@ -20,5 +20,5 @@ Here is how you run unit tests:
 
 
 Read Memory_Bank.md and Implementation_Plan.md for details on the current state of the project.
-Proceed with Task 7.4 - Agent_Core_Dev: Beta Reader Workflow (EPUB Export).
+Proceed with Task 8.1 - Agent_SDK_Dev: Update SDK for API Parity.
 When you are done update Memory_Bank.md and Implementation_Plan.md according the the APM rules, located here: prompts.
