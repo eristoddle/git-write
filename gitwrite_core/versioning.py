@@ -941,20 +941,23 @@ def _process_hunk_lines_for_structured_diff(hunk_lines: List[Tuple[str, str]]) -
             old_words_set = set(old_words_list)
             new_words_set = set(new_words_list)
 
-            if not old_words_set.intersection(new_words_set):
-                # No common words, treat as whole line removal/addition
+            sm = difflib.SequenceMatcher(None, old_content_str, new_content_str) # Use full strings for ratio
+            similarity_ratio = sm.ratio()
+
+            # If lines are too dissimilar, or no common words at word level, treat as whole line changes
+            if similarity_ratio < 0.6 or not old_words_set.intersection(new_words_set):
                 del_words = [{"type": "removed", "content": old_content_str.strip()}] if old_content_str.strip() else []
                 add_words = [{"type": "added", "content": new_content_str.strip()}] if new_content_str.strip() else []
                 processed_lines.append({"type": "deletion", "content": old_content_str, "words": del_words})
                 processed_lines.append({"type": "addition", "content": new_content_str, "words": add_words})
             else:
-                # Common words exist, use SequenceMatcher
-                sm = difflib.SequenceMatcher(None, old_words_list, new_words_list)
+                # Lines are similar enough, and common words exist, proceed with word-level diff
+                sm_word = difflib.SequenceMatcher(None, old_words_list, new_words_list) # SequenceMatcher on words
 
                 temp_deleted_words_structured: List[Dict[str, str]] = []
                 temp_added_words_structured: List[Dict[str, str]] = []
 
-                for tag_op, i1, i2, j1, j2 in sm.get_opcodes():
+                for tag_op, i1, i2, j1, j2 in sm_word.get_opcodes():
                     old_segment_list = old_words_list[i1:i2]
                     new_segment_list = new_words_list[j1:j2]
                     old_chunk = " ".join(old_segment_list)
