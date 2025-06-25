@@ -127,3 +127,35 @@ class Annotation(BaseModel):
     status: AnnotationStatus = Field(default=AnnotationStatus.NEW, description="The current status of the annotation.")
     commit_id: Optional[str] = Field(None, description="The Git commit SHA where this version of the annotation (especially its status) is recorded. For a new annotation, this is its creation commit. For a status update, this is the SHA of the status update commit.")
     original_annotation_id: Optional[str] = Field(None, description="If this annotation represents a status update, this field stores the ID (commit_id) of the original annotation being updated.")
+
+
+# --- API Request/Response Models for Annotations ---
+
+class CreateAnnotationRequest(BaseModel):
+    file_path: str = Field(..., description="The relative path of the file in the repository that this annotation refers to.")
+    highlighted_text: str = Field(..., description="The specific text that was highlighted for annotation.")
+    start_line: int = Field(..., ge=0, description="The 0-indexed starting line number of the highlighted text.")
+    end_line: int = Field(..., ge=0, description="The 0-indexed ending line number of the highlighted text.")
+    comment: str = Field(..., description="The comment or note provided by the annotator.")
+    author: str = Field(..., description="The author of the annotation (e.g., username or email).")
+    feedback_branch: str = Field(..., description="The name of the feedback branch where the annotation will be stored.")
+    # Status will default to NEW in the core logic, so not needed in request.
+
+class AnnotationResponse(Annotation): # Inherits all fields from Annotation
+    # This can be used directly if the Annotation model itself is sufficient for responses.
+    # If additional fields are needed for API response context, they can be added here.
+    # For example:
+    # status_message: Optional[str] = Field(None, description="A message related to the response status.")
+    pass
+
+class AnnotationListResponse(BaseModel):
+    annotations: List[Annotation] = Field(..., description="A list of annotations.")
+    count: int = Field(..., description="The total number of annotations returned.")
+
+class UpdateAnnotationStatusRequest(BaseModel):
+    new_status: AnnotationStatus = Field(..., description="The new status for the annotation.")
+    feedback_branch: str = Field(..., description="The name of the feedback branch where the annotation exists.") # Required to find/update the annotation
+
+class UpdateAnnotationStatusResponse(BaseModel):
+    annotation: Annotation = Field(..., description="The full annotation object with its updated status.")
+    message: str = Field(..., description="A message indicating the outcome of the status update.")

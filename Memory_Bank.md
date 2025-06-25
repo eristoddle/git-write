@@ -131,3 +131,63 @@ None.
 
 **Next Steps (Optional):**
 Proceed with Task 10.3 as per the `Implementation_Plan.md`.
+
+---
+**Agent:** Jules (Software Engineer AI)
+**Task Reference:** Task 10.3 - Agent_API_Dev: API Endpoints for Annotations
+
+**Summary:**
+Implemented REST API endpoints for creating, listing, and updating annotations. This includes defining request/response models, creating a new API router, and writing comprehensive unit tests.
+
+**Details:**
+1.  **Pydantic Models (`gitwrite_api/models.py`):**
+    *   Added `CreateAnnotationRequest` for creating new annotations.
+    *   Added `AnnotationResponse` (inheriting from `Annotation`) for single annotation responses.
+    *   Added `AnnotationListResponse` for returning lists of annotations.
+    *   Added `UpdateAnnotationStatusRequest` for updating an annotation's status.
+    *   Added `UpdateAnnotationStatusResponse` for the response after an update.
+
+2.  **API Router (`gitwrite_api/routers/annotations.py`):**
+    *   Created a new router file dedicated to annotation endpoints, mounted at `/repository/annotations`.
+    *   Implemented `POST /repository/annotations`:
+        *   Accepts `CreateAnnotationRequest`.
+        *   Calls `core_create_annotation_commit`.
+        *   Returns `AnnotationResponse` with the created annotation.
+    *   Implemented `GET /repository/annotations`:
+        *   Accepts `feedback_branch` query parameter.
+        *   Calls `core_list_annotations`.
+        *   Returns `AnnotationListResponse`.
+    *   Implemented `PUT /repository/annotations/{annotation_commit_id}`:
+        *   Accepts `annotation_commit_id` path parameter and `UpdateAnnotationStatusRequest` body.
+        *   Calls `core_update_annotation_status`.
+        *   Retrieves the updated annotation state (using a helper that filters `core_list_annotations` output).
+        *   Returns `UpdateAnnotationStatusResponse`.
+    *   All endpoints include role-based authorization using `require_role` and appropriate error handling for core layer exceptions.
+
+3.  **Router Registration (`gitwrite_api/main.py`):**
+    *   Imported and registered the new `annotations_router` in the main FastAPI application.
+
+4.  **Unit Tests (`tests/test_api_annotations.py`):**
+    *   Created a new test file for annotation API endpoints.
+    *   Used `TestClient` and `pytest`.
+    *   Mocked core annotation functions (`core_create_annotation_commit`, `core_list_annotations`, `core_update_annotation_status`) and the internal helper `_get_annotation_by_original_id_from_list` to isolate API layer testing.
+    *   Implemented tests for:
+        *   Successful creation, listing, and status updates.
+        *   Error handling for cases like repository/commit not found, branch not found, and other operational errors.
+        *   Authorization checks (e.g., ensuring only users with appropriate roles can update status).
+    *   Utilized a parameterized `mock_auth` fixture for managing authenticated user context in tests.
+
+**Output/Result:**
+-   API endpoints for annotations implemented in `gitwrite_api/routers/annotations.py`.
+-   Associated Pydantic request/response models added to `gitwrite_api/models.py`.
+-   New router registered in `gitwrite_api/main.py`.
+-   Comprehensive unit tests created in `tests/test_api_annotations.py`.
+-   `Implementation_Plan.md` updated to mark Task 10.3 as complete.
+
+**Status:** Completed
+
+**Issues/Blockers:**
+None.
+
+**Next Steps (Optional):**
+Proceed with the next task in Phase 11 as per the `Implementation_Plan.md`.

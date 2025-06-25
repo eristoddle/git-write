@@ -40,7 +40,7 @@ Status: **Completed**
 
 ### Task 10.3 - Agent_API_Dev: API Endpoints for Annotations
 Objective: Expose the annotation handling logic via the REST API.
-Status: **Pending**
+Status: **Completed**
 
 1.  **Create Endpoint:** In `gitwrite_api/routers/repository.py` (or a new `annotations.py` router), create `POST /repository/annotations`.
     -   This endpoint will accept annotation data in its request body.

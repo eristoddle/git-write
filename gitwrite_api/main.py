@@ -1,5 +1,5 @@
 from fastapi import FastAPI
-from .routers import auth, repository, uploads # Import the auth, repository and uploads routers
+from .routers import auth, repository, uploads, annotations # Import the auth, repository, uploads and annotations routers
 
 app = FastAPI(
     title="GitWrite API",
@@ -15,6 +15,9 @@ app.include_router(repository.router)
 # Include the new routers from uploads.py
 app.include_router(uploads.router) # This is the router for /initiate and /complete
 app.include_router(uploads.session_upload_router) # This is the router for /upload-session
+
+# Include the annotations router
+app.include_router(annotations.router)
 
 @app.get("/")
 async def root():
