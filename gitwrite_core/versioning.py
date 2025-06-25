@@ -819,28 +819,42 @@ def get_word_level_diff(patch_text: str) -> List[Dict[str, Any]]:
                 current_hunk_lines = [] # Clear any pending lines
                 break # Stop processing lines for this file patch
             elif line_content.startswith("@@"):
-                if current_hunk_lines: # Process previous hunk if any
-                    processed_hunk = _process_hunk_lines_for_structured_diff(current_hunk_lines)
-                    file_info["hunks"].append({"lines": processed_hunk})
+                # Process lines accumulated for the *previous* hunk (if any)
+                if current_hunk_lines:
+                    processed_lines = _process_hunk_lines_for_structured_diff(current_hunk_lines)
+                    if file_info["hunks"]: # Add to the last hunk created
+                        file_info["hunks"][-1]["lines"].extend(processed_lines)
+                    else: # Should not happen if @@ implies a valid hunk structure
+                        file_info["hunks"].append({"lines": processed_lines})
                     current_hunk_lines = []
-                in_hunk_body = True # Now inside a hunk body
+
+                # Start a new hunk
+                file_info["hunks"].append({"lines": []})
+                in_hunk_body = True
             elif line_content.startswith("\\ No newline at end of file"):
-                # This message applies to the *previous* line in the hunk.
-                # If we have processed lines for the current hunk, and the last one is suitable,
-                # we can attach this info. Or, simpler: add as a distinct line type.
-                # The tests expect it as a distinct line object.
-                if current_hunk_lines: # Process pending lines for the current hunk first
-                    processed_hunk = _process_hunk_lines_for_structured_diff(current_hunk_lines)
-                    file_info["hunks"].append({"lines": processed_hunk})
-                    current_hunk_lines = []
-                if file_info["hunks"]: # Append to the last hunk's lines
+                if in_hunk_body and file_info["hunks"]:
+                    # Process any pending +/-/space lines for the current hunk first
+                    if current_hunk_lines:
+                        processed_lines = _process_hunk_lines_for_structured_diff(current_hunk_lines)
+                        file_info["hunks"][-1]["lines"].extend(processed_lines)
+                        current_hunk_lines = []
+                    # Add the "no newline" message to the current hunk
                     file_info["hunks"][-1]["lines"].append({"type": "no_newline", "content": line_content})
+                # else: this line is outside a hunk body, potentially ignore or log.
+                # For now, it will be ignored if not in_hunk_body or no hunks started.
             elif in_hunk_body and (line_content.startswith(("+", "-", " "))):
                 current_hunk_lines.append((line_content[0], line_content[1:]))
 
-        if current_hunk_lines: # Process any remaining hunk lines
-            processed_hunk = _process_hunk_lines_for_structured_diff(current_hunk_lines)
-            file_info["hunks"].append({"lines": processed_hunk})
+        # Process any remaining hunk lines for the last hunk after loop finishes
+        if current_hunk_lines and file_info["hunks"]:
+            processed_lines = _process_hunk_lines_for_structured_diff(current_hunk_lines)
+            file_info["hunks"][-1]["lines"].extend(processed_lines)
+        elif current_hunk_lines and not file_info["hunks"]:
+             # This could happen if a patch has hunk lines but no "@@" header.
+             # While unusual for standard git diffs, robust parsing might consider it.
+             processed_lines = _process_hunk_lines_for_structured_diff(current_hunk_lines)
+             if processed_lines: # Only add if there's something to add
+                file_info["hunks"].append({"lines": processed_lines})
 
         # Final explicit construction of the dictionary to be appended, respecting key order from tests.
 
@@ -922,44 +936,49 @@ def _process_hunk_lines_for_structured_diff(hunk_lines: List[Tuple[str, str]]) -
             # print(f"DEBUG: Matched +/- pair: '{content}' vs '{hunk_lines[i+1][1]}'") # Debug print
             old_content_str = content
             new_content_str = hunk_lines[i+1][1]
+            old_words_list = old_content_str.split()
+            new_words_list = new_content_str.split()
+            old_words_set = set(old_words_list)
+            new_words_set = set(new_words_list)
 
-            # Perform word-level diff
-            sm = difflib.SequenceMatcher(None, old_content_str.split(), new_content_str.split())
-
-            deleted_words_structured: List[Dict[str, str]] = []
-            added_words_structured: List[Dict[str, str]] = []
-
-            has_word_diff = any(tag != 'equal' for tag, _, _, _, _ in sm.get_opcodes())
-
-            if not has_word_diff:
-                processed_lines.append({"type": "deletion", "content": old_content_str, "words": [{"type": "removed", "content": old_content_str.strip()}] if old_content_str.strip() else []})
-                processed_lines.append({"type": "addition", "content": new_content_str, "words": [{"type": "added", "content": new_content_str.strip()}] if new_content_str.strip() else []})
+            if not old_words_set.intersection(new_words_set):
+                # No common words, treat as whole line removal/addition
+                del_words = [{"type": "removed", "content": old_content_str.strip()}] if old_content_str.strip() else []
+                add_words = [{"type": "added", "content": new_content_str.strip()}] if new_content_str.strip() else []
+                processed_lines.append({"type": "deletion", "content": old_content_str, "words": del_words})
+                processed_lines.append({"type": "addition", "content": new_content_str, "words": add_words})
             else:
+                # Common words exist, use SequenceMatcher
+                sm = difflib.SequenceMatcher(None, old_words_list, new_words_list)
+
+                temp_deleted_words_structured: List[Dict[str, str]] = []
+                temp_added_words_structured: List[Dict[str, str]] = []
+
                 for tag_op, i1, i2, j1, j2 in sm.get_opcodes():
-                    old_words_segment = old_content_str.split()[i1:i2]
-                    new_words_segment = new_content_str.split()[j1:j2]
-                    old_chunk = " ".join(old_words_segment)
-                    new_chunk = " ".join(new_words_segment)
+                    old_segment_list = old_words_list[i1:i2]
+                    new_segment_list = new_words_list[j1:j2]
+                    old_chunk = " ".join(old_segment_list)
+                    new_chunk = " ".join(new_segment_list)
 
                     if tag_op == 'replace':
-                        if old_chunk: deleted_words_structured.append({"type": "removed", "content": old_chunk})
-                        if new_chunk: added_words_structured.append({"type": "added", "content": new_chunk})
+                        if old_chunk: temp_deleted_words_structured.append({"type": "removed", "content": old_chunk})
+                        if new_chunk: temp_added_words_structured.append({"type": "added", "content": new_chunk})
                     elif tag_op == 'delete':
-                        if old_chunk: deleted_words_structured.append({"type": "removed", "content": old_chunk})
+                        if old_chunk: temp_deleted_words_structured.append({"type": "removed", "content": old_chunk})
                     elif tag_op == 'insert':
-                        if new_chunk: added_words_structured.append({"type": "added", "content": new_chunk})
+                        if new_chunk: temp_added_words_structured.append({"type": "added", "content": new_chunk})
                     elif tag_op == 'equal':
-                        if old_chunk: deleted_words_structured.append({"type": "context", "content": old_chunk})
-                        if new_chunk: added_words_structured.append({"type": "context", "content": new_chunk})
+                        if old_chunk: temp_deleted_words_structured.append({"type": "context", "content": old_chunk})
+                        if new_chunk: temp_added_words_structured.append({"type": "context", "content": new_chunk})
 
-                deleted_words_structured = _condense_word_segments(deleted_words_structured, old_content_str.split())
-                added_words_structured = _condense_word_segments(added_words_structured, new_content_str.split())
+                final_deleted_words = _condense_word_segments(temp_deleted_words_structured, old_words_list)
+                final_added_words = _condense_word_segments(temp_added_words_structured, new_words_list)
 
-                processed_lines.append({"type": "deletion", "content": old_content_str, "words": deleted_words_structured})
-                processed_lines.append({"type": "addition", "content": new_content_str, "words": added_words_structured})
+                processed_lines.append({"type": "deletion", "content": old_content_str, "words": final_deleted_words})
+                processed_lines.append({"type": "addition", "content": new_content_str, "words": final_added_words})
 
-            i += 2
-            continue
+            i += 2 # Increment past both '-' and '+' lines
+            continue # Move to the next line in hunk_lines
 
         if origin == '-':
             word_list = [{"type": "removed", "content": content.strip()}] if content.strip() else []
