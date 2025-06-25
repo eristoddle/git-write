@@ -735,92 +735,100 @@ def get_word_level_diff(patch_text: str) -> List[Dict[str, Any]]:
         if not lines:
             continue
 
-        current_file_path_a = "unknown_file_a"
-        current_file_path_b = "unknown_file_b"
-        # Default change_type, can be overridden by specific lines
-        file_info: Dict[str, Any] = {"hunks": [], "change_type": "modified"}
+        file_info: Dict[str, Any] = {"hunks": []}
         current_hunk_lines: List[Tuple[str, str]] = []
         in_hunk_body = False
 
-        if lines[0].startswith("diff --git a/"):
-            parts = lines[0].split(' ')
-            if len(parts) >= 4:
-                current_file_path_a = parts[2][2:]
-                current_file_path_b = parts[3][2:]
-                if current_file_path_a != current_file_path_b:
-                    # This is a potential rename/copy, store paths. Specific lines will confirm.
-                    file_info["old_file_path"] = current_file_path_a
-                    file_info["new_file_path"] = current_file_path_b
-                    # Default to 'renamed' if paths differ, can be 'copied' if "copy from/to" appears
-                    file_info["change_type"] = "renamed"
-            file_info["file_path"] = current_file_path_b # Default display path
+        # Initialize paths from the 'diff --git' line
+        # These might be updated by 'rename from/to' or '---'/'+++' lines later
+        path_a_from_diff_git = "unknown_a"
+        path_b_from_diff_git = "unknown_b"
 
-        for line_content in lines[1:]:
+        if lines[0].startswith("diff --git a/"):
+            parts = lines[0].split(' ', 3) # split into 4 parts: diff, --git, a/path, b/path
+            if len(parts) == 4:
+                path_a_from_diff_git = parts[2][2:].strip() # remove "a/" and strip
+                path_b_from_diff_git = parts[3][2:].strip() # remove "b/" and strip
+
+        # Set initial file_path and change_type. These are defaults and might be overridden.
+        file_info["file_path"] = path_b_from_diff_git
+        file_info["change_type"] = "modified" # Default, will be updated
+
+        # Tentative old/new paths for renames/copies
+        # These will be populated if rename/copy lines are found
+        # or if --- a/ and +++ b/ lines differ significantly
+        tentative_old_path = path_a_from_diff_git
+        tentative_new_path = path_b_from_diff_git
+
+
+        for line_content in lines[1:]: # Start from the second line
             if line_content.startswith("--- a/"):
                 in_hunk_body = False
                 path = line_content[len("--- a/"):].strip()
-                current_file_path_a = path
-                if file_info.get("change_type") != "renamed" and file_info.get("change_type") != "copied": # Don't override rename/copy
-                    if path == "/dev/null":
-                        file_info["change_type"] = "added"
-                    else:
-                        file_info["change_type"] = "modified" # Path changed, but not /dev/null -> modified
-                if path != "/dev/null" and "old_file_path" not in file_info : # if rename from not seen yet
-                     file_info["old_file_path"] = path
+                tentative_old_path = path
+                if path == "/dev/null":
+                    file_info["change_type"] = "added"
             elif line_content.startswith("+++ b/"):
                 in_hunk_body = False
                 path = line_content[len("+++ b/"):].strip()
-                current_file_path_b = path
-                if file_info.get("change_type") != "renamed" and file_info.get("change_type") != "copied":
-                    if path == "/dev/null":
-                        file_info["change_type"] = "deleted"
-                    # else: change_type remains as determined by --- or diff --git
-                if path != "/dev/null" and "new_file_path" not in file_info : # if rename to not seen yet
-                     file_info["new_file_path"] = path
-                file_info["file_path"] = path # +++ path is the primary path for display
-            elif line_content.startswith("rename from "):
-                in_hunk_body = False
-                file_info["change_type"] = "renamed"
-                file_info["old_file_path"] = line_content[len("rename from "):].strip()
-                current_file_path_a = file_info["old_file_path"]
-            elif line_content.startswith("rename to "):
-                in_hunk_body = False
-                file_info["change_type"] = "renamed"
-                file_info["new_file_path"] = line_content[len("rename to "):].strip()
-                current_file_path_b = file_info["new_file_path"]
-                file_info["file_path"] = current_file_path_b # Update primary display path
+                tentative_new_path = path
+                if path == "/dev/null":
+                    file_info["change_type"] = "deleted"
+                # The path from +++ b/ is generally the one to display
+                file_info["file_path"] = path if path != "/dev/null" else tentative_old_path
+
             elif line_content.startswith("new file mode"):
                 in_hunk_body = False
                 file_info["change_type"] = "added"
             elif line_content.startswith("deleted file mode"):
                 in_hunk_body = False
                 file_info["change_type"] = "deleted"
-            elif line_content.startswith("copy from "):
+                # If it's a deletion, the file_path should be the old path
+                file_info["file_path"] = tentative_old_path
+
+            elif line_content.startswith("rename from "):
+                in_hunk_body = False
+                file_info["change_type"] = "renamed"
+                file_info["old_file_path"] = line_content[len("rename from "):].strip()
+                tentative_old_path = file_info["old_file_path"]
+            elif line_content.startswith("rename to "):
+                in_hunk_body = False
+                file_info["change_type"] = "renamed" # Should already be set by "rename from"
+                file_info["new_file_path"] = line_content[len("rename to "):].strip()
+                tentative_new_path = file_info["new_file_path"]
+                file_info["file_path"] = file_info["new_file_path"] # For renames, new_file_path is the primary
+
+            elif line_content.startswith("copy from "): # Handle copy as well, though tests don't explicitly cover it
                 in_hunk_body = False
                 file_info["change_type"] = "copied"
                 file_info["old_file_path"] = line_content[len("copy from "):].strip()
-                current_file_path_a = file_info["old_file_path"]
+                tentative_old_path = file_info["old_file_path"]
             elif line_content.startswith("copy to "):
                 in_hunk_body = False
                 file_info["change_type"] = "copied"
                 file_info["new_file_path"] = line_content[len("copy to "):].strip()
-                current_file_path_b = file_info["new_file_path"]
-                file_info["file_path"] = current_file_path_b
+                tentative_new_path = file_info["new_file_path"]
+                file_info["file_path"] = file_info["new_file_path"]
+
             elif line_content.startswith("index ") or line_content.startswith("similarity index"):
                 in_hunk_body = False
             elif line_content.startswith("Binary files") and "differ" in line_content:
                 in_hunk_body = False
                 file_info["is_binary"] = True
-                file_info["hunks"] = []
-                current_hunk_lines = []
-                break
+                file_info["hunks"] = [] # No hunks for binary files
+                current_hunk_lines = [] # Clear any pending lines
+                break # Stop processing lines for this file patch
             elif line_content.startswith("@@"):
-                if current_hunk_lines:
+                if current_hunk_lines: # Process previous hunk if any
                     processed_hunk = _process_hunk_lines_for_structured_diff(current_hunk_lines)
                     file_info["hunks"].append({"lines": processed_hunk})
                     current_hunk_lines = []
-                in_hunk_body = True
+                in_hunk_body = True # Now inside a hunk body
             elif line_content.startswith("\\ No newline at end of file"):
+                # This message applies to the *previous* line in the hunk.
+                # If we have processed lines for the current hunk, and the last one is suitable,
+                # we can attach this info. Or, simpler: add as a distinct line type.
+                # The tests expect it as a distinct line object.
                 if current_hunk_lines: # Process pending lines for the current hunk first
                     processed_hunk = _process_hunk_lines_for_structured_diff(current_hunk_lines)
                     file_info["hunks"].append({"lines": processed_hunk})
@@ -830,46 +838,71 @@ def get_word_level_diff(patch_text: str) -> List[Dict[str, Any]]:
             elif in_hunk_body and (line_content.startswith(("+", "-", " "))):
                 current_hunk_lines.append((line_content[0], line_content[1:]))
 
-        if current_hunk_lines:
+        if current_hunk_lines: # Process any remaining hunk lines
             processed_hunk = _process_hunk_lines_for_structured_diff(current_hunk_lines)
             file_info["hunks"].append({"lines": processed_hunk})
 
-        # Finalize file_path for display
-        if file_info.get("change_type") == "deleted":
-            file_info["file_path"] = current_file_path_a
-        elif not file_info.get("file_path") and file_info.get("new_file_path"): # For renames if file_path wasn't set from +++
-             file_info["file_path"] = file_info["new_file_path"]
-        elif not file_info.get("file_path"): # Fallback if not set by +++ or rename
-            file_info["file_path"] = current_file_path_b if current_file_path_b != "unknown_from_diff_b" else current_file_path_a
+        # Final explicit construction of the dictionary to be appended, respecting key order from tests.
 
-        # If old_file_path or new_file_path is set, ensure file_path is one of them, preferably new_file_path
-        if file_info.get("old_file_path") and file_info.get("new_file_path"):
-            file_info["file_path"] = file_info["new_file_path"]
+        current_change_type = file_info.get("change_type", "modified")
+        hunks = file_info.get("hunks", [])
+        is_binary = file_info.get("is_binary", False)
 
+        # Determine path values first
+        _file_path = None
+        _old_file_path = None
+        _new_file_path = None
 
-        if file_info.get("old_file_path") and file_info.get("new_file_path"):
-            file_info["file_path"] = file_info["new_file_path"]
+        if current_change_type == "added":
+            _file_path = tentative_new_path if tentative_new_path != "/dev/null" else path_b_from_diff_git
+        elif current_change_type == "deleted":
+            _file_path = tentative_old_path if tentative_old_path != "/dev/null" else path_a_from_diff_git
+        elif current_change_type == "modified":
+            _file_path = path_a_from_diff_git
+            if _file_path in ["unknown_a", "unknown_b", "/dev/null"]: # Safety check
+                 _file_path = path_b_from_diff_git
+        elif current_change_type in ["renamed", "copied"]:
+            _old_file_path = file_info.get("old_file_path")
+            _new_file_path = file_info.get("new_file_path")
 
-        # Clean up path keys based on change type
-        final_change_type = file_info.get("change_type")
-        if final_change_type == "added":
-            file_info.pop("old_file_path", None)
-            # new_file_path might be redundant if file_path is already new_file.txt, but let's keep for now if set.
-            # Test will tell if new_file_path should also be removed for "added".
-            # Based on test_simple_addition_only_file, new_file_path is NOT expected.
-            file_info.pop("new_file_path", None)
-        elif final_change_type == "deleted":
-            file_info.pop("new_file_path", None)
-            # old_file_path might be redundant if file_path is already old_file.txt
-            # Based on test_simple_deletion_only_file, old_file_path is NOT expected.
-            file_info.pop("old_file_path", None)
-        elif final_change_type == "modified":
-            file_info.pop("old_file_path", None)
-            file_info.pop("new_file_path", None)
-        # For "renamed" and "copied", old_file_path and new_file_path are expected to remain.
+            if not _old_file_path and tentative_old_path != "/dev/null": # Fallback
+                _old_file_path = tentative_old_path
+            if not _new_file_path and tentative_new_path != "/dev/null": # Fallback
+                _new_file_path = tentative_new_path
 
-        if file_info["hunks"] or file_info.get("is_binary"):
-            file_diffs.append(file_info)
+            _file_path = _new_file_path # Primary display path is the new one
+
+        # Safeguards for /dev/null and unknown paths
+        if _file_path == "/dev/null":
+            if current_change_type == "added" and path_b_from_diff_git != "/dev/null":
+                _file_path = path_b_from_diff_git
+            elif current_change_type == "deleted" and path_a_from_diff_git != "/dev/null":
+                _file_path = path_a_from_diff_git
+        if _file_path in ["unknown_a", "unknown_b"]:
+            if path_b_from_diff_git not in ["unknown_b", "/dev/null"]:
+                _file_path = path_b_from_diff_git
+            elif path_a_from_diff_git not in ["unknown_a", "/dev/null"]:
+                _file_path = path_a_from_diff_git
+
+        # Construct item_to_append with specific key order
+        item_to_append = {}
+        if current_change_type in ["renamed", "copied"]:
+            # Order for renamed: old_file_path, new_file_path, file_path, change_type, hunks
+            item_to_append["old_file_path"] = _old_file_path
+            item_to_append["new_file_path"] = _new_file_path
+            item_to_append["file_path"] = _file_path
+            item_to_append["change_type"] = current_change_type
+        else: # Order for added, deleted, modified: file_path, change_type, hunks
+            item_to_append["file_path"] = _file_path
+            item_to_append["change_type"] = current_change_type
+
+        item_to_append["hunks"] = hunks
+        if is_binary:
+            item_to_append["is_binary"] = True
+            item_to_append["hunks"] = [] # Ensure hunks is empty for binary, per earlier logic
+
+        if item_to_append.get("hunks") or item_to_append.get("is_binary"):
+            file_diffs.append(item_to_append)
 
     return file_diffs
 
