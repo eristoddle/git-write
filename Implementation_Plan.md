@@ -16,29 +16,43 @@ Summary: All tasks related to the core library, CLI, initial API setup, advanced
 ---
 
 ## Phase 10: Advanced Core & API Features
-Status: **Pending**
+Status: **In Progress**
 Architectural Notes: This phase focuses on enhancing core functionalities and exposing them through the API, ensuring a solid foundation for the frontend applications.
 
 ### Task 10.1 - Agent_Core_Dev: Core Word-by-Word Diff Engine
 Objective: Refactor the existing CLI word-diff logic into a reusable core function and expose it via the API.
 Status: **Completed**
 
-1.  Analyze the `process_hunk_lines_for_word_diff` function and its dependencies in `gitwrite_cli/main.py`.
-2.  Create a new function in `gitwrite_core/versioning.py`, e.g., `get_word_level_diff(patch_text: str) -> List[Dict]`.
-    -   This function should take a standard diff patch string as input.
-    -   It should return a structured representation of the diff, suitable for machine consumption (e.g., a list of file diffs, which contain lists of hunk diffs, which contain lists of line diffs with word-level tags).
-3.  Modify the `GET /repository/compare` endpoint in `gitwrite_api/routers/repository.py` to accept an optional query parameter, `diff_mode=word`.
-4.  When `diff_mode=word`, the API endpoint will call the new core function and return the structured JSON data. Otherwise, it will return the raw patch text as before.
-5.  Update the `CompareRefsResponse` Pydantic model to accommodate the new structured diff format (e.g., using a `Union` type for the patch field).
-6.  Add comprehensive unit tests for the new core function and the updated API endpoint.
-
 ### Task 10.2 - Agent_Core_Dev: Core Annotation Handling
 Objective: Design and implement the core logic for receiving, storing, and applying annotations.
 Status: **Pending**
 
+1.  **Define Data Model:** In `gitwrite_api/models.py`, define a Pydantic model for an `Annotation`. It should include fields like `file_path`, `highlighted_text`, `start_line`, `end_line`, `comment`, `author`, and `status` (`new`, `accepted`, `rejected`).
+2.  **Create New Core Module:** Create a new file `gitwrite_core/annotations.py`.
+3.  **Implement Annotation Committing:** In `annotations.py`, create a function `create_annotation_commit(repo_path, feedback_branch, annotation_data)`.
+    -   This function will take annotation data, format it (e.g., as YAML or JSON), and create a new commit on the specified `feedback_branch`.
+    -   The commit message should be standardized, e.g., `Annotation: a.txt (Lines 10-12)`. The body of the commit will contain the structured annotation data.
+4.  **Implement Annotation Listing:** In `annotations.py`, create a function `list_annotations(repo_path, feedback_branch)`.
+    -   This function will walk the history of the `feedback_branch`, parse the structured data from each annotation commit, and return a list of `Annotation` objects.
+5.  **Implement Annotation Status Update:** In `annotations.py`, create a function `update_annotation_status(repo_path, annotation_commit_id, new_status)`.
+    -   This function will create a new commit that amends the original annotation commit's message or adds a note to signify the status change (e.g., "Status: accepted"). This preserves the audit trail.
+6.  **Unit Tests:** Create a new test file `tests/test_core_annotations.py` and write comprehensive tests for all new functions.
+
 ### Task 10.3 - Agent_API_Dev: API Endpoints for Annotations
 Objective: Expose the annotation handling logic via the REST API.
 Status: **Pending**
+
+1.  **Create Endpoint:** In `gitwrite_api/routers/repository.py` (or a new `annotations.py` router), create `POST /repository/annotations`.
+    -   This endpoint will accept annotation data in its request body.
+    -   It will call the `create_annotation_commit` core function.
+    -   It requires a `feedback_branch` parameter.
+2.  **List Endpoint:** Create `GET /repository/annotations`.
+    -   This endpoint will take a `feedback_branch` as a query parameter.
+    -   It will call the `list_annotations` core function and return a list of annotation objects.
+3.  **Update Endpoint:** Create `PUT /repository/annotations/{annotation_commit_id}`.
+    -   This endpoint will accept a `new_status` in its body.
+    -   It will call the `update_annotation_status` core function.
+4.  **Unit Tests:** Create a new test file `tests/test_api_annotations.py` to test all new API endpoints, including success cases, error handling, and authentication/authorization checks.
 
 ---
 
