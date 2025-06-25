@@ -1,4 +1,9 @@
 import pytest
+import sys
+# Ensure pygit2 can be found, attempting to fix ModuleNotFoundError in sandbox
+site_packages_path = "/home/jules/.pyenv/versions/3.12.11/lib/python3.12/site-packages"
+if site_packages_path not in sys.path:
+    sys.path.insert(0, site_packages_path)
 import pygit2
 import os
 import shutil

@@ -87,9 +87,9 @@ def test_create_annotation_success(mock_core_create, mock_active_user): # mock_a
 
     # Configure the mock core function to update the passed Annotation object
     # and return the commit_sha.
-    def side_effect_create(repo_path_str, feedback_branch_name, annotation_obj):
-        annotation_obj.id = "new_commit_sha"
-        annotation_obj.commit_id = "new_commit_sha"
+    def side_effect_create(repo_path, feedback_branch, annotation_data): # Corrected all params
+        annotation_data.id = "new_commit_sha" # Use annotation_data
+        annotation_data.commit_id = "new_commit_sha" # Use annotation_data
         # Simulate other fields if necessary, though model_dump should handle it
         return "new_commit_sha"
 
@@ -155,7 +155,7 @@ def test_list_annotations_success(mock_core_list, mock_active_user):
     assert response_data["count"] == 2
     assert len(response_data["annotations"]) == 2
     assert response_data["annotations"][0]["id"] == "sha1"
-    mock_core_list.assert_called_once_with(repo_path_str="/tmp/gitwrite_repos_api", feedback_branch_name="fb-test")
+    mock_core_list.assert_called_once_with(repo_path="/tmp/gitwrite_repos_api", feedback_branch="fb-test") # Corrected keys
     app.dependency_overrides.clear() # Clean up overrides
 
 
@@ -204,8 +204,8 @@ def test_update_annotation_status_success(mock_get_helper, mock_core_update, moc
     assert f"status updated to 'accepted'" in response_data["message"]
 
     mock_core_update.assert_called_once_with(
-        repo_path_str="/tmp/gitwrite_repos_api",
-        feedback_branch_name="fb-main",
+        repo_path="/tmp/gitwrite_repos_api", # Corrected key
+        feedback_branch="fb-main", # Corrected key
         annotation_commit_id=original_annotation_id,
         new_status=AnnotationStatus.ACCEPTED,
         updated_by_author=mock_active_editor_user.username

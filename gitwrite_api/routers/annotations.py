@@ -4,7 +4,8 @@ from typing import List, Optional
 from gitwrite_api.models import (
     User, UserRole,
     CreateAnnotationRequest, AnnotationResponse, AnnotationListResponse,
-    UpdateAnnotationStatusRequest, UpdateAnnotationStatusResponse, Annotation
+    UpdateAnnotationStatusRequest, UpdateAnnotationStatusResponse, Annotation,
+    AnnotationStatus # Added AnnotationStatus
 )
 from gitwrite_api.security import require_role, get_current_active_user
 
@@ -92,9 +93,9 @@ async def create_annotation(
         )
 
         commit_sha = core_create_annotation_commit(
-            repo_path_str=repo_path,
-            feedback_branch_name=request_data.feedback_branch,
-            annotation_obj=temp_annotation_obj # Pass the object to be updated
+            repo_path=repo_path, # Corrected: repo_path_str to repo_path
+            feedback_branch=request_data.feedback_branch, # Corrected: feedback_branch_name to feedback_branch
+            annotation_data=temp_annotation_obj # Corrected: annotation_obj to annotation_data
         )
 
         # After core_create_annotation_commit, temp_annotation_obj should have id and commit_id populated.
@@ -128,8 +129,8 @@ async def list_annotations(
 
     try:
         annotations_list = core_list_annotations(
-            repo_path_str=repo_path,
-            feedback_branch_name=feedback_branch
+            repo_path=repo_path, # Corrected: repo_path_str to repo_path
+            feedback_branch=feedback_branch # Corrected: feedback_branch_name to feedback_branch
         )
         # core_list_annotations returns List[Annotation]
 
@@ -184,8 +185,8 @@ async def update_annotation_status(
     try:
         # Core function returns the SHA of the status update commit.
         update_commit_sha = core_update_annotation_status(
-            repo_path_str=repo_path,
-            feedback_branch_name=request_data.feedback_branch,
+            repo_path=repo_path, # Corrected: repo_path_str to repo_path
+            feedback_branch=request_data.feedback_branch, # Corrected: feedback_branch_name to feedback_branch
             annotation_commit_id=annotation_commit_id,
             new_status=request_data.new_status,
             # Assuming author of status update can be implicitly handled by git committer

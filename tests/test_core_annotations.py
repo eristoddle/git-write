@@ -83,8 +83,15 @@ def test_list_annotations_empty_branch(temp_git_repo: Path):
 
     # Create an empty branch (no annotation commits)
     feedback_branch = "empty_feedback"
+    # Get current branch to switch back to
+    current_branch_output = subprocess.run(
+        ["git", "-C", str(temp_git_repo), "rev-parse", "--abbrev-ref", "HEAD"],
+        capture_output=True, text=True, check=True
+    )
+    original_branch = current_branch_output.stdout.strip()
+
     subprocess.run(["git", "-C", str(temp_git_repo), "checkout", "-b", feedback_branch], check=True)
-    subprocess.run(["git", "-C", str(temp_git_repo), "checkout", "master"], check=True) # switch back
+    subprocess.run(["git", "-C", str(temp_git_repo), "checkout", original_branch], check=True) # switch back
 
     annotations_empty = list_annotations(str(temp_git_repo), feedback_branch)
     assert len(annotations_empty) == 0
