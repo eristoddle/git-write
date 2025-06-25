@@ -332,15 +332,13 @@ index 9e2f97e..0000000
                             {
                                 'type': 'deletion', 'content': 'final word',
                                 'words': [
-                                    {'type': 'context', 'content': 'final'},
-                                    {'type': 'removed', 'content': 'word'}
+                                    {'type': 'removed', 'content': 'final word'}
                                 ]
                             },
                             {
                                 'type': 'addition', 'content': 'final change',
                                 'words': [
-                                    {'type': 'context', 'content': 'final'},
-                                    {'type': 'added', 'content': 'change'}
+                                    {'type': 'added', 'content': 'final change'}
                                 ]
                             }
                         ]
@@ -406,7 +404,8 @@ index 03b1a04..50d1547 100644
                             {
                                 "type": "deletion",
                                 "content": "Original content",
-                                "words": [{"type": "removed", "content": "Original content"}]},
+                                "words": [
+                                    {"type": "removed", "content": "Original content"}]},
                             {
                                 "type": "addition",
                                 "content": "New content",

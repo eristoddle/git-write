@@ -822,9 +822,9 @@ def get_word_level_diff(patch_text: str) -> List[Dict[str, Any]]:
                 # Process lines accumulated for the *previous* hunk (if any)
                 if current_hunk_lines:
                     processed_lines = _process_hunk_lines_for_structured_diff(current_hunk_lines)
-                    if file_info["hunks"]: # Add to the last hunk created
+                    if file_info["hunks"]:
                         file_info["hunks"][-1]["lines"].extend(processed_lines)
-                    else: # Should not happen if @@ implies a valid hunk structure
+                    else:
                         file_info["hunks"].append({"lines": processed_lines})
                     current_hunk_lines = []
 
@@ -840,8 +840,6 @@ def get_word_level_diff(patch_text: str) -> List[Dict[str, Any]]:
                         current_hunk_lines = []
                     # Add the "no newline" message to the current hunk
                     file_info["hunks"][-1]["lines"].append({"type": "no_newline", "content": line_content})
-                # else: this line is outside a hunk body, potentially ignore or log.
-                # For now, it will be ignored if not in_hunk_body or no hunks started.
             elif in_hunk_body and (line_content.startswith(("+", "-", " "))):
                 current_hunk_lines.append((line_content[0], line_content[1:]))
 
@@ -850,19 +848,14 @@ def get_word_level_diff(patch_text: str) -> List[Dict[str, Any]]:
             processed_lines = _process_hunk_lines_for_structured_diff(current_hunk_lines)
             file_info["hunks"][-1]["lines"].extend(processed_lines)
         elif current_hunk_lines and not file_info["hunks"]:
-             # This could happen if a patch has hunk lines but no "@@" header.
-             # While unusual for standard git diffs, robust parsing might consider it.
              processed_lines = _process_hunk_lines_for_structured_diff(current_hunk_lines)
-             if processed_lines: # Only add if there's something to add
+             if processed_lines:
                 file_info["hunks"].append({"lines": processed_lines})
-
-        # Final explicit construction of the dictionary to be appended, respecting key order from tests.
 
         current_change_type = file_info.get("change_type", "modified")
         hunks = file_info.get("hunks", [])
         is_binary = file_info.get("is_binary", False)
 
-        # Determine path values first
         _file_path = None
         _old_file_path = None
         _new_file_path = None
@@ -873,20 +866,19 @@ def get_word_level_diff(patch_text: str) -> List[Dict[str, Any]]:
             _file_path = tentative_old_path if tentative_old_path != "/dev/null" else path_a_from_diff_git
         elif current_change_type == "modified":
             _file_path = path_a_from_diff_git
-            if _file_path in ["unknown_a", "unknown_b", "/dev/null"]: # Safety check
+            if _file_path in ["unknown_a", "unknown_b", "/dev/null"]:
                  _file_path = path_b_from_diff_git
         elif current_change_type in ["renamed", "copied"]:
             _old_file_path = file_info.get("old_file_path")
             _new_file_path = file_info.get("new_file_path")
 
-            if not _old_file_path and tentative_old_path != "/dev/null": # Fallback
+            if not _old_file_path and tentative_old_path != "/dev/null":
                 _old_file_path = tentative_old_path
-            if not _new_file_path and tentative_new_path != "/dev/null": # Fallback
+            if not _new_file_path and tentative_new_path != "/dev/null":
                 _new_file_path = tentative_new_path
 
-            _file_path = _new_file_path # Primary display path is the new one
+            _file_path = _new_file_path
 
-        # Safeguards for /dev/null and unknown paths
         if _file_path == "/dev/null":
             if current_change_type == "added" and path_b_from_diff_git != "/dev/null":
                 _file_path = path_b_from_diff_git
@@ -898,22 +890,20 @@ def get_word_level_diff(patch_text: str) -> List[Dict[str, Any]]:
             elif path_a_from_diff_git not in ["unknown_a", "/dev/null"]:
                 _file_path = path_a_from_diff_git
 
-        # Construct item_to_append with specific key order
         item_to_append = {}
         if current_change_type in ["renamed", "copied"]:
-            # Order for renamed: old_file_path, new_file_path, file_path, change_type, hunks
             item_to_append["old_file_path"] = _old_file_path
             item_to_append["new_file_path"] = _new_file_path
             item_to_append["file_path"] = _file_path
             item_to_append["change_type"] = current_change_type
-        else: # Order for added, deleted, modified: file_path, change_type, hunks
+        else:
             item_to_append["file_path"] = _file_path
             item_to_append["change_type"] = current_change_type
 
         item_to_append["hunks"] = hunks
         if is_binary:
             item_to_append["is_binary"] = True
-            item_to_append["hunks"] = [] # Ensure hunks is empty for binary, per earlier logic
+            item_to_append["hunks"] = []
 
         if item_to_append.get("hunks") or item_to_append.get("is_binary"):
             file_diffs.append(item_to_append)
@@ -930,10 +920,8 @@ def _process_hunk_lines_for_structured_diff(hunk_lines: List[Tuple[str, str]]) -
     i = 0
     while i < len(hunk_lines):
         origin, content = hunk_lines[i]
-        # print(f"DEBUG: Processing line: origin='{origin}', content='{content}'") # Debug print
 
         if origin == '-' and (i + 1 < len(hunk_lines)) and hunk_lines[i+1][0] == '+':
-            # print(f"DEBUG: Matched +/- pair: '{content}' vs '{hunk_lines[i+1][1]}'") # Debug print
             old_content_str = content
             new_content_str = hunk_lines[i+1][1]
             old_words_list = old_content_str.split()
@@ -941,7 +929,7 @@ def _process_hunk_lines_for_structured_diff(hunk_lines: List[Tuple[str, str]]) -
             old_words_set = set(old_words_list)
             new_words_set = set(new_words_list)
 
-            sm = difflib.SequenceMatcher(None, old_content_str, new_content_str) # Use full strings for ratio
+            sm = difflib.SequenceMatcher(None, old_content_str, new_content_str)
             similarity_ratio = sm.ratio()
 
             # If lines are too dissimilar, or no common words at word level, treat as whole line changes
@@ -951,8 +939,7 @@ def _process_hunk_lines_for_structured_diff(hunk_lines: List[Tuple[str, str]]) -
                 processed_lines.append({"type": "deletion", "content": old_content_str, "words": del_words})
                 processed_lines.append({"type": "addition", "content": new_content_str, "words": add_words})
             else:
-                # Lines are similar enough, and common words exist, proceed with word-level diff
-                sm_word = difflib.SequenceMatcher(None, old_words_list, new_words_list) # SequenceMatcher on words
+                sm_word = difflib.SequenceMatcher(None, old_words_list, new_words_list)
 
                 temp_deleted_words_structured: List[Dict[str, str]] = []
                 temp_added_words_structured: List[Dict[str, str]] = []
@@ -980,8 +967,8 @@ def _process_hunk_lines_for_structured_diff(hunk_lines: List[Tuple[str, str]]) -
                 processed_lines.append({"type": "deletion", "content": old_content_str, "words": final_deleted_words})
                 processed_lines.append({"type": "addition", "content": new_content_str, "words": final_added_words})
 
-            i += 2 # Increment past both '-' and '+' lines
-            continue # Move to the next line in hunk_lines
+            i += 2
+            continue
 
         if origin == '-':
             word_list = [{"type": "removed", "content": content.strip()}] if content.strip() else []
