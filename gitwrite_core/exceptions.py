@@ -86,3 +86,11 @@ class PandocError(GitWriteError):
 class FileNotFoundInCommitError(GitWriteError):
     """Raised when a specified file is not found in the given commit."""
     pass
+
+class RepositoryOperationError(GitWriteError):
+    """Raised when a general Git repository operation fails."""
+    pass
+
+class AnnotationError(GitWriteError):
+    """Raised for errors specific to annotation processing."""
+    pass

@@ -25,7 +25,7 @@ Status: **Completed**
 
 ### Task 10.2 - Agent_Core_Dev: Core Annotation Handling
 Objective: Design and implement the core logic for receiving, storing, and applying annotations.
-Status: **Pending**
+Status: **Completed**
 
 1.  **Define Data Model:** In `gitwrite_api/models.py`, define a Pydantic model for an `Annotation`. It should include fields like `file_path`, `highlighted_text`, `start_line`, `end_line`, `comment`, `author`, and `status` (`new`, `accepted`, `rejected`).
 2.  **Create New Core Module:** Create a new file `gitwrite_core/annotations.py`.

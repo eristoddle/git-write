@@ -106,3 +106,24 @@ class EPUBExportResponse(BaseModel):
     server_file_path: Optional[str] = Field(None, description="Server-side path to the generated EPUB file, present on success.")
     # download_url: Optional[str] = Field(None, description="A direct download URL for the EPUB file, if applicable.")
     # export_job_id: Optional[str] = Field(None, description="An ID for tracking an asynchronous export job, if applicable.")
+
+
+# Models for Annotation Handling
+
+class AnnotationStatus(str, Enum):
+    NEW = "new"
+    ACCEPTED = "accepted"
+    REJECTED = "rejected"
+
+
+class Annotation(BaseModel):
+    id: Optional[str] = Field(None, description="Unique identifier for the annotation, typically the commit SHA of its creation.")
+    file_path: str = Field(..., description="The relative path of the file in the repository that this annotation refers to.")
+    highlighted_text: str = Field(..., description="The specific text that was highlighted for annotation.")
+    start_line: int = Field(..., ge=0, description="The 0-indexed starting line number of the highlighted text.")
+    end_line: int = Field(..., ge=0, description="The 0-indexed ending line number of the highlighted text.")
+    comment: str = Field(..., description="The comment or note provided by the annotator.")
+    author: str = Field(..., description="The author of the annotation (e.g., username or email).")
+    status: AnnotationStatus = Field(default=AnnotationStatus.NEW, description="The current status of the annotation.")
+    commit_id: Optional[str] = Field(None, description="The Git commit SHA where this version of the annotation (especially its status) is recorded. For a new annotation, this is its creation commit. For a status update, this is the SHA of the status update commit.")
+    original_annotation_id: Optional[str] = Field(None, description="If this annotation represents a status update, this field stores the ID (commit_id) of the original annotation being updated.")
