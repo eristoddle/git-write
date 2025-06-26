@@ -17,7 +17,7 @@ export default [
         sourcemap: true,
       },
     ],
-    plugins: [typescript({ declaration: true, declarationDir: undefined })],
+    plugins: [typescript({ declaration: false, declarationDir: null })],
     external: ['axios'],
   },
   {
