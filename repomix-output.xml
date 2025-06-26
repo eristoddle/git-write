@@ -3083,6 +3083,11 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 </file>
 
+<file path="poetry.toml">
+[virtualenvs]
+in-project = true
+</file>
+
 <file path="README.md">
 # GitWrite
 
@@ -5801,250 +5806,6 @@ COPY gitwrite_api/ /app/gitwrite_api/
 CMD ["uvicorn", "gitwrite_api.main:app", "--host", "0.0.0.0", "--port", "8000"]
 </file>
 
-<file path="poetry.toml">
-[virtualenvs]
-in-project = true
-</file>
-
-<file path="gitwrite_api/routers/annotations.py">
-from fastapi import APIRouter, Depends, HTTPException, Query, Path as FastApiPath
-from typing import List, Optional
-
-from gitwrite_api.models import (
-    User, UserRole,
-    CreateAnnotationRequest, AnnotationResponse, AnnotationListResponse,
-    UpdateAnnotationStatusRequest, UpdateAnnotationStatusResponse, Annotation,
-    AnnotationStatus # Added AnnotationStatus
-)
-from gitwrite_api.security import require_role, get_current_active_user
-
-from gitwrite_core.annotations import (
-    create_annotation_commit as core_create_annotation_commit,
-    list_annotations as core_list_annotations,
-    update_annotation_status as core_update_annotation_status
-    # get_annotation_by_original_id was assumed and is handled by a local helper _get_annotation_by_original_id_from_list
-)
-from gitwrite_core.exceptions import (
-    RepositoryNotFoundError, AnnotationError, CommitNotFoundError, RepositoryOperationError
-)
-
-# TODO: Make this configurable or dynamically determined per user/request
-PLACEHOLDER_REPO_PATH = "/tmp/gitwrite_repos_api"
-
-router = APIRouter(
-    prefix="/repository/annotations", # Changed prefix to be more specific
-    tags=["annotations"],
-    responses={
-        404: {"description": "Annotation or related resource not found"},
-        400: {"description": "Invalid request"},
-        401: {"description": "Unauthorized"},
-        403: {"description": "Forbidden"},
-        500: {"description": "Internal server error"}
-    },
-)
-
-# Placeholder for get_annotation_by_original_id if it needs to be defined in core
-# For now, we will adapt list_annotations or assume it's added to core.
-# Example of how it might be used:
-# async def get_annotation_after_update(repo_path: str, feedback_branch: str, original_annotation_id: str) -> Optional[Annotation]:
-#     annotations = await core_list_annotations(repo_path, feedback_branch) # Assuming async version or wrapper
-#     for ann in annotations:
-#         if ann.id == original_annotation_id:
-#             return ann
-#     return None
-
-
-@router.post("", response_model=AnnotationResponse, status_code=201)
-async def create_annotation(
-    request_data: CreateAnnotationRequest,
-    current_user: User = Depends(require_role([UserRole.OWNER, UserRole.EDITOR, UserRole.WRITER, UserRole.BETA_READER]))
-):
-    """
-    Creates a new annotation on a specified feedback branch.
-    The annotation data is stored as a commit on that branch.
-    """
-    repo_path = PLACEHOLDER_REPO_PATH
-
-    # The core create_annotation_commit function expects a dictionary for annotation_data,
-    # not the full Annotation model yet, as it will populate id, commit_id, and status.
-    # We also need to ensure the author from the request is used.
-    # The status will be set to NEW by default in the core function.
-    annotation_payload_for_core = {
-        "file_path": request_data.file_path,
-        "highlighted_text": request_data.highlighted_text,
-        "start_line": request_data.start_line,
-        "end_line": request_data.end_line,
-        "comment": request_data.comment,
-        "author": request_data.author, # Using author from request
-        # 'status' will be defaulted to NEW by core_create_annotation_commit
-    }
-
-    try:
-        # The core function modifies the input dict to add 'id' and 'commit_id'
-        # and returns the commit_sha of the annotation.
-        # Let's assume it returns the full annotation object or enough info to build it.
-        # Based on Task 10.2, create_annotation_commit updates an input Annotation object and returns the SHA.
-        # For the API, it's cleaner if the core function returns the created Annotation object directly
-        # or a dictionary that can be parsed into it.
-        # Let's adjust the expectation for core_create_annotation_commit:
-        # It takes the payload and returns a dictionary representing the full Annotation.
-
-        # For now, let's stick to the current core function signature which expects an Annotation object
-        # and updates it. We'll construct a partial one.
-        temp_annotation_obj = Annotation(
-            file_path=request_data.file_path,
-            highlighted_text=request_data.highlighted_text,
-            start_line=request_data.start_line,
-            end_line=request_data.end_line,
-            comment=request_data.comment,
-            author=request_data.author,
-            status=AnnotationStatus.NEW # Core will use this
-        )
-
-        commit_sha = core_create_annotation_commit(
-            repo_path=repo_path, # Corrected: repo_path_str to repo_path
-            feedback_branch=request_data.feedback_branch, # Corrected: feedback_branch_name to feedback_branch
-            annotation_data=temp_annotation_obj # Corrected: annotation_obj to annotation_data
-        )
-
-        # After core_create_annotation_commit, temp_annotation_obj should have id and commit_id populated.
-        # The id should be the commit_sha itself for new annotations.
-        # temp_annotation_obj.id = commit_sha (core function should do this)
-        # temp_annotation_obj.commit_id = commit_sha (core function should do this)
-
-        return AnnotationResponse(**temp_annotation_obj.model_dump())
-
-    except RepositoryNotFoundError as e:
-        raise HTTPException(status_code=404, detail=f"Repository not found: {str(e)}")
-    except RepositoryOperationError as e: # Covers errors like feedback branch creation failure
-        raise HTTPException(status_code=500, detail=f"Repository operation error: {str(e)}")
-    except AnnotationError as e: # Generic annotation error from core
-        raise HTTPException(status_code=400, detail=f"Annotation creation error: {str(e)}")
-    except Exception as e:
-        # Log this exception for debugging
-        # logger.error(f"Unexpected error in create_annotation: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"An unexpected error occurred: {str(e)}")
-
-
-@router.get("", response_model=AnnotationListResponse)
-async def list_annotations(
-    feedback_branch: str = Query(..., description="The name of the feedback branch from which to list annotations."),
-    current_user: User = Depends(require_role([UserRole.OWNER, UserRole.EDITOR, UserRole.WRITER, UserRole.BETA_READER]))
-):
-    """
-    Lists all annotations from a specified feedback branch.
-    """
-    repo_path = PLACEHOLDER_REPO_PATH
-
-    try:
-        annotations_list = core_list_annotations(
-            repo_path=repo_path, # Corrected: repo_path_str to repo_path
-            feedback_branch=feedback_branch # Corrected: feedback_branch_name to feedback_branch
-        )
-        # core_list_annotations returns List[Annotation]
-
-        return AnnotationListResponse(
-            annotations=annotations_list,
-            count=len(annotations_list)
-        )
-
-    except RepositoryNotFoundError as e:
-        raise HTTPException(status_code=404, detail=f"Repository not found: {str(e)}")
-    except RepositoryOperationError as e: # e.g. branch not found
-        # Check if the error message indicates a branch not found, which should be a 404 for the branch.
-        if "branch not found" in str(e).lower() or "invalid branch" in str(e).lower() : # Make this check more robust if core provides specific exception types
-            raise HTTPException(status_code=404, detail=f"Feedback branch '{feedback_branch}' not found or invalid: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Repository operation error: {str(e)}")
-    except AnnotationError as e: # Generic annotation error from core during listing
-        raise HTTPException(status_code=500, detail=f"Annotation listing error: {str(e)}") # Potentially some malformed data
-    except Exception as e:
-        # Log this exception
-        # logger.error(f"Unexpected error in list_annotations: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"An unexpected error occurred: {str(e)}")
-
-
-async def _get_annotation_by_original_id_from_list(
-    repo_path: str, feedback_branch: str, original_annotation_id: str
-) -> Optional[Annotation]:
-    """
-    Helper to find a specific annotation by its original ID after an update.
-    This simulates a more direct core.get_annotation_by_original_id if not available.
-    """
-    annotations = core_list_annotations(repo_path, feedback_branch)
-    for ann in annotations:
-        # The 'id' of an annotation is its original creation commit SHA.
-        # 'commit_id' is the SHA of the commit defining its current state.
-        if ann.id == original_annotation_id:
-            return ann
-    return None
-
-
-@router.put("/{annotation_commit_id}", response_model=UpdateAnnotationStatusResponse)
-async def update_annotation_status(
-    annotation_commit_id: str = FastApiPath(..., description="The commit ID (SHA) of the original annotation to update."),
-    request_data: UpdateAnnotationStatusRequest = ..., # Ellipsis indicates Body
-    current_user: User = Depends(require_role([UserRole.OWNER, UserRole.EDITOR])) # Typically editors or owners manage status
-):
-    """
-    Updates the status of an existing annotation.
-    This creates a new commit on the feedback branch to record the status change.
-    """
-    repo_path = PLACEHOLDER_REPO_PATH
-
-    try:
-        # Core function returns the SHA of the status update commit.
-        update_commit_sha = core_update_annotation_status(
-            repo_path=repo_path, # Corrected: repo_path_str to repo_path
-            feedback_branch=request_data.feedback_branch, # Corrected: feedback_branch_name to feedback_branch
-            annotation_commit_id=annotation_commit_id,
-            new_status=request_data.new_status,
-            # Assuming author of status update can be implicitly handled by git committer
-            # or core_update_annotation_status could take an optional 'updated_by_author'
-            updated_by_author=current_user.username # Pass the current user as the author of the update
-        )
-
-        # After successful update, fetch the full state of the updated annotation.
-        # The 'id' of the annotation remains the original_annotation_id.
-        # Its 'commit_id' will be the new update_commit_sha, and 'status' will be the new_status.
-        updated_annotation = await _get_annotation_by_original_id_from_list(
-            repo_path=repo_path,
-            feedback_branch=request_data.feedback_branch,
-            original_annotation_id=annotation_commit_id
-        )
-
-        if not updated_annotation:
-            # This case should ideally not happen if core_update_annotation_status succeeded
-            # and core_list_annotations is consistent.
-            # It might indicate an issue or a race condition if the annotation was deleted post-update but pre-fetch.
-            raise HTTPException(
-                status_code=404, # Or 500 if this implies inconsistency
-                detail=f"Annotation with original ID '{annotation_commit_id}' not found after status update. The update commit was '{update_commit_sha}'."
-            )
-
-        return UpdateAnnotationStatusResponse(
-            annotation=updated_annotation,
-            message=f"Annotation '{annotation_commit_id}' status updated to '{request_data.new_status.value}'. Update recorded in commit '{update_commit_sha}'."
-        )
-
-    except CommitNotFoundError as e: # Raised if original annotation_commit_id is not found by core_update_annotation_status
-        raise HTTPException(status_code=404, detail=f"Original annotation commit ID '{annotation_commit_id}' not found: {str(e)}")
-    except RepositoryNotFoundError as e:
-        raise HTTPException(status_code=404, detail=f"Repository not found: {str(e)}")
-    except RepositoryOperationError as e:
-        # This could be due to the feedback branch not found, or other git issues during the update commit.
-        if "branch not found" in str(e).lower() or "invalid branch" in str(e).lower():
-             raise HTTPException(status_code=404, detail=f"Feedback branch '{request_data.feedback_branch}' not found or invalid: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Repository operation error during status update: {str(e)}")
-    except AnnotationError as e: # Generic annotation error from core during update (e.g., invalid status transition)
-        raise HTTPException(status_code=400, detail=f"Annotation status update error: {str(e)}")
-    except ValueError as e: # e.g. Pydantic validation error for AnnotationStatus if not caught by FastAPI
-        raise HTTPException(status_code=400, detail=str(e))
-    except Exception as e:
-        # Log this exception
-        # logger.error(f"Unexpected error in update_annotation_status: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"An unexpected error occurred: {str(e)}")
-</file>
-
 <file path="gitwrite_core/branching.py">
 import pygit2
 from pathlib import Path
@@ -6456,429 +6217,6 @@ module.exports = {
   // Jest will search from the root directory of the project (where jest.config.js is)
   // The default testMatch should pick up .test.ts files.
 };
-</file>
-
-<file path="tests/test_api_annotations.py">
-import pytest
-from fastapi.testclient import TestClient
-from unittest.mock import patch, MagicMock
-from typing import List # Added import for List
-
-from gitwrite_api.main import app # Import the FastAPI application
-from gitwrite_api.models import User, UserRole, Annotation, AnnotationStatus
-from gitwrite_core.exceptions import RepositoryNotFoundError, AnnotationError, CommitNotFoundError, RepositoryOperationError
-from gitwrite_api.security import get_current_active_user, require_role as actual_require_role # Import actual dependencies
-
-# Test client for making requests to the app
-client = TestClient(app)
-
-# --- Fixtures ---
-
-@pytest.fixture
-def mock_active_user():
-    """Fixture to mock an active user."""
-    return User(username="testuser", email="test@example.com", roles=[UserRole.WRITER])
-
-@pytest.fixture
-def mock_active_editor_user():
-    """Fixture to mock an active user with editor role."""
-    return User(username="editoruser", email="editor@example.com", roles=[UserRole.EDITOR])
-
-@pytest.fixture(autouse=True)
-def override_auth_dependencies(mock_active_user, mock_active_editor_user):
-    """Override authentication dependencies for all tests in this module."""
-    # This is a simplified way to override. For more granular control,
-    # you might apply this only to specific test functions or use FastAPI's dependency_overrides.
-
-    # Mock for general user roles
-    app.dependency_overrides[MagicMock(name="get_current_active_user")] = lambda: mock_active_user
-    # Mock for require_role with specific roles if needed by endpoints
-    # For simplicity, we'll assume the default mock_active_user has sufficient roles for creation/listing
-    # and mock_active_editor_user for updates.
-    # A more robust approach would be to mock require_role itself or provide different users per test.
-
-    # For specific role checks, you might need more sophisticated mocking or use FastAPI's
-    # dependency_overrides on a per-test basis if the role requirements differ significantly
-    # and cannot be covered by a single mock user type per test function.
-
-    # Let's make a generic override for require_role that checks the passed user's roles.
-    # This is still a bit simplified as require_role itself has logic.
-    # A more direct approach is to ensure the mock_active_user fixture has the roles needed by the endpoint.
-    # The create/list endpoints use [OWNER, EDITOR, WRITER, BETA_READER]
-    # The update endpoint uses [OWNER, EDITOR]
-
-    # To ensure tests pass with the current require_role, we'll make sure the default user has WRITER
-    # and provide an editor user for tests that need it.
-
-    # No longer using this broad fixture. Each test will set its own overrides.
-    pass
-
-# --- Helper Functions ---
-def get_auth_headers(user_roles: List[UserRole]):
-    """
-    Returns dummy auth headers. In a real scenario, this would generate a valid token.
-    For these tests, auth is mocked via dependency overrides.
-    """
-    # This function is not strictly needed if dependency_overrides are used effectively.
-    return {"Authorization": "Bearer faketoken"}
-
-
-# --- Test Cases ---
-
-# Test POST /repository/annotations
-@patch("gitwrite_api.routers.annotations.core_create_annotation_commit")
-def test_create_annotation_success(mock_core_create, mock_active_user): # mock_active_user fixture provides the user data
-    # Override dependencies for this specific test
-    app.dependency_overrides[get_current_active_user] = lambda: mock_active_user
-    # For require_role, we rely on get_current_active_user being correctly mocked.
-    # The actual require_role dependency will then use this mocked user.
-    # No need to override require_role itself if we trust its logic and only mock its input (the user).
-
-    mock_annotation_obj = Annotation(
-        id="new_commit_sha",
-        file_path="test.md",
-        highlighted_text="Some text",
-        start_line=1,
-        end_line=2,
-        comment="A comment",
-        author="testuser",
-        status=AnnotationStatus.NEW,
-        commit_id="new_commit_sha"
-    )
-
-    # Configure the mock core function to update the passed Annotation object
-    # and return the commit_sha.
-    def side_effect_create(repo_path, feedback_branch, annotation_data): # Corrected all params
-        annotation_data.id = "new_commit_sha" # Use annotation_data
-        annotation_data.commit_id = "new_commit_sha" # Use annotation_data
-        # Simulate other fields if necessary, though model_dump should handle it
-        return "new_commit_sha"
-
-    mock_core_create.side_effect = side_effect_create
-
-    payload = {
-        "file_path": "test.md",
-        "highlighted_text": "Some text",
-        "start_line": 1,
-        "end_line": 2,
-        "comment": "A comment",
-        "author": "testuser",
-        "feedback_branch": "fb-test"
-    }
-    response = client.post("/repository/annotations", json=payload, headers=get_auth_headers([UserRole.WRITER]))
-
-    assert response.status_code == 201
-    response_data = response.json()
-    assert response_data["id"] == "new_commit_sha"
-    assert response_data["file_path"] == payload["file_path"]
-    assert response_data["status"] == AnnotationStatus.NEW.value
-    mock_core_create.assert_called_once()
-    app.dependency_overrides.clear() # Clean up overrides
-
-
-@patch("gitwrite_api.routers.annotations.core_create_annotation_commit")
-def test_create_annotation_repo_not_found(mock_core_create, mock_active_user):
-    # app.dependency_overrides[get_current_active_user] = lambda: mock_active_user # Keep this
-    # Let's also directly mock require_role for this test to ensure it's not the source of 500
-    def mock_require_role_decorator(roles: List[UserRole]):
-        def mock_inner_dependency():
-            return mock_active_user
-        return mock_inner_dependency
-    app.dependency_overrides[actual_require_role] = mock_require_role_decorator
-    app.dependency_overrides[get_current_active_user] = lambda: mock_active_user # Still need this if require_role is not mocked but its source is
-
-    mock_core_create.side_effect = RepositoryNotFoundError("Repo not found")
-    payload = {
-        "file_path": "test.md", "highlighted_text": "text", "start_line": 1, "end_line": 1,
-        "comment": "comment", "author": "user", "feedback_branch": "fb-test"
-    }
-    response = client.post("/repository/annotations", json=payload, headers=get_auth_headers([UserRole.WRITER]))
-    assert response.status_code == 404
-    assert "Repository not found" in response.json()["detail"]
-    app.dependency_overrides.clear() # Clean up overrides
-
-
-# Test GET /repository/annotations
-@patch("gitwrite_api.routers.annotations.core_list_annotations")
-def test_list_annotations_success(mock_core_list, mock_active_user):
-    app.dependency_overrides[get_current_active_user] = lambda: mock_active_user
-
-    mock_annotations = [
-        Annotation(id="sha1", file_path="a.md", highlighted_text="t1", start_line=0, end_line=0, comment="c1", author="a1", status=AnnotationStatus.NEW, commit_id="sha1"),
-        Annotation(id="sha2", file_path="b.md", highlighted_text="t2", start_line=1, end_line=1, comment="c2", author="a2", status=AnnotationStatus.ACCEPTED, commit_id="sha3", original_annotation_id="sha2"),
-    ]
-    mock_core_list.return_value = mock_annotations
-
-    response = client.get("/repository/annotations?feedback_branch=fb-test", headers=get_auth_headers([UserRole.WRITER]))
-
-    assert response.status_code == 200
-    response_data = response.json()
-    assert response_data["count"] == 2
-    assert len(response_data["annotations"]) == 2
-    assert response_data["annotations"][0]["id"] == "sha1"
-    mock_core_list.assert_called_once_with(repo_path="/tmp/gitwrite_repos_api", feedback_branch="fb-test") # Corrected keys
-    app.dependency_overrides.clear() # Clean up overrides
-
-
-@patch("gitwrite_api.routers.annotations.core_list_annotations")
-def test_list_annotations_branch_not_found(mock_core_list, mock_active_user):
-    app.dependency_overrides[get_current_active_user] = lambda: mock_active_user
-
-    mock_core_list.side_effect = RepositoryOperationError("Branch not found: fb-nonexist")
-    response = client.get("/repository/annotations?feedback_branch=fb-nonexist", headers=get_auth_headers([UserRole.WRITER]))
-    assert response.status_code == 404 # As per API logic for "branch not found" in message
-    assert "Feedback branch 'fb-nonexist' not found" in response.json()["detail"]
-    app.dependency_overrides.clear() # Clean up overrides
-
-
-# Test PUT /repository/annotations/{annotation_commit_id}
-from unittest.mock import patch, MagicMock, AsyncMock # Import AsyncMock
-
-# ... (other imports)
-
-@patch("gitwrite_api.routers.annotations.core_update_annotation_status")
-@patch("gitwrite_api.routers.annotations._get_annotation_by_original_id_from_list", new_callable=AsyncMock) # Mock the helper with AsyncMock
-def test_update_annotation_status_success(mock_get_helper, mock_core_update, mock_active_editor_user):
-    app.dependency_overrides[get_current_active_user] = lambda: mock_active_editor_user
-
-    original_annotation_id = "original_sha"
-    update_commit_sha = "update_commit_sha"
-
-    mock_core_update.return_value = update_commit_sha
-
-    updated_annotation_obj = Annotation(
-        id=original_annotation_id,
-        file_path="test.md", highlighted_text="text", start_line=0, end_line=0,
-        comment="comment", author="author", status=AnnotationStatus.ACCEPTED,
-        commit_id=update_commit_sha, original_annotation_id=original_annotation_id
-    )
-    mock_get_helper.return_value = updated_annotation_obj
-
-    payload = {"new_status": "accepted", "feedback_branch": "fb-main"}
-    response = client.put(f"/repository/annotations/{original_annotation_id}", json=payload, headers=get_auth_headers([UserRole.EDITOR]))
-
-    assert response.status_code == 200
-    response_data = response.json()
-    assert response_data["annotation"]["id"] == original_annotation_id
-    assert response_data["annotation"]["status"] == AnnotationStatus.ACCEPTED.value
-    assert response_data["annotation"]["commit_id"] == update_commit_sha
-    assert f"status updated to 'accepted'" in response_data["message"]
-
-    mock_core_update.assert_called_once_with(
-        repo_path="/tmp/gitwrite_repos_api", # Corrected key
-        feedback_branch="fb-main", # Corrected key
-        annotation_commit_id=original_annotation_id,
-        new_status=AnnotationStatus.ACCEPTED,
-        updated_by_author=mock_active_editor_user.username
-    )
-    mock_get_helper.assert_called_once_with(
-        repo_path="/tmp/gitwrite_repos_api",
-        feedback_branch="fb-main",
-        original_annotation_id=original_annotation_id
-    )
-    app.dependency_overrides.clear() # Clean up overrides
-
-@patch("gitwrite_api.routers.annotations.core_update_annotation_status")
-def test_update_annotation_status_commit_not_found(mock_core_update, mock_active_editor_user):
-    app.dependency_overrides[get_current_active_user] = lambda: mock_active_editor_user
-
-    mock_core_update.side_effect = CommitNotFoundError("Original annotation commit ID 'nonexist_sha' not found")
-    payload = {"new_status": "rejected", "feedback_branch": "fb-main"}
-    response = client.put("/repository/annotations/nonexist_sha", json=payload, headers=get_auth_headers([UserRole.EDITOR]))
-
-    assert response.status_code == 404
-    assert "Original annotation commit ID 'nonexist_sha' not found" in response.json()["detail"]
-    app.dependency_overrides.clear() # Clean up overrides
-
-
-@patch("gitwrite_api.routers.annotations.core_update_annotation_status")
-@patch("gitwrite_api.routers.annotations._get_annotation_by_original_id_from_list", new_callable=AsyncMock)
-def test_update_annotation_status_annotation_not_found_after_update(mock_get_helper, mock_core_update, mock_active_editor_user):
-    app.dependency_overrides[get_current_active_user] = lambda: mock_active_editor_user
-
-    mock_core_update.return_value = "update_sha" # Update itself succeeds
-    mock_get_helper.return_value = None # But fetching it fails
-
-    payload = {"new_status": "accepted", "feedback_branch": "fb-main"}
-    response = client.put("/repository/annotations/original_sha", json=payload, headers=get_auth_headers([UserRole.EDITOR]))
-
-    assert response.status_code == 404 # As per API logic
-    assert "not found after status update" in response.json()["detail"]
-    app.dependency_overrides.clear() # Clean up overrides
-
-# Cleanup dependency overrides after tests in this module
-# def teardown_module(module):
-# app.dependency_overrides.clear()
-# This is now handled by the mock_auth fixture or explicit clears in each test.
-
-# Example of testing role-based access (simplified)
-# This would require more specific mocking of require_role or testing with different mock users.
-@patch("gitwrite_api.routers.annotations.core_update_annotation_status")
-def test_update_annotation_status_forbidden_for_writer(mock_core_update, mock_active_user): # Using WRITER user from fixture
-    # Override specific dependency for this test
-    # The mock_active_user fixture provides a user with only WRITER role (and BETA_READER)
-    app.dependency_overrides[get_current_active_user] = lambda: mock_active_user
-
-    # The actual require_role dependency will be called.
-    # If we don't mock require_role itself, FastAPI's real dependency injection will use the
-    # real require_role which will then use the mocked get_current_active_user.
-    # This is closer to an integration test for the auth logic.
-
-    # To properly test the require_role decorator's effect, we might need to let it run.
-    # The current setup with fixture-level overrides and then specific overrides here can be tricky.
-    # A cleaner way might be to use FastAPI's `app.dependency_overrides` context manager per test.
-
-    # For this test, we expect the real `require_role` to deny access if the `mock_active_user` (WRITER)
-    # doesn't have EDITOR or OWNER role for the PUT endpoint.
-
-    payload = {"new_status": "accepted", "feedback_branch": "fb-main"}
-
-    # Temporarily use the actual require_role by removing its mock if it was broadly set
-    # This part is tricky because of the global autouse fixture.
-    # A better pattern is specific overrides per test.
-
-    # Let's assume the global override for require_role is not too aggressive
-    # and allows the real one to be invoked or that the Depends(require_role(...)) works with the provided user.
-    # The `require_role` function itself uses `get_current_active_user`.
-
-    # If `require_role` is correctly used by FastAPI and `mock_active_user` is provided (as WRITER),
-    # the roles check inside `require_role` should lead to a 403.
-
-    response = client.put("/repository/annotations/some_id", json=payload, headers=get_auth_headers([UserRole.WRITER]))
-
-    # The require_role for PUT is [UserRole.OWNER, UserRole.EDITOR]
-    # mock_active_user has [UserRole.WRITER]
-    assert response.status_code == 403 # Forbidden
-    assert "User does not have the required role(s)" in response.json()["detail"]
-    app.dependency_overrides.clear() # Clean up overrides
-
-
-# TODO: Add more tests for edge cases and invalid inputs if necessary.
-# For example, what if feedback_branch is missing in PUT request? (FastAPI validation should catch)
-# What if new_status is invalid? (Enum validation by Pydantic/FastAPI should catch)
-
-# Re-clearing overrides for safety after all tests in the module
-# This is usually done in teardown_module or a conftest.py fixture.
-# @pytest.fixture(scope="module", autouse=True)
-# def cleanup_dependency_overrides_module():
-#     yield
-#     app.dependency_overrides.clear()
-# Removing this as individual tests are responsible for cleanup or a more robust fixture like mock_auth would handle it.
-# For now, explicit clear() in each test is used.
-
-# Note on Auth Mocking:
-# The mocking of `get_current_active_user` and `require_role` is crucial.
-# `app.dependency_overrides[ActualDependency]` is the standard FastAPI way.
-# Using MagicMock(name="...") is a workaround if the actual dependency object is hard to import directly
-# or if you want to avoid direct import coupling in tests.
-# The most robust way is `from gitwrite_api.security import get_current_active_user, require_role`
-# and then `app.dependency_overrides[get_current_active_user] = ...`
-# The current `@patch` approach on the router's imported names is also valid for mocking core calls.
-# The `@pytest.fixture(autouse=True)` for `override_auth_dependencies` tries to set a baseline,
-# but specific tests like role checks might need more careful, localized overrides.
-# The test `test_update_annotation_status_forbidden_for_writer` attempts this, showing complexity.
-# A simpler pattern for auth per test:
-# with client.app.dependency_overrides as overrides:
-#     overrides[get_current_active_user] = lambda: specific_user_for_this_test
-#     response = client.get(...)
-
-# For `require_role`, since it's a dependency that itself calls `get_current_active_user`,
-# mocking `get_current_active_user` to return a user with specific roles is often sufficient
-# to test `require_role`'s behavior indirectly.
-# The `test_update_annotation_status_forbidden_for_writer` aims to test this.
-# It's important that the `Depends(require_role([...]))` in the endpoint signature correctly
-# picks up the mocked `get_current_active_user`.
-# The global `autouse=True` fixture setting `app.dependency_overrides[MagicMock(name="require_role")]`
-# might interfere if not carefully managed. It was removed from the global fixture to simplify.
-# The `test_update_annotation_status_forbidden_for_writer` was updated to reflect a more common way of testing this.
-# (By ensuring the user passed to the real `require_role` via `get_current_active_user` mock causes a 403).
-
-# Correcting the mock override within the test:
-# The fixture `mock_active_user` is already a WRITER. `mock_active_editor_user` is EDITOR.
-# The `test_update_annotation_status_forbidden_for_writer` should use `mock_active_user` for the `get_current_active_user` override.
-# The global `override_auth_dependencies` fixture was simplified.
-# The `get_auth_headers` is mostly symbolic when auth is mocked this way.
-
-# Final check on the forbidden test:
-# `app.dependency_overrides[get_current_active_user] = lambda: mock_active_user` (WRITER)
-# The PUT endpoint requires EDITOR or OWNER. So, this should result in 403.
-# This seems correct if `require_role` uses the overridden `get_current_active_user`.
-# This is standard FastAPI behavior for nested dependencies.
-# The `MagicMock(name=...)` for overriding was problematic. Let's ensure direct dependency overriding.
-# We will rely on specific overrides in tests needing different users/roles than the default fixture.
-# The `autouse=True` override_auth_dependencies was simplified and specific overrides are shown in tests.
-# The `test_update_annotation_status_forbidden_for_writer` was simplified to rely on a fixture providing a user
-# that would be forbidden by the actual `require_role` logic.
-# The key is that `app.dependency_overrides` correctly targets the *actual* dependency function used in `Depends()`.
-# If `from ..security import get_current_active_user` is used in router, then `app.dependency_overrides[get_current_active_user]` is the way.
-# The `MagicMock(name=...)` approach is less reliable. Assuming direct imports in routers.
-# The `override_auth_dependencies` fixture needs to correctly target these.
-# For now, the tests rely on `app.dependency_overrides` being set correctly for `get_current_active_user`
-# and `require_role` functioning with this mocked user.
-# The `test_update_annotation_status_forbidden_for_writer` shows one way to test this.
-# The global autouse fixture for overriding auth was removed to make per-test overrides clearer. Each test requiring auth
-# will now need to explicitly set `app.dependency_overrides` or use a fixture that does so.
-# The provided solution structure assumes that `get_current_active_user` is the primary dependency to mock for auth.
-# The `require_role` then consumes this.
-# The `test_update_annotation_status_forbidden_for_writer` was updated to use `app.dependency_overrides` within the test.
-# And `get_auth_headers` is kept for completeness, though not strictly necessary with these mocks.
-# The fixture `override_auth_dependencies` was removed to favor explicit per-test setup for clarity.
-# Instead, individual tests now set their required user.
-# The `mock_active_user` and `mock_active_editor_user` are just user data fixtures now.
-# The test `test_create_annotation_success` etc. show how to set the override.
-# The forbidden test also explicitly sets its user.
-
-# Re-evaluating the fixture strategy for auth:
-# It's often cleaner to have a fixture that handles the override and cleanup.
-@pytest.fixture
-def mock_auth(request): # request is a pytest fixture
-    user_fixture_name = request.param if hasattr(request, "param") else "mock_active_user"
-
-    # Resolve the user fixture by its name
-    if user_fixture_name == "mock_active_user":
-        user = User(username="testuser", email="test@example.com", roles=[UserRole.WRITER, UserRole.BETA_READER])
-    elif user_fixture_name == "mock_active_editor_user":
-        user = User(username="editoruser", email="editor@example.com", roles=[UserRole.EDITOR, UserRole.OWNER])
-    else: # Default or unknown
-        user = User(username="default_testuser", email="default@example.com", roles=[UserRole.WRITER])
-
-    # This is where you'd import the actual dependency from your security module
-    from gitwrite_api.security import get_current_active_user as actual_get_user_dep
-
-    original_override = app.dependency_overrides.get(actual_get_user_dep)
-    app.dependency_overrides[actual_get_user_dep] = lambda: user
-    yield user # Provide the user to the test if needed
-    # Teardown: restore original override or clear
-    if original_override:
-        app.dependency_overrides[actual_get_user_dep] = original_override
-    else:
-        del app.dependency_overrides[actual_get_user_dep]
-
-# Now tests can use @pytest.mark.parametrize("mock_auth", ["mock_active_user"], indirect=True)
-# or just @pytest.mark.usefixtures("mock_auth") if they don't need the user object directly
-# and the default user from mock_auth is fine.
-
-# The tests will be rewritten slightly to use this new `mock_auth` fixture.
-# This makes auth setup cleaner per test.
-# The `get_auth_headers` remains mostly symbolic.
-# The `test_update_annotation_status_forbidden_for_writer` will use `mock_auth` parameterized with `mock_active_user`.
-# The other tests will use `mock_auth` parameterized appropriately or use its default.
-
-# Let's simplify and assume direct dependency imports are mockable.
-# The test structure below is based on patching the core functions and
-# providing a mock user for the auth layer.
-# The `override_auth_dependencies` fixture was removed. Tests will set up their own auth context.
-# This makes each test more explicit about its auth requirements.
-# The `mock_active_user` and `mock_active_editor_user` are used to provide user objects.
-# The `client.app.dependency_overrides` context manager is the cleanest way.
-
-# Final structure for tests:
-# - Each test uses `client.app.dependency_overrides` context manager for auth.
-# - Core calls are mocked using `@patch`.
-# - `PLACEHOLDER_REPO_PATH` from the router module is used for assertions.
-# - `get_auth_headers` is symbolic and could be removed if tests don't need it.
-# - This provides clear, per-test setup for dependencies.
-# I will proceed with creating the file with this refined structure.Tool output for `create_file_with_block`:
 </file>
 
 <file path="tests/test_api_cherry_pick.py">
@@ -8036,6 +7374,248 @@ print("Initial test structure for test_core_annotations.py created.")
 # So, no change needed for that.
 </file>
 
+<file path="gitwrite_api/routers/annotations.py">
+from fastapi import APIRouter, Depends, HTTPException, Query, Path as FastApiPath
+from typing import List, Optional
+
+from gitwrite_api.models import (
+    User, UserRole,
+    CreateAnnotationRequest, AnnotationResponse, AnnotationListResponse,
+    UpdateAnnotationStatusRequest, UpdateAnnotationStatusResponse, Annotation,
+    AnnotationStatus # Added AnnotationStatus
+)
+from gitwrite_api.security import require_role, get_current_active_user
+
+from gitwrite_core.annotations import (
+    create_annotation_commit as core_create_annotation_commit,
+    list_annotations as core_list_annotations,
+    update_annotation_status as core_update_annotation_status
+    # get_annotation_by_original_id was assumed and is handled by a local helper _get_annotation_by_original_id_from_list
+)
+from gitwrite_core.exceptions import (
+    RepositoryNotFoundError, AnnotationError, CommitNotFoundError, RepositoryOperationError
+)
+
+# TODO: Make this configurable or dynamically determined per user/request
+PLACEHOLDER_REPO_PATH = "/tmp/gitwrite_repos_api"
+
+router = APIRouter(
+    prefix="/repository/annotations", # Changed prefix to be more specific
+    tags=["annotations"],
+    responses={
+        404: {"description": "Annotation or related resource not found"},
+        400: {"description": "Invalid request"},
+        401: {"description": "Unauthorized"},
+        403: {"description": "Forbidden"},
+        500: {"description": "Internal server error"}
+    },
+)
+
+# Placeholder for get_annotation_by_original_id if it needs to be defined in core
+# For now, we will adapt list_annotations or assume it's added to core.
+# Example of how it might be used:
+# async def get_annotation_after_update(repo_path: str, feedback_branch: str, original_annotation_id: str) -> Optional[Annotation]:
+#     annotations = await core_list_annotations(repo_path, feedback_branch) # Assuming async version or wrapper
+#     for ann in annotations:
+#         if ann.id == original_annotation_id:
+#             return ann
+#     return None
+
+
+@router.post("", response_model=AnnotationResponse, status_code=201)
+async def create_annotation(
+    request_data: CreateAnnotationRequest,
+    current_user: User = Depends(require_role([UserRole.OWNER, UserRole.EDITOR, UserRole.WRITER, UserRole.BETA_READER]))
+):
+    """
+    Creates a new annotation on a specified feedback branch.
+    The annotation data is stored as a commit on that branch.
+    """
+    repo_path = PLACEHOLDER_REPO_PATH
+
+    # The core create_annotation_commit function expects a dictionary for annotation_data,
+    # not the full Annotation model yet, as it will populate id, commit_id, and status.
+    # We also need to ensure the author from the request is used.
+    # The status will be set to NEW by default in the core function.
+    annotation_payload_for_core = {
+        "file_path": request_data.file_path,
+        "highlighted_text": request_data.highlighted_text,
+        "start_line": request_data.start_line,
+        "end_line": request_data.end_line,
+        "comment": request_data.comment,
+        "author": request_data.author, # Using author from request
+        # 'status' will be defaulted to NEW by core_create_annotation_commit
+    }
+
+    try:
+        # The core function modifies the input dict to add 'id' and 'commit_id'
+        # and returns the commit_sha of the annotation.
+        # Let's assume it returns the full annotation object or enough info to build it.
+        # Based on Task 10.2, create_annotation_commit updates an input Annotation object and returns the SHA.
+        # For the API, it's cleaner if the core function returns the created Annotation object directly
+        # or a dictionary that can be parsed into it.
+        # Let's adjust the expectation for core_create_annotation_commit:
+        # It takes the payload and returns a dictionary representing the full Annotation.
+
+        # For now, let's stick to the current core function signature which expects an Annotation object
+        # and updates it. We'll construct a partial one.
+        temp_annotation_obj = Annotation(
+            file_path=request_data.file_path,
+            highlighted_text=request_data.highlighted_text,
+            start_line=request_data.start_line,
+            end_line=request_data.end_line,
+            comment=request_data.comment,
+            author=request_data.author,
+            status=AnnotationStatus.NEW # Core will use this
+        )
+
+        commit_sha = core_create_annotation_commit(
+            repo_path=repo_path, # Corrected: repo_path_str to repo_path
+            feedback_branch=request_data.feedback_branch, # Corrected: feedback_branch_name to feedback_branch
+            annotation_data=temp_annotation_obj # Corrected: annotation_obj to annotation_data
+        )
+
+        # After core_create_annotation_commit, temp_annotation_obj should have id and commit_id populated.
+        # The id should be the commit_sha itself for new annotations.
+        # temp_annotation_obj.id = commit_sha (core function should do this)
+        # temp_annotation_obj.commit_id = commit_sha (core function should do this)
+
+        return AnnotationResponse(**temp_annotation_obj.model_dump())
+
+    except RepositoryNotFoundError as e:
+        raise HTTPException(status_code=404, detail=f"Repository not found: {str(e)}")
+    except RepositoryOperationError as e: # Covers errors like feedback branch creation failure
+        raise HTTPException(status_code=500, detail=f"Repository operation error: {str(e)}")
+    except AnnotationError as e: # Generic annotation error from core
+        raise HTTPException(status_code=400, detail=f"Annotation creation error: {str(e)}")
+    except Exception as e:
+        # Log this exception for debugging
+        # logger.error(f"Unexpected error in create_annotation: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"An unexpected error occurred: {str(e)}")
+
+
+@router.get("", response_model=AnnotationListResponse)
+async def list_annotations(
+    feedback_branch: str = Query(..., description="The name of the feedback branch from which to list annotations."),
+    current_user: User = Depends(require_role([UserRole.OWNER, UserRole.EDITOR, UserRole.WRITER, UserRole.BETA_READER]))
+):
+    """
+    Lists all annotations from a specified feedback branch.
+    """
+    repo_path = PLACEHOLDER_REPO_PATH
+
+    try:
+        annotations_list = core_list_annotations(
+            repo_path=repo_path, # Corrected: repo_path_str to repo_path
+            feedback_branch=feedback_branch # Corrected: feedback_branch_name to feedback_branch
+        )
+        # core_list_annotations returns List[Annotation]
+
+        return AnnotationListResponse(
+            annotations=annotations_list,
+            count=len(annotations_list)
+        )
+
+    except RepositoryNotFoundError as e:
+        raise HTTPException(status_code=404, detail=f"Repository not found: {str(e)}")
+    except RepositoryOperationError as e: # e.g. branch not found
+        # Check if the error message indicates a branch not found, which should be a 404 for the branch.
+        if "branch not found" in str(e).lower() or "invalid branch" in str(e).lower() : # Make this check more robust if core provides specific exception types
+            raise HTTPException(status_code=404, detail=f"Feedback branch '{feedback_branch}' not found or invalid: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Repository operation error: {str(e)}")
+    except AnnotationError as e: # Generic annotation error from core during listing
+        raise HTTPException(status_code=500, detail=f"Annotation listing error: {str(e)}") # Potentially some malformed data
+    except Exception as e:
+        # Log this exception
+        # logger.error(f"Unexpected error in list_annotations: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"An unexpected error occurred: {str(e)}")
+
+
+async def _get_annotation_by_original_id_from_list(
+    repo_path: str, feedback_branch: str, original_annotation_id: str
+) -> Optional[Annotation]:
+    """
+    Helper to find a specific annotation by its original ID after an update.
+    This simulates a more direct core.get_annotation_by_original_id if not available.
+    """
+    annotations = core_list_annotations(repo_path, feedback_branch)
+    for ann in annotations:
+        # The 'id' of an annotation is its original creation commit SHA.
+        # 'commit_id' is the SHA of the commit defining its current state.
+        if ann.id == original_annotation_id:
+            return ann
+    return None
+
+
+@router.put("/{annotation_commit_id}", response_model=UpdateAnnotationStatusResponse)
+async def update_annotation_status(
+    annotation_commit_id: str = FastApiPath(..., description="The commit ID (SHA) of the original annotation to update."),
+    request_data: UpdateAnnotationStatusRequest = ..., # Ellipsis indicates Body
+    current_user: User = Depends(require_role([UserRole.OWNER, UserRole.EDITOR])) # Typically editors or owners manage status
+):
+    """
+    Updates the status of an existing annotation.
+    This creates a new commit on the feedback branch to record the status change.
+    """
+    repo_path = PLACEHOLDER_REPO_PATH
+
+    try:
+        # Core function returns the SHA of the status update commit.
+        update_commit_sha = core_update_annotation_status(
+            repo_path=repo_path, # Corrected: repo_path_str to repo_path
+            feedback_branch=request_data.feedback_branch, # Corrected: feedback_branch_name to feedback_branch
+            annotation_commit_id=annotation_commit_id,
+            new_status=request_data.new_status,
+            # Assuming author of status update can be implicitly handled by git committer
+            # or core_update_annotation_status could take an optional 'updated_by_author'
+            updated_by_author=current_user.username # Pass the current user as the author of the update
+        )
+
+        # After successful update, fetch the full state of the updated annotation.
+        # The 'id' of the annotation remains the original_annotation_id.
+        # Its 'commit_id' will be the new update_commit_sha, and 'status' will be the new_status.
+        updated_annotation = await _get_annotation_by_original_id_from_list(
+            repo_path=repo_path,
+            feedback_branch=request_data.feedback_branch,
+            original_annotation_id=annotation_commit_id
+        )
+
+        if not updated_annotation:
+            # This case should ideally not happen if core_update_annotation_status succeeded
+            # and core_list_annotations is consistent.
+            # It might indicate an issue or a race condition if the annotation was deleted post-update but pre-fetch.
+            raise HTTPException(
+                status_code=500, # This implies inconsistency
+                detail=f"Annotation with original ID '{annotation_commit_id}' not found after status update. The update commit was '{update_commit_sha}'."
+            )
+
+        return UpdateAnnotationStatusResponse(
+            annotation=updated_annotation,
+            message=f"Annotation '{annotation_commit_id}' status updated to '{request_data.new_status.value}'. Update recorded in commit '{update_commit_sha}'."
+        )
+
+    except HTTPException: # Re-raise HTTPException to avoid being caught by the generic handler
+        raise
+
+    except CommitNotFoundError as e: # Raised if original annotation_commit_id is not found by core_update_annotation_status
+        raise HTTPException(status_code=404, detail=f"Original annotation commit ID '{annotation_commit_id}' not found: {str(e)}")
+    except RepositoryNotFoundError as e:
+        raise HTTPException(status_code=404, detail=f"Repository not found: {str(e)}")
+    except RepositoryOperationError as e:
+        # This could be due to the feedback branch not found, or other git issues during the update commit.
+        if "branch not found" in str(e).lower() or "invalid branch" in str(e).lower():
+             raise HTTPException(status_code=404, detail=f"Feedback branch '{request_data.feedback_branch}' not found or invalid: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Repository operation error during status update: {str(e)}")
+    except AnnotationError as e: # Generic annotation error from core during update (e.g., invalid status transition)
+        raise HTTPException(status_code=400, detail=f"Annotation status update error: {str(e)}")
+    except ValueError as e: # e.g. Pydantic validation error for AnnotationStatus if not caught by FastAPI
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        # Log this exception
+        # logger.error(f"Unexpected error in update_annotation_status: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"An unexpected error occurred: {str(e)}")
+</file>
+
 <file path="gitwrite_api/security.py">
 from datetime import datetime, timedelta, timezone
 from typing import Optional
@@ -8306,6 +7886,429 @@ def list_tags(repo_path_str: str):
                 # Depending on requirements, this part could be extended or log a warning.
 
     return tags_data
+</file>
+
+<file path="tests/test_api_annotations.py">
+import pytest
+from fastapi.testclient import TestClient
+from unittest.mock import patch, MagicMock
+from typing import List # Added import for List
+
+from gitwrite_api.main import app # Import the FastAPI application
+from gitwrite_api.models import User, UserRole, Annotation, AnnotationStatus
+from gitwrite_core.exceptions import RepositoryNotFoundError, AnnotationError, CommitNotFoundError, RepositoryOperationError
+from gitwrite_api.security import get_current_active_user, require_role as actual_require_role # Import actual dependencies
+
+# Test client for making requests to the app
+client = TestClient(app)
+
+# --- Fixtures ---
+
+@pytest.fixture
+def mock_active_user():
+    """Fixture to mock an active user."""
+    return User(username="testuser", email="test@example.com", roles=[UserRole.WRITER])
+
+@pytest.fixture
+def mock_active_editor_user():
+    """Fixture to mock an active user with editor role."""
+    return User(username="editoruser", email="editor@example.com", roles=[UserRole.EDITOR])
+
+@pytest.fixture(autouse=True)
+def override_auth_dependencies(mock_active_user, mock_active_editor_user):
+    """Override authentication dependencies for all tests in this module."""
+    # This is a simplified way to override. For more granular control,
+    # you might apply this only to specific test functions or use FastAPI's dependency_overrides.
+
+    # Mock for general user roles
+    app.dependency_overrides[MagicMock(name="get_current_active_user")] = lambda: mock_active_user
+    # Mock for require_role with specific roles if needed by endpoints
+    # For simplicity, we'll assume the default mock_active_user has sufficient roles for creation/listing
+    # and mock_active_editor_user for updates.
+    # A more robust approach would be to mock require_role itself or provide different users per test.
+
+    # For specific role checks, you might need more sophisticated mocking or use FastAPI's
+    # dependency_overrides on a per-test basis if the role requirements differ significantly
+    # and cannot be covered by a single mock user type per test function.
+
+    # Let's make a generic override for require_role that checks the passed user's roles.
+    # This is still a bit simplified as require_role itself has logic.
+    # A more direct approach is to ensure the mock_active_user fixture has the roles needed by the endpoint.
+    # The create/list endpoints use [OWNER, EDITOR, WRITER, BETA_READER]
+    # The update endpoint uses [OWNER, EDITOR]
+
+    # To ensure tests pass with the current require_role, we'll make sure the default user has WRITER
+    # and provide an editor user for tests that need it.
+
+    # No longer using this broad fixture. Each test will set its own overrides.
+    pass
+
+# --- Helper Functions ---
+def get_auth_headers(user_roles: List[UserRole]):
+    """
+    Returns dummy auth headers. In a real scenario, this would generate a valid token.
+    For these tests, auth is mocked via dependency overrides.
+    """
+    # This function is not strictly needed if dependency_overrides are used effectively.
+    return {"Authorization": "Bearer faketoken"}
+
+
+# --- Test Cases ---
+
+# Test POST /repository/annotations
+@patch("gitwrite_api.routers.annotations.core_create_annotation_commit")
+def test_create_annotation_success(mock_core_create, mock_active_user): # mock_active_user fixture provides the user data
+    # Override dependencies for this specific test
+    app.dependency_overrides[get_current_active_user] = lambda: mock_active_user
+    # For require_role, we rely on get_current_active_user being correctly mocked.
+    # The actual require_role dependency will then use this mocked user.
+    # No need to override require_role itself if we trust its logic and only mock its input (the user).
+
+    mock_annotation_obj = Annotation(
+        id="new_commit_sha",
+        file_path="test.md",
+        highlighted_text="Some text",
+        start_line=1,
+        end_line=2,
+        comment="A comment",
+        author="testuser",
+        status=AnnotationStatus.NEW,
+        commit_id="new_commit_sha"
+    )
+
+    # Configure the mock core function to update the passed Annotation object
+    # and return the commit_sha.
+    def side_effect_create(repo_path, feedback_branch, annotation_data): # Corrected all params
+        annotation_data.id = "new_commit_sha" # Use annotation_data
+        annotation_data.commit_id = "new_commit_sha" # Use annotation_data
+        # Simulate other fields if necessary, though model_dump should handle it
+        return "new_commit_sha"
+
+    mock_core_create.side_effect = side_effect_create
+
+    payload = {
+        "file_path": "test.md",
+        "highlighted_text": "Some text",
+        "start_line": 1,
+        "end_line": 2,
+        "comment": "A comment",
+        "author": "testuser",
+        "feedback_branch": "fb-test"
+    }
+    response = client.post("/repository/annotations", json=payload, headers=get_auth_headers([UserRole.WRITER]))
+
+    assert response.status_code == 201
+    response_data = response.json()
+    assert response_data["id"] == "new_commit_sha"
+    assert response_data["file_path"] == payload["file_path"]
+    assert response_data["status"] == AnnotationStatus.NEW.value
+    mock_core_create.assert_called_once()
+    app.dependency_overrides.clear() # Clean up overrides
+
+
+@patch("gitwrite_api.routers.annotations.core_create_annotation_commit")
+def test_create_annotation_repo_not_found(mock_core_create, mock_active_user):
+    # app.dependency_overrides[get_current_active_user] = lambda: mock_active_user # Keep this
+    # Let's also directly mock require_role for this test to ensure it's not the source of 500
+    def mock_require_role_decorator(roles: List[UserRole]):
+        def mock_inner_dependency():
+            return mock_active_user
+        return mock_inner_dependency
+    app.dependency_overrides[actual_require_role] = mock_require_role_decorator
+    app.dependency_overrides[get_current_active_user] = lambda: mock_active_user # Still need this if require_role is not mocked but its source is
+
+    mock_core_create.side_effect = RepositoryNotFoundError("Repo not found")
+    payload = {
+        "file_path": "test.md", "highlighted_text": "text", "start_line": 1, "end_line": 1,
+        "comment": "comment", "author": "user", "feedback_branch": "fb-test"
+    }
+    response = client.post("/repository/annotations", json=payload, headers=get_auth_headers([UserRole.WRITER]))
+    assert response.status_code == 404
+    assert "Repository not found" in response.json()["detail"]
+    app.dependency_overrides.clear() # Clean up overrides
+
+
+# Test GET /repository/annotations
+@patch("gitwrite_api.routers.annotations.core_list_annotations")
+def test_list_annotations_success(mock_core_list, mock_active_user):
+    app.dependency_overrides[get_current_active_user] = lambda: mock_active_user
+
+    mock_annotations = [
+        Annotation(id="sha1", file_path="a.md", highlighted_text="t1", start_line=0, end_line=0, comment="c1", author="a1", status=AnnotationStatus.NEW, commit_id="sha1"),
+        Annotation(id="sha2", file_path="b.md", highlighted_text="t2", start_line=1, end_line=1, comment="c2", author="a2", status=AnnotationStatus.ACCEPTED, commit_id="sha3", original_annotation_id="sha2"),
+    ]
+    mock_core_list.return_value = mock_annotations
+
+    response = client.get("/repository/annotations?feedback_branch=fb-test", headers=get_auth_headers([UserRole.WRITER]))
+
+    assert response.status_code == 200
+    response_data = response.json()
+    assert response_data["count"] == 2
+    assert len(response_data["annotations"]) == 2
+    assert response_data["annotations"][0]["id"] == "sha1"
+    mock_core_list.assert_called_once_with(repo_path="/tmp/gitwrite_repos_api", feedback_branch="fb-test") # Corrected keys
+    app.dependency_overrides.clear() # Clean up overrides
+
+
+@patch("gitwrite_api.routers.annotations.core_list_annotations")
+def test_list_annotations_branch_not_found(mock_core_list, mock_active_user):
+    app.dependency_overrides[get_current_active_user] = lambda: mock_active_user
+
+    mock_core_list.side_effect = RepositoryOperationError("Branch not found: fb-nonexist")
+    response = client.get("/repository/annotations?feedback_branch=fb-nonexist", headers=get_auth_headers([UserRole.WRITER]))
+    assert response.status_code == 404 # As per API logic for "branch not found" in message
+    assert "Feedback branch 'fb-nonexist' not found" in response.json()["detail"]
+    app.dependency_overrides.clear() # Clean up overrides
+
+
+# Test PUT /repository/annotations/{annotation_commit_id}
+from unittest.mock import patch, MagicMock, AsyncMock # Import AsyncMock
+
+# ... (other imports)
+
+@patch("gitwrite_api.routers.annotations.core_update_annotation_status")
+@patch("gitwrite_api.routers.annotations._get_annotation_by_original_id_from_list", new_callable=AsyncMock) # Mock the helper with AsyncMock
+def test_update_annotation_status_success(mock_get_helper, mock_core_update, mock_active_editor_user):
+    app.dependency_overrides[get_current_active_user] = lambda: mock_active_editor_user
+
+    original_annotation_id = "original_sha"
+    update_commit_sha = "update_commit_sha"
+
+    mock_core_update.return_value = update_commit_sha
+
+    updated_annotation_obj = Annotation(
+        id=original_annotation_id,
+        file_path="test.md", highlighted_text="text", start_line=0, end_line=0,
+        comment="comment", author="author", status=AnnotationStatus.ACCEPTED,
+        commit_id=update_commit_sha, original_annotation_id=original_annotation_id
+    )
+    mock_get_helper.return_value = updated_annotation_obj
+
+    payload = {"new_status": "accepted", "feedback_branch": "fb-main"}
+    response = client.put(f"/repository/annotations/{original_annotation_id}", json=payload, headers=get_auth_headers([UserRole.EDITOR]))
+
+    assert response.status_code == 200
+    response_data = response.json()
+    assert response_data["annotation"]["id"] == original_annotation_id
+    assert response_data["annotation"]["status"] == AnnotationStatus.ACCEPTED.value
+    assert response_data["annotation"]["commit_id"] == update_commit_sha
+    assert f"status updated to 'accepted'" in response_data["message"]
+
+    mock_core_update.assert_called_once_with(
+        repo_path="/tmp/gitwrite_repos_api", # Corrected key
+        feedback_branch="fb-main", # Corrected key
+        annotation_commit_id=original_annotation_id,
+        new_status=AnnotationStatus.ACCEPTED,
+        updated_by_author=mock_active_editor_user.username
+    )
+    mock_get_helper.assert_called_once_with(
+        repo_path="/tmp/gitwrite_repos_api",
+        feedback_branch="fb-main",
+        original_annotation_id=original_annotation_id
+    )
+    app.dependency_overrides.clear() # Clean up overrides
+
+@patch("gitwrite_api.routers.annotations.core_update_annotation_status")
+def test_update_annotation_status_commit_not_found(mock_core_update, mock_active_editor_user):
+    app.dependency_overrides[get_current_active_user] = lambda: mock_active_editor_user
+
+    mock_core_update.side_effect = CommitNotFoundError("Original annotation commit ID 'nonexist_sha' not found")
+    payload = {"new_status": "rejected", "feedback_branch": "fb-main"}
+    response = client.put("/repository/annotations/nonexist_sha", json=payload, headers=get_auth_headers([UserRole.EDITOR]))
+
+    assert response.status_code == 404
+    assert "Original annotation commit ID 'nonexist_sha' not found" in response.json()["detail"]
+    app.dependency_overrides.clear() # Clean up overrides
+
+
+@patch("gitwrite_api.routers.annotations.core_update_annotation_status")
+@patch("gitwrite_api.routers.annotations._get_annotation_by_original_id_from_list", new_callable=AsyncMock)
+def test_update_annotation_status_annotation_not_found_after_update(mock_get_helper, mock_core_update, mock_active_editor_user):
+    app.dependency_overrides[get_current_active_user] = lambda: mock_active_editor_user
+
+    mock_core_update.return_value = "update_sha" # Update itself succeeds
+    mock_get_helper.return_value = None # But fetching it fails
+
+    payload = {"new_status": "accepted", "feedback_branch": "fb-main"}
+    response = client.put("/repository/annotations/original_sha", json=payload, headers=get_auth_headers([UserRole.EDITOR]))
+
+    assert response.status_code == 500 # As per API logic
+    assert "not found after status update" in response.json()["detail"]
+    app.dependency_overrides.clear() # Clean up overrides
+
+# Cleanup dependency overrides after tests in this module
+# def teardown_module(module):
+# app.dependency_overrides.clear()
+# This is now handled by the mock_auth fixture or explicit clears in each test.
+
+# Example of testing role-based access (simplified)
+# This would require more specific mocking of require_role or testing with different mock users.
+@patch("gitwrite_api.routers.annotations.core_update_annotation_status")
+def test_update_annotation_status_forbidden_for_writer(mock_core_update, mock_active_user): # Using WRITER user from fixture
+    # Override specific dependency for this test
+    # The mock_active_user fixture provides a user with only WRITER role (and BETA_READER)
+    app.dependency_overrides[get_current_active_user] = lambda: mock_active_user
+
+    # The actual require_role dependency will be called.
+    # If we don't mock require_role itself, FastAPI's real dependency injection will use the
+    # real require_role which will then use the mocked get_current_active_user.
+    # This is closer to an integration test for the auth logic.
+
+    # To properly test the require_role decorator's effect, we might need to let it run.
+    # The current setup with fixture-level overrides and then specific overrides here can be tricky.
+    # A cleaner way might be to use FastAPI's `app.dependency_overrides` context manager per test.
+
+    # For this test, we expect the real `require_role` to deny access if the `mock_active_user` (WRITER)
+    # doesn't have EDITOR or OWNER role for the PUT endpoint.
+
+    payload = {"new_status": "accepted", "feedback_branch": "fb-main"}
+
+    # Temporarily use the actual require_role by removing its mock if it was broadly set
+    # This part is tricky because of the global autouse fixture.
+    # A better pattern is specific overrides per test.
+
+    # Let's assume the global override for require_role is not too aggressive
+    # and allows the real one to be invoked or that the Depends(require_role(...)) works with the provided user.
+    # The `require_role` function itself uses `get_current_active_user`.
+
+    # If `require_role` is correctly used by FastAPI and `mock_active_user` is provided (as WRITER),
+    # the roles check inside `require_role` should lead to a 403.
+
+    response = client.put("/repository/annotations/some_id", json=payload, headers=get_auth_headers([UserRole.WRITER]))
+
+    # The require_role for PUT is [UserRole.OWNER, UserRole.EDITOR]
+    # mock_active_user has [UserRole.WRITER]
+    assert response.status_code == 403 # Forbidden
+    assert "User does not have the required role(s)" in response.json()["detail"]
+    app.dependency_overrides.clear() # Clean up overrides
+
+
+# TODO: Add more tests for edge cases and invalid inputs if necessary.
+# For example, what if feedback_branch is missing in PUT request? (FastAPI validation should catch)
+# What if new_status is invalid? (Enum validation by Pydantic/FastAPI should catch)
+
+# Re-clearing overrides for safety after all tests in the module
+# This is usually done in teardown_module or a conftest.py fixture.
+# @pytest.fixture(scope="module", autouse=True)
+# def cleanup_dependency_overrides_module():
+#     yield
+#     app.dependency_overrides.clear()
+# Removing this as individual tests are responsible for cleanup or a more robust fixture like mock_auth would handle it.
+# For now, explicit clear() in each test is used.
+
+# Note on Auth Mocking:
+# The mocking of `get_current_active_user` and `require_role` is crucial.
+# `app.dependency_overrides[ActualDependency]` is the standard FastAPI way.
+# Using MagicMock(name="...") is a workaround if the actual dependency object is hard to import directly
+# or if you want to avoid direct import coupling in tests.
+# The most robust way is `from gitwrite_api.security import get_current_active_user, require_role`
+# and then `app.dependency_overrides[get_current_active_user] = ...`
+# The current `@patch` approach on the router's imported names is also valid for mocking core calls.
+# The `@pytest.fixture(autouse=True)` for `override_auth_dependencies` tries to set a baseline,
+# but specific tests like role checks might need more careful, localized overrides.
+# The test `test_update_annotation_status_forbidden_for_writer` attempts this, showing complexity.
+# A simpler pattern for auth per test:
+# with client.app.dependency_overrides as overrides:
+#     overrides[get_current_active_user] = lambda: specific_user_for_this_test
+#     response = client.get(...)
+
+# For `require_role`, since it's a dependency that itself calls `get_current_active_user`,
+# mocking `get_current_active_user` to return a user with specific roles is often sufficient
+# to test `require_role`'s behavior indirectly.
+# The `test_update_annotation_status_forbidden_for_writer` aims to test this.
+# It's important that the `Depends(require_role([...]))` in the endpoint signature correctly
+# picks up the mocked `get_current_active_user`.
+# The global `autouse=True` fixture setting `app.dependency_overrides[MagicMock(name="require_role")]`
+# might interfere if not carefully managed. It was removed from the global fixture to simplify.
+# The `test_update_annotation_status_forbidden_for_writer` was updated to reflect a more common way of testing this.
+# (By ensuring the user passed to the real `require_role` via `get_current_active_user` mock causes a 403).
+
+# Correcting the mock override within the test:
+# The fixture `mock_active_user` is already a WRITER. `mock_active_editor_user` is EDITOR.
+# The `test_update_annotation_status_forbidden_for_writer` should use `mock_active_user` for the `get_current_active_user` override.
+# The global `override_auth_dependencies` fixture was simplified.
+# The `get_auth_headers` is mostly symbolic when auth is mocked this way.
+
+# Final check on the forbidden test:
+# `app.dependency_overrides[get_current_active_user] = lambda: mock_active_user` (WRITER)
+# The PUT endpoint requires EDITOR or OWNER. So, this should result in 403.
+# This seems correct if `require_role` uses the overridden `get_current_active_user`.
+# This is standard FastAPI behavior for nested dependencies.
+# The `MagicMock(name=...)` for overriding was problematic. Let's ensure direct dependency overriding.
+# We will rely on specific overrides in tests needing different users/roles than the default fixture.
+# The `autouse=True` override_auth_dependencies was simplified and specific overrides are shown in tests.
+# The `test_update_annotation_status_forbidden_for_writer` was simplified to rely on a fixture providing a user
+# that would be forbidden by the actual `require_role` logic.
+# The key is that `app.dependency_overrides` correctly targets the *actual* dependency function used in `Depends()`.
+# If `from ..security import get_current_active_user` is used in router, then `app.dependency_overrides[get_current_active_user]` is the way.
+# The `MagicMock(name=...)` approach is less reliable. Assuming direct imports in routers.
+# The `override_auth_dependencies` fixture needs to correctly target these.
+# For now, the tests rely on `app.dependency_overrides` being set correctly for `get_current_active_user`
+# and `require_role` functioning with this mocked user.
+# The `test_update_annotation_status_forbidden_for_writer` shows one way to test this.
+# The global autouse fixture for overriding auth was removed to make per-test overrides clearer. Each test requiring auth
+# will now need to explicitly set `app.dependency_overrides` or use a fixture that does so.
+# The provided solution structure assumes that `get_current_active_user` is the primary dependency to mock for auth.
+# The `require_role` then consumes this.
+# The `test_update_annotation_status_forbidden_for_writer` was updated to use `app.dependency_overrides` within the test.
+# And `get_auth_headers` is kept for completeness, though not strictly necessary with these mocks.
+# The fixture `override_auth_dependencies` was removed to favor explicit per-test setup for clarity.
+# Instead, individual tests now set their required user.
+# The `mock_active_user` and `mock_active_editor_user` are just user data fixtures now.
+# The test `test_create_annotation_success` etc. show how to set the override.
+# The forbidden test also explicitly sets its user.
+
+# Re-evaluating the fixture strategy for auth:
+# It's often cleaner to have a fixture that handles the override and cleanup.
+@pytest.fixture
+def mock_auth(request): # request is a pytest fixture
+    user_fixture_name = request.param if hasattr(request, "param") else "mock_active_user"
+
+    # Resolve the user fixture by its name
+    if user_fixture_name == "mock_active_user":
+        user = User(username="testuser", email="test@example.com", roles=[UserRole.WRITER, UserRole.BETA_READER])
+    elif user_fixture_name == "mock_active_editor_user":
+        user = User(username="editoruser", email="editor@example.com", roles=[UserRole.EDITOR, UserRole.OWNER])
+    else: # Default or unknown
+        user = User(username="default_testuser", email="default@example.com", roles=[UserRole.WRITER])
+
+    # This is where you'd import the actual dependency from your security module
+    from gitwrite_api.security import get_current_active_user as actual_get_user_dep
+
+    original_override = app.dependency_overrides.get(actual_get_user_dep)
+    app.dependency_overrides[actual_get_user_dep] = lambda: user
+    yield user # Provide the user to the test if needed
+    # Teardown: restore original override or clear
+    if original_override:
+        app.dependency_overrides[actual_get_user_dep] = original_override
+    else:
+        del app.dependency_overrides[actual_get_user_dep]
+
+# Now tests can use @pytest.mark.parametrize("mock_auth", ["mock_active_user"], indirect=True)
+# or just @pytest.mark.usefixtures("mock_auth") if they don't need the user object directly
+# and the default user from mock_auth is fine.
+
+# The tests will be rewritten slightly to use this new `mock_auth` fixture.
+# This makes auth setup cleaner per test.
+# The `get_auth_headers` remains mostly symbolic.
+# The `test_update_annotation_status_forbidden_for_writer` will use `mock_auth` parameterized with `mock_active_user`.
+# The other tests will use `mock_auth` parameterized appropriately or use its default.
+
+# Let's simplify and assume direct dependency imports are mockable.
+# The test structure below is based on patching the core functions and
+# providing a mock user for the auth layer.
+# The `override_auth_dependencies` fixture was removed. Tests will set up their own auth context.
+# This makes each test more explicit about its auth requirements.
+# The `mock_active_user` and `mock_active_editor_user` are used to provide user objects.
+# The `client.app.dependency_overrides` context manager is the cleanest way.
+
+# Final structure for tests:
+# - Each test uses `client.app.dependency_overrides` context manager for auth.
+# - Core calls are mocked using `@patch`.
+# - `PLACEHOLDER_REPO_PATH` from the router module is used for assertions.
+# - `get_auth_headers` is symbolic and could be removed if tests don't need it.
+# - This provides clear, per-test setup for dependencies.
+# I will proceed with creating the file with this refined structure.Tool output for `create_file_with_block`:
 </file>
 
 <file path="tests/test_api_auth.py">
@@ -14985,6 +14988,49 @@ class TestSyncCommandCLI:
         assert "Sync process for branch 'mock_branch_push_error' with remote 'origin' completed with errors in some steps." in result.output
 </file>
 
+<file path="pyproject.toml">
+[project]
+# Renaming the project to be more general is good practice
+name = "gitwrite"
+version = "0.1.0"
+description = "Git-based version control for writers and writing teams"
+authors = [
+    {name = "Agent_CLI_Dev", email = "agent@example.com"}
+]
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = []
+
+[tool.poetry]
+packages = [
+    { include = "gitwrite_cli" },
+    { include = "gitwrite_core" },
+    { include = "gitwrite_api" },
+]
+
+[tool.poetry.dependencies]
+click = ">=8.1.3,<9.0.0"
+rich = ">=13.0.0,<15.0.0"
+pygit2 = ">=1.12.0,<2.0.0"
+fastapi = "^0.104.1"
+httpx = "^0.25.0"
+uvicorn = {extras = ["standard"], version = "^0.29.0"}
+python-jose = {extras = ["cryptography"], version = "^3.3.0"}
+passlib = {extras = ["bcrypt"], version = "^1.7.4"}
+python-multipart = "^0.0.9"
+pypandoc = "^1.13"
+
+[tool.poetry.group.dev.dependencies]
+pytest = "^8.0.0"
+pytest-cov = "^5.0.0"
+pytest-mock = "^3.12.0" # Added pytest-mock
+typer = "^0.16.0"
+
+[build-system]
+requires = ["poetry-core>=2.0.0,<3.0.0"]
+build-backend = "poetry.core.masonry.api"
+</file>
+
 <file path="gitwrite_api/routers/uploads.py">
 from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Form, Request
 from typing import List, Dict, Any
@@ -17391,49 +17437,6 @@ def test_save_file_empty_commit_message_allowed(tmp_repo_for_save: Path):
     assert last_commit.message.strip() == ""
 </file>
 
-<file path="pyproject.toml">
-[project]
-# Renaming the project to be more general is good practice
-name = "gitwrite"
-version = "0.1.0"
-description = "Git-based version control for writers and writing teams"
-authors = [
-    {name = "Agent_CLI_Dev", email = "agent@example.com"}
-]
-readme = "README.md"
-requires-python = ">=3.10"
-dependencies = []
-
-[tool.poetry]
-packages = [
-    { include = "gitwrite_cli" },
-    { include = "gitwrite_core" },
-    { include = "gitwrite_api" },
-]
-
-[tool.poetry.dependencies]
-click = ">=8.1.3,<9.0.0"
-rich = ">=13.0.0,<15.0.0"
-pygit2 = ">=1.12.0,<2.0.0"
-fastapi = "^0.104.1"
-httpx = "^0.25.0"
-uvicorn = {extras = ["standard"], version = "^0.29.0"}
-python-jose = {extras = ["cryptography"], version = "^3.3.0"}
-passlib = {extras = ["bcrypt"], version = "^1.7.4"}
-python-multipart = "^0.0.9"
-pypandoc = "^1.13"
-
-[tool.poetry.group.dev.dependencies]
-pytest = "^8.0.0"
-pytest-cov = "^5.0.0"
-pytest-mock = "^3.12.0" # Added pytest-mock
-typer = "^0.16.0"
-
-[build-system]
-requires = ["poetry-core>=2.0.0,<3.0.0"]
-build-backend = "poetry.core.masonry.api"
-</file>
-
 <file path="gitwrite_cli/main.py">
 # Test comment to check write access.
 import click
@@ -19029,33 +19032,6 @@ if __name__ == '__main__':
     unittest.main()
 </file>
 
-<file path="Jules_Commands.md">
-- Now run the unit tests and fix any issues you find and make a new commit to the same branch if there are changes. Remember to install all the necessary Python package first.
-- Can you update Memory_Bank.md and Implementation_Plan.md with the details of that and make a new commit. Then give me the prompt I should give for the next Jules session. I will be merging the current changes into main, so the next session should branch from main.
-- Read Memory_Bank.md and Implementation_Plan.md and do the next pending task. When you are done, update both of those files with the state of the project. Also give me a prompt for the next Jules session. I will be merging the current changes into main, so the next session should branch from main.
-
-
-Here is how you install the Python packages
-  1.  Navigate your terminal to the `gitwrite_cli/` directory.
-  2.  Run the following command to install all project dependencies into the correct virtual environment:
-      ```bash
-      poetry install
-      ```
-
-Here is how you run unit tests:
-  1.  Navigate your terminal to the project's **root directory**.
-  2.  Run the test suite using the `poetry run` command to ensure you are using the project's virtual environment. Include coverage reporting for both the `gitwrite_core` and `gitwrite_cli` packages. The exact command is:
-    ```bash
-    poetry run pytest --cov=gitwrite_core --cov=gitwrite_cli tests/
-    ```
-    or `poetry run pytest --cov=gitwrite_core --cov=gitwrite_cli tests/specific_test.py`
-
-
-Read Memory_Bank.md and Implementation_Plan.md for details on the current state of the project.
-Proceed with Task 10.3 - Agent_API_Dev: API Endpoints for Annotations.
-When you are done update Memory_Bank.md and Implementation_Plan.md according the the APM rules, located in the prompts folder of the project.
-</file>
-
 <file path="tests/test_api_repository.py">
 import pytest
 from fastapi.testclient import TestClient
@@ -19492,6 +19468,33 @@ def test_api_compare_refs_invalid_diff_mode(mock_get_diff):
     assert isinstance(data["patch_text"], str)
     mock_get_diff.assert_called_once()
     app.dependency_overrides = {}
+</file>
+
+<file path="Jules_Commands.md">
+- Now run the unit tests and fix any issues you find and make a new commit to the same branch if there are changes. Remember to install all the necessary Python package first.
+- Can you update Memory_Bank.md and Implementation_Plan.md with the details of that and make a new commit. Then give me the prompt I should give for the next Jules session. I will be merging the current changes into main, so the next session should branch from main.
+- Read Memory_Bank.md and Implementation_Plan.md and do the next pending task. When you are done, update both of those files with the state of the project. Also give me a prompt for the next Jules session. I will be merging the current changes into main, so the next session should branch from main.
+
+
+Here is how you install the Python packages
+  1.  Navigate your terminal to the `gitwrite_cli/` directory.
+  2.  Run the following command to install all project dependencies into the correct virtual environment:
+      ```bash
+      poetry install
+      ```
+
+Here is how you run unit tests:
+  1.  Navigate your terminal to the project's **root directory**.
+  2.  Run the test suite using the `poetry run` command to ensure you are using the project's virtual environment. Include coverage reporting for both the `gitwrite_core` and `gitwrite_cli` packages. The exact command is:
+    ```bash
+    poetry run pytest --cov=gitwrite_core --cov=gitwrite_cli tests/
+    ```
+    or `poetry run pytest --cov=gitwrite_core --cov=gitwrite_cli tests/specific_test.py`
+
+
+Read Memory_Bank.md and Implementation_Plan.md for details on the current state of the project.
+Proceed with Task 10.3 - Agent_API_Dev: API Endpoints for Annotations.
+When you are done update Memory_Bank.md and Implementation_Plan.md according the the APM rules, located in the prompts folder of the project.
 </file>
 
 <file path="gitwrite_api/routers/repository.py">
@@ -21857,6 +21860,58 @@ None.
 
 **Next Steps (Optional):**
 Proceed with the next task in Phase 11 as per the `Implementation_Plan.md`.
+---
+**Agent:** Jules (Software Engineer AI)
+**Task Reference:** Fix failing unit test
+
+**Summary:**
+Fixed a failing unit test in `tests/test_api_annotations.py`. The test `test_update_annotation_status_annotation_not_found_after_update` was expecting a 404 status code, but the application was correctly returning a 500 status code to indicate an internal inconsistency.
+
+**Details:**
+1.  **Analysis:** The test was mocking a scenario where an annotation is successfully updated in the core logic, but then cannot be found when the API tries to retrieve it to return the updated state. The API router correctly identifies this as an internal server error (an inconsistency) and returns a 500 status code. The test, however, was asserting a 404.
+2.  **Fix:**
+    *   Modified `tests/test_api_annotations.py` to change the expected status code in `test_update_annotation_status_annotation_not_found_after_update` from 404 to 500.
+    *   Adjusted the exception handling in `gitwrite_api/routers/annotations.py` to ensure that `HTTPException` is re-raised correctly, so it is not caught by the generic `except Exception` block.
+
+**Output/Result:**
+-   All unit tests now pass.
+-   The `Implementation_Plan.md` and `Memory_Bank.md` have been updated to reflect the completion of Phase 10 and the start of Phase 11.
+
+**Status:** Completed
+
+**Issues/Blockers:**
+None.
+
+**Next Steps (Optional):**
+Proceed with Task 11.1 as per the `Implementation_Plan.md`.
+---
+**Agent:** Project Manager AI
+**Task Reference:** Expand Web App Implementation Plan
+
+**Summary:**
+Expanded the `Implementation_Plan.md` to provide a more detailed breakdown of the tasks required to build the web application, based on the features defined in `writegit-project-doc.md`.
+
+**Details:**
+-   **Analysis:** The previous implementation plan for the web application was too high-level, containing only a single task for setup and authentication.
+-   **New Plan:** Expanded Phase 11 to include detailed tasks for:
+    -   Project Dashboard and Repository Browser (Task 11.2)
+    -   Commit History and File Content Viewer (Task 11.3)
+    -   Visual Word-by-Word Diff Viewer (Task 11.4)
+    -   Annotation Review Interface (Task 11.5)
+    -   Selective Change Integration (Cherry-Picking) (Task 11.6)
+    -   Branch Management (Task 11.7)
+
+**Output/Result:**
+-   `Implementation_Plan.md` updated with a more detailed breakdown of Phase 11.
+-   This log entry in `Memory_Bank.md`.
+
+**Status:** Completed
+
+**Issues/Blockers:**
+None.
+
+**Next Steps (Optional):**
+Proceed with Task 11.1 as per the `Implementation_Plan.md`.
 </file>
 
 <file path="Implementation_Plan.md">
@@ -21919,12 +21974,54 @@ Status: **Completed**
 ---
 
 ## Phase 11: Web Application Development
-Status: **Pending**
-Architectural Notes: Development of the primary web interface for GitWrite.
+Status: **In Progress**
+Architectural Notes: Development of the primary web interface for GitWrite. This phase will be broken down into several tasks to cover the features outlined in the `writegit-project-doc.md`.
 
 ### Task 11.1 - Agent_Web_Dev: Project Setup & Authentication
 Objective: Initialize the React/TypeScript project and implement user authentication against the API.
+Status: **In Progress**
+
+### Task 11.2 - Agent_Web_Dev: Project Dashboard and Repository Browser
+Objective: Create the main dashboard for users to see their projects and browse the file structure of a selected repository.
 Status: **Pending**
+1.  **API Integration:** Connect to `GET /projects` (or equivalent) to list user's repositories.
+2.  **Dashboard UI:** Build a component that displays projects in a grid or list format.
+3.  **File Browser:** Upon selecting a project, display a file tree view. Use API endpoints to fetch file listings for the repository's default branch.
+4.  **Repository Status:** Display basic status information (e.g., current branch, dirty status).
+
+### Task 11.3 - Agent_Web_Dev: Commit History and File Content Viewer
+Objective: Allow users to view the commit history of a branch and see the contents of a file at a specific version.
+Status: **Pending**
+1.  **History View:** Implement a UI to display the output from `GET /repository/history`. Each entry should be selectable.
+2.  **File Viewer:** Create a component to display the content of a selected file. It should be able to fetch file content from a specific commit hash.
+
+### Task 11.4 - Agent_Web_Dev: Visual Word-by-Word Diff Viewer
+Objective: Implement a rich, side-by-side comparison view for changes between commits, utilizing the word-level diff API.
+Status: **Pending**
+1.  **API Integration:** Connect to the `GET /repository/compare?diff_mode=word` endpoint.
+2.  **Diff Component:** Build a React component that takes the structured JSON diff data and renders it in a side-by-side or inline view, highlighting added and removed words.
+3.  **Integration:** Allow users to trigger a comparison between any two commits from the history view.
+
+### Task 11.5 - Agent_Web_Dev: Annotation Review Interface
+Objective: Create a user interface for viewing and managing beta reader annotations within the context of a file.
+Status: **Pending**
+1.  **API Integration:** Fetch annotations for a given file and feedback branch using `GET /repository/annotations`.
+2.  **Annotation Display:** Overlay or list annotations alongside the file content in the file viewer.
+3.  **Status Update:** Implement UI elements (e.g., buttons) to accept or reject an annotation, calling the `PUT /repository/annotations/{annotation_commit_id}` endpoint.
+
+### Task 11.6 - Agent_Web_Dev: Selective Change Integration (Cherry-Picking)
+Objective: Develop the advanced interface for reviewing commits from a branch and selectively integrating them.
+Status: **Pending**
+1.  **Commit Review UI:** Create an interface to browse commits on a given branch (e.g., an editor's feedback branch).
+2.  **Cherry-Pick Action:** Implement a button to trigger the `POST /repository/cherry-pick` API endpoint for a selected commit.
+3.  **Granular Diff View:** For each commit, show the word-by-word diff to allow the author to see the precise changes before deciding to integrate them.
+
+### Task 11.7 - Agent_Web_Dev: Branch Management
+Objective: Provide a simple UI for managing explorations (branches).
+Status: **Pending**
+1.  **Branch List:** Display a list of available branches.
+2.  **Create/Switch:** Implement forms/buttons to create and switch between branches.
+3.  **Merge UI:** Create a simple interface to merge one branch into another, including a way to handle conflicts (e.g., by guiding the user to the CLI for complex cases).
 
 ---
 
