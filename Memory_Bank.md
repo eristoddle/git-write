@@ -268,3 +268,103 @@ None.
 
 **Next Steps (Optional):**
 Jules to execute Task 11.1: Web App - Project Setup & Authentication.
+---
+**Agent:** Jules (Software Engineer AI)
+**Task Reference:** Task 11.1 - Web App - Project Setup & Authentication
+
+**Summary:**
+Successfully initialized the React/TypeScript frontend project (`gitwrite-web`) and implemented a functional user authentication flow connecting to the existing API. This involved setting up the project structure, installing necessary dependencies, integrating the local `gitwrite-sdk`, creating login and dashboard components, and implementing protected routing.
+
+**Details:**
+1.  **Project Directory & Initialization:**
+    *   Created a new top-level directory `gitwrite-web`.
+    *   Initialized a new React project using Vite with the TypeScript template within `gitwrite-web` (`npm create vite@latest . -- --template react-ts`).
+    *   Installed initial npm dependencies.
+
+2.  **Dependencies Installed:**
+    *   `axios`: For making API calls (though `gitwrite-sdk` handles this, it's a common utility).
+    *   `react-router-dom`: For handling application routing.
+    *   `gitwrite-sdk`: Linked as a local file dependency (`file:../gitwrite_sdk`) in `package.json` and installed.
+
+3.  **Login Flow (`gitwrite-web/src/components/Login.tsx`):**
+    *   Created a `Login.tsx` component with username and password input fields and a login button.
+    *   On form submission:
+        *   Instantiates `GitWriteClient` from the `gitwrite-sdk` (API assumed at `http://localhost:8000`).
+        *   Calls `client.login(username, password)`.
+        *   On successful authentication, stores the JWT in `localStorage`.
+        *   Redirects the user to `/dashboard` using `useNavigate` from `react-router-dom`.
+        *   Displays an error message on login failure.
+    *   Code Snippet (`Login.tsx` - simplified):
+        ```tsx
+        import React, { useState } from 'react';
+        import { GitWriteClient } from 'gitwrite-sdk';
+        import { useNavigate } from 'react-router-dom';
+
+        const Login: React.FC = () => {
+          // ... state for username, password, error
+          const navigate = useNavigate();
+          const handleSubmit = async (event: React.FormEvent) => {
+            event.preventDefault();
+            const client = new GitWriteClient('http://localhost:8000');
+            try {
+              const response = await client.login(username, password);
+              if (response.access_token) {
+                localStorage.setItem('jwtToken', response.access_token);
+                navigate('/dashboard');
+              } // ... error handling
+            } catch (err) {
+              // ... error handling
+            }
+          };
+          return (/* ... form JSX ... */);
+        };
+        export default Login;
+        ```
+
+4.  **Protected Routing (`gitwrite-web/src/App.tsx`):**
+    *   Created a placeholder `Dashboard.tsx` component.
+    *   Set up routing in `App.tsx` using `react-router-dom`.
+    *   Implemented a `ProtectedRoute` component that checks for the JWT in `localStorage`.
+        *   If the token exists, it renders the child route (e.g., `Dashboard`).
+        *   If not, it redirects to `/login`.
+    *   The `/dashboard` route is wrapped by `ProtectedRoute`.
+    *   The root path `/` redirects to `/login`.
+    *   Code Snippet (`App.tsx` - routing structure):
+        ```tsx
+        import { BrowserRouter as Router, Routes, Route, Navigate, Outlet } from 'react-router-dom';
+        import Login from './components/Login';
+        import Dashboard from './components/Dashboard';
+
+        const ProtectedRoute: React.FC = () => {
+          const isAuthenticated = !!localStorage.getItem('jwtToken');
+          return isAuthenticated ? <Outlet /> : <Navigate to="/login" replace />;
+        };
+
+        const App: React.FC = () => (
+          <Router>
+            <Routes>
+              <Route path="/login" element={<Login />} />
+              <Route element={<ProtectedRoute />}>
+                <Route path="/dashboard" element={<Dashboard />} />
+              </Route>
+              <Route path="/" element={<Navigate to="/login" replace />} />
+            </Routes>
+          </Router>
+        );
+        export default App;
+        ```
+
+**Output/Result:**
+-   A new `gitwrite-web` directory at the project root containing a runnable React/Vite project.
+-   A functional login page at `/login` that authenticates against the API (assuming the API is running and accessible).
+-   A protected `/dashboard` route accessible only after successful login.
+-   `Implementation_Plan.md` updated to mark Task 11.1 as complete.
+
+**Status:** Completed
+
+**Issues/Blockers:**
+-   Initial difficulties with `run_in_bash_session` context and `cd` commands were resolved by chaining commands with `&&` or using `npm --prefix`.
+-   The login functionality relies on the API server running at `http://localhost:8000`. This should be documented for developers running the web app.
+
+**Next Steps (Optional):**
+Proceed with Task 11.2: Web App - Project Dashboard and Repository Browser.
