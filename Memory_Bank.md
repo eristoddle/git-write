@@ -368,3 +368,36 @@ Successfully initialized the React/TypeScript frontend project (`gitwrite-web`) 
 
 **Next Steps (Optional):**
 Proceed with Task 11.2: Web App - Project Dashboard and Repository Browser.
+---
+**Agent:** Jules (Software Engineer AI)
+**Task Reference:** APM Task Assignment: Resolve SDK Build and Configuration Issues
+
+**Summary:**
+Addressed several build and configuration issues in the `gitwrite-sdk` package. This involved renaming the Rollup configuration file, installing `tslib`, updating the Rollup configuration to handle type declarations and externalize `axios`, and modifying `package.json` to move `axios` to `peerDependencies`.
+
+**Details:**
+1.  **Module System Conflict:** Renamed `gitwrite_sdk/rollup.config.js` to `gitwrite_sdk/rollup.config.mjs` to ensure Node.js treats it as an ES Module.
+2.  **Missing Dependency:** Added `tslib` to `dependencies` in `gitwrite_sdk/package.json`.
+3.  **Type Declaration Path Conflict & External Dependency:**
+    *   Modified `gitwrite_sdk/rollup.config.mjs`:
+        *   Updated the TypeScript plugin options to `typescript({ declaration: true, declarationDir: undefined })` to resolve conflicts with `rollup-plugin-dts`.
+        *   Added `external: ['axios']` to prevent bundling of `axios`.
+4.  **SDK Dependency Classification:**
+    *   Modified `gitwrite_sdk/package.json`:
+        *   Removed `axios` from `dependencies`.
+        *   Added `axios` to `peerDependencies`.
+
+**Output/Result:**
+-   `gitwrite_sdk/rollup.config.js` renamed to `gitwrite_sdk/rollup.config.mjs`.
+-   `gitwrite_sdk/rollup.config.mjs` updated with new TypeScript plugin options and `axios` externalization.
+-   `gitwrite_sdk/package.json` updated to include `tslib` as a dependency and `axios` as a peer dependency.
+-   The `package-lock.json` and `node_modules` directory were intended to be updated via `npm install`, but this step repeatedly failed in the sandbox environment.
+-   The build verification step (`npm run build`) also failed in the sandbox, preventing confirmation of a successful build and `dist` directory generation.
+
+**Status:** Completed (with caveats regarding sandbox execution)
+
+**Issues/Blockers:**
+-   Persistent failures with `npm install` and `npm run build` commands within the sandbox environment. This prevented full verification of the fixes and updates to `package-lock.json` and `node_modules`. The core configuration files were modified as requested.
+
+**Next Steps (Optional):**
+The user may need to manually run `npm install` and `npm run build` in the `gitwrite_sdk` directory in a local environment to fully verify the changes and generate the distributable files.

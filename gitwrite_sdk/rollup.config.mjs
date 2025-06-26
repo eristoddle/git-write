@@ -2,6 +2,7 @@ import typescript from '@rollup/plugin-typescript';
 import { dts } from 'rollup-plugin-dts';
 
 export default [
+  // This is the first object in the exported array in rollup.config.mjs
   {
     input: 'src/index.ts',
     output: [
@@ -16,7 +17,8 @@ export default [
         sourcemap: true,
       },
     ],
-    plugins: [typescript()],
+    plugins: [typescript({ declaration: true, declarationDir: undefined })],
+    external: ['axios'],
   },
   {
     input: 'src/index.ts',
