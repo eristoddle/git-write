@@ -184,18 +184,27 @@ GitWrite is built as a multi-component platform:
 git clone https://github.com/eristoddle/git-write.git
 cd git-write
 
-# Set up Python environment
-python -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
+# Start the api server from the root directory
+poetry run uvicorn gitwrite_api.main:app --reload
 
-# Install dependencies (when available)
-pip install -r requirements.txt  # or requirements-dev.txt for development
-
-# Run tests (when available)
-pytest
-
-# Start development (project-specific commands will be documented as they're implemented)
+# Run the frontend app
+cd gitwrite-web && npm run dev
 ```
+
+The app has a fake database for dev login:
+
+- Owner:
+  - username: johndoe
+  - password: secret
+- Editor:
+  - username: editoruser
+  - password: editpass
+- Writer:
+  - username: writeruser
+  - password: writerpass
+- Beta Reader:
+  - username: betauser
+  - password: betapass
 
 *Note: Development setup instructions will be updated as the project structure is finalized.*
 
