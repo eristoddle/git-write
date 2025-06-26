@@ -430,3 +430,41 @@ Resolved a Rollup build error related to TypeScript declaration file generation 
 
 **Next Steps (Optional):**
 The user should run `npm install && npm run build` in the `gitwrite_sdk` directory in their local environment to confirm the resolution of the build error and the correct generation of the `dist` folder.
+---
+**Agent:** Jules (Software Engineer AI)
+**Task Reference:** Fix API Login Request Format
+
+**Summary:**
+Modified the frontend login component (`gitwrite-web/src/components/Login.tsx`) to correctly pass credentials to the `gitwrite-sdk`'s `client.login` method. The method expects a single object argument (`{ username, password }`) rather than separate arguments.
+
+**Details:**
+1.  **Initial Analysis:** The task description indicated that the `Login.tsx` component was likely using `client.post()` which sends JSON, while the API's `/token` endpoint (using `OAuth2PasswordRequestForm`) expects `application/x-www-form-urlencoded` data. The `client.login()` method from the SDK is designed to handle this correctly.
+2.  **Code Inspection (`gitwrite-web/src/components/Login.tsx`):**
+    *   Found that `client.login(username, password)` was already being used.
+    *   However, the task description specified that `client.login()` expects a single object: `client.login({ username, password })`.
+3.  **SDK Exploration (Attempted):**
+    *   Attempted to verify the `client.login()` signature by inspecting the `gitwrite-sdk` source.
+    *   The `gitwrite-sdk/src` directory and the root `gitwrite-sdk` directory appeared empty or lacked the necessary source files for direct inspection of the method signature.
+4.  **Correction in `Login.tsx`:**
+    *   Based on the task description's guidance for the correct `client.login()` signature, the call in `gitwrite-web/src/components/Login.tsx` was changed from:
+        ```typescript
+        const response = await client.login(username, password);
+        ```
+        to:
+        ```typescript
+        const response = await client.login({ username, password });
+        ```
+    *   This ensures the credentials are passed to the SDK login method in the expected object format.
+
+**Output/Result:**
+-   The `handleSubmit` function in `gitwrite-web/src/components/Login.tsx` was updated to call `client.login({ username, password })`.
+-   This change aligns the frontend login request with the expected format for the SDK's `login` method, which should then correctly format the data as `application/x-www-form-urlencoded` for the API.
+
+**Status:** Completed
+
+**Issues/Blockers:**
+-   Unable to directly verify the `gitwrite-sdk`'s `client.login` method signature due to missing/inaccessible SDK source files in the provided environment. The fix relies on the accuracy of the task description regarding the method's expected parameters.
+
+**Next Steps (Optional):**
+-   Verify the login functionality by running the web application and API.
+-   If the `gitwrite-sdk` source becomes available, confirm the `client.login` signature.

@@ -15,7 +15,7 @@ const Login: React.FC = () => {
     const client = new GitWriteClient('http://localhost:8000'); // Assuming API is running on port 8000
 
     try {
-      const response = await client.login(username, password);
+      const response = await client.login({ username, password });
       if (response.access_token) {
         localStorage.setItem('jwtToken', response.access_token);
         navigate('/dashboard');
