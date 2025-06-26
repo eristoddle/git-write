@@ -133,12 +133,7 @@ gitwrite cherry-pick selected-feedback-commits
 
 ## 📚 Documentation
 
-- **[User Guide](docs/user-guide.md)** - Complete guide for writers
-- **[Editorial Workflows](docs/editorial-workflows.md)** - Guide for editors and publishers
-- **[API Documentation](docs/api.md)** - REST API reference
-- **[SDK Documentation](docs/sdk.md)** - TypeScript SDK guide
-- **[Git Integration](docs/git-integration.md)** - How GitWrite leverages Git
-- **[Contributing](CONTRIBUTING.md)** - How to contribute to GitWrite
+- Coming Soon!
 
 ## 🏗️ Architecture
 
@@ -229,7 +224,6 @@ We welcome contributions! Please see our [Contributing Guide](CONTRIBUTING.md) f
 ### Ways to Contribute
 
 - **🐛 Bug Reports**: Found a bug? [Open an issue](https://github.com/eristoddle/git-write/issues)
-- **💡 Feature Requests**: Have an idea? [Start a discussion](https://github.com/eristoddle/git-write/discussions)
 - **📝 Documentation**: Help improve our docs
 - **🔧 Code**: Submit pull requests for bug fixes or features
 - **🧪 Testing**: Help test new features and report issues
@@ -261,10 +255,8 @@ We welcome contributions! Please see our [Contributing Guide](CONTRIBUTING.md) f
 
 GitWrite integrates with popular writing and development tools:
 
-- **Writing Tools**: Scrivener, Ulysses, Bear, Notion
 - **Git Hosting**: GitHub, GitLab, Bitbucket, SourceForge
 - **Export Formats**: Pandoc integration for EPUB, PDF, DOCX, HTML
-- **Editorial Tools**: Track Changes, Google Docs, Microsoft Word
 - **Publishing Platforms**: Integration APIs for self-publishing platforms
 
 ## 📊 Roadmap
@@ -299,13 +291,6 @@ GitWrite integrates with popular writing and development tools:
 ## 📄 License
 
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
-
-## 🙏 Acknowledgments
-
-- **Git Community**: For creating the foundational technology that makes GitWrite possible
-- **Writing Community**: For feedback and guidance on writing workflows
-- **Open Source Contributors**: For libraries and tools that power GitWrite
-- **Beta Testers**: For helping refine the user experience
 
 ---
 
