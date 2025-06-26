@@ -241,7 +241,7 @@ def test_update_annotation_status_annotation_not_found_after_update(mock_get_hel
     payload = {"new_status": "accepted", "feedback_branch": "fb-main"}
     response = client.put("/repository/annotations/original_sha", json=payload, headers=get_auth_headers([UserRole.EDITOR]))
 
-    assert response.status_code == 404 # As per API logic
+    assert response.status_code == 500 # As per API logic
     assert "not found after status update" in response.json()["detail"]
     app.dependency_overrides.clear() # Clean up overrides
 

@@ -208,7 +208,7 @@ async def update_annotation_status(
             # and core_list_annotations is consistent.
             # It might indicate an issue or a race condition if the annotation was deleted post-update but pre-fetch.
             raise HTTPException(
-                status_code=404, # Or 500 if this implies inconsistency
+                status_code=500, # This implies inconsistency
                 detail=f"Annotation with original ID '{annotation_commit_id}' not found after status update. The update commit was '{update_commit_sha}'."
             )
 
@@ -216,6 +216,9 @@ async def update_annotation_status(
             annotation=updated_annotation,
             message=f"Annotation '{annotation_commit_id}' status updated to '{request_data.new_status.value}'. Update recorded in commit '{update_commit_sha}'."
         )
+
+    except HTTPException: # Re-raise HTTPException to avoid being caught by the generic handler
+        raise
 
     except CommitNotFoundError as e: # Raised if original annotation_commit_id is not found by core_update_annotation_status
         raise HTTPException(status_code=404, detail=f"Original annotation commit ID '{annotation_commit_id}' not found: {str(e)}")

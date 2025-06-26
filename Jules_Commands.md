@@ -20,5 +20,5 @@ Here is how you run unit tests:
 
 
 Read Memory_Bank.md and Implementation_Plan.md for details on the current state of the project.
-Proceed with Task 10.2 - Agent_Core_Dev: Core Annotation Handling.
-When you are done update Memory_Bank.md and Implementation_Plan.md according the the APM rules, located here: ./prompts
+Proceed with Task 10.3 - Agent_API_Dev: API Endpoints for Annotations.
+When you are done update Memory_Bank.md and Implementation_Plan.md according the the APM rules, located in the prompts folder of the project.
