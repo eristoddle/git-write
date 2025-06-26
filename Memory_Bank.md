@@ -191,3 +191,55 @@ None.
 
 **Next Steps (Optional):**
 Proceed with the next task in Phase 11 as per the `Implementation_Plan.md`.
+---
+**Agent:** Jules (Software Engineer AI)
+**Task Reference:** Fix failing unit test
+
+**Summary:**
+Fixed a failing unit test in `tests/test_api_annotations.py`. The test `test_update_annotation_status_annotation_not_found_after_update` was expecting a 404 status code, but the application was correctly returning a 500 status code to indicate an internal inconsistency.
+
+**Details:**
+1.  **Analysis:** The test was mocking a scenario where an annotation is successfully updated in the core logic, but then cannot be found when the API tries to retrieve it to return the updated state. The API router correctly identifies this as an internal server error (an inconsistency) and returns a 500 status code. The test, however, was asserting a 404.
+2.  **Fix:**
+    *   Modified `tests/test_api_annotations.py` to change the expected status code in `test_update_annotation_status_annotation_not_found_after_update` from 404 to 500.
+    *   Adjusted the exception handling in `gitwrite_api/routers/annotations.py` to ensure that `HTTPException` is re-raised correctly, so it is not caught by the generic `except Exception` block.
+
+**Output/Result:**
+-   All unit tests now pass.
+-   The `Implementation_Plan.md` and `Memory_Bank.md` have been updated to reflect the completion of Phase 10 and the start of Phase 11.
+
+**Status:** Completed
+
+**Issues/Blockers:**
+None.
+
+**Next Steps (Optional):**
+Proceed with Task 11.1 as per the `Implementation_Plan.md`.
+---
+**Agent:** Project Manager AI
+**Task Reference:** Expand Web App Implementation Plan
+
+**Summary:**
+Expanded the `Implementation_Plan.md` to provide a more detailed breakdown of the tasks required to build the web application, based on the features defined in `writegit-project-doc.md`.
+
+**Details:**
+-   **Analysis:** The previous implementation plan for the web application was too high-level, containing only a single task for setup and authentication.
+-   **New Plan:** Expanded Phase 11 to include detailed tasks for:
+    -   Project Dashboard and Repository Browser (Task 11.2)
+    -   Commit History and File Content Viewer (Task 11.3)
+    -   Visual Word-by-Word Diff Viewer (Task 11.4)
+    -   Annotation Review Interface (Task 11.5)
+    -   Selective Change Integration (Cherry-Picking) (Task 11.6)
+    -   Branch Management (Task 11.7)
+
+**Output/Result:**
+-   `Implementation_Plan.md` updated with a more detailed breakdown of Phase 11.
+-   This log entry in `Memory_Bank.md`.
+
+**Status:** Completed
+
+**Issues/Blockers:**
+None.
+
+**Next Steps (Optional):**
+Proceed with Task 11.1 as per the `Implementation_Plan.md`.
