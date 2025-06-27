@@ -550,3 +550,49 @@ Successfully integrated Shadcn/UI and Tailwind CSS into the `gitwrite-web` proje
 **Next Steps (Optional):**
 User to pull the `feature/ui-library-theming` branch, run `npm install && npm run dev` in `gitwrite-web`, and verify the theme toggle functionality on the dashboard.
 ---
+
+---
+**Agent:** Jules (Software Engineer AI)
+**Task Reference:** Fix PostCSS Configuration for Tailwind CSS (Follow-up to Shadcn/UI Integration)
+
+**Summary:**
+Resolved a Vite server startup error by updating the PostCSS configuration for Tailwind CSS. The error indicated that the Tailwind CSS PostCSS plugin had moved to a separate package (`@tailwindcss/postcss`).
+
+**Details:**
+1.  **Error Identification:** The Vite development server failed to start with an error message: `[plugin:vite:css] [postcss] It looks like you're trying to use \`tailwindcss\` directly as a PostCSS plugin. The PostCSS plugin has moved to a separate package, so to continue using Tailwind CSS with PostCSS you'll need to install \`@tailwindcss/postcss\` and update your PostCSS configuration.`
+
+2.  **Package Installation:**
+    *   Installed the new required package: `npm install -D @tailwindcss/postcss` in the `gitwrite-web` directory.
+
+3.  **Configuration Update (`gitwrite-web/postcss.config.js`):**
+    *   Modified `postcss.config.js` to use the new package.
+    *   Changed:
+        ```javascript
+        // Old configuration
+        plugins: {
+          tailwindcss: {},
+          autoprefixer: {},
+        }
+        ```
+        to:
+        ```javascript
+        // New configuration
+        plugins: {
+          '@tailwindcss/postcss': {},
+          autoprefixer: {},
+        }
+        ```
+
+**Output/Result:**
+-   Installed `@tailwindcss/postcss` dev dependency.
+-   Updated `gitwrite-web/postcss.config.js` to reference `'@tailwindcss/postcss'`.
+-   The Vite server is now expected to start without the PostCSS error.
+
+**Status:** Completed (Pending user verification of Vite server startup)
+
+**Issues/Blockers:**
+-   The `npm run dev` command timed out in the sandbox, as expected for a dev server. Final verification of the fix (server starting without error) will be done by the user after pulling the changes.
+
+**Next Steps (Optional):**
+User to pull the `feature/ui-library-theming` branch, run `npm install && npm run dev` in `gitwrite-web`, and confirm the Vite server starts correctly without the PostCSS error.
+---
