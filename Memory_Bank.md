@@ -659,3 +659,48 @@ Developed the project dashboard and repository browser functionalities in the `g
 -   Replace mock data fetching in frontend components with actual API calls using the SDK.
 -   Proceed with Task 11.4 (Commit History and File Content Viewer).
 ---
+**Agent:** Jules (Software Engineer AI)
+**Task Reference:** Fix Vite Import Resolution for Shadcn/UI Components
+
+**Summary:**
+Resolved a Vite import analysis error (`Failed to resolve import "@/components/ui/card"`) by adding the missing Shadcn/UI components to the `gitwrite-web` project. Path aliases were verified to be correct.
+
+**Details:**
+1.  **Error Identification:** User reported a Vite error indicating failure to resolve imports like ` "@/components/ui/card"` from `ProjectList.tsx`.
+
+2.  **Path Alias Verification:**
+    *   Checked `gitwrite-web/tsconfig.json`, `gitwrite-web/tsconfig.app.json`, and `gitwrite-web/vite.config.ts`.
+    *   Confirmed that the `@/*` alias was correctly configured to point to `./src/*`. This ruled out alias misconfiguration as the root cause.
+
+3.  **Check for Existing UI Components:**
+    *   Listed contents of `gitwrite-web/src/components/ui/`.
+    *   Found only `button.tsx` was present, indicating other components (card, table, etc.) were not added.
+
+4.  **Add Missing Shadcn/UI Components:**
+    *   Used `npx shadcn@latest add <component-name> --cwd ./gitwrite-web --yes` to add the following components:
+        *   `card`
+        *   `table`
+        *   `skeleton`
+        *   `alert`
+        *   `dropdown-menu` (proactive addition for general UI needs)
+        *   `label` (proactive, for potential form styling)
+        *   `input` (proactive, for potential form styling)
+    *   Corrected the command from `shadcn-ui@latest` to `shadcn@latest` as per CLI deprecation message.
+
+5.  **Conceptual Verification:**
+    *   Reviewed imports in `ProjectList.tsx`, `RepositoryBrowser.tsx`, `Login.tsx`, and `ThemeToggle.tsx`.
+    *   Confirmed that the newly added components would satisfy the import requirements, resolving the Vite error.
+
+**Output/Result:**
+-   Added `card.tsx`, `table.tsx`, `skeleton.tsx`, `alert.tsx`, `dropdown-menu.tsx`, `label.tsx`, and `input.tsx` to `gitwrite-web/src/components/ui/`.
+-   The Vite import resolution error should now be fixed.
+
+**Status:** Completed
+
+**Issues/Blockers:**
+None.
+
+**Next Steps (Optional):**
+-   User to re-run `npm run dev` in `gitwrite-web` to confirm the fix.
+-   Continue with the overall project plan.
+---
