@@ -499,3 +499,54 @@ None.
 
 **Next Steps (Optional):**
 Jules to execute Task 11.2: UI Library Integration (Shadcn/UI & Tailwind).
+---
+**Agent:** Jules (Software Engineer AI)
+**Task Reference:** APM Task Assignment: Integrate Shadcn/UI and Set Up Theming (Originally Task 11.2)
+
+**Summary:**
+Successfully integrated Shadcn/UI and Tailwind CSS into the `gitwrite-web` project. Implemented a theme provider and a theme toggle component, enabling light/dark mode switching.
+
+**Details:**
+1.  **Branching:**
+    *   Created and worked on branch `feature/ui-library-theming`.
+
+2.  **Tailwind CSS Setup:**
+    *   Installed `tailwindcss`, `postcss`, `autoprefixer`, and `@tailwindcss/vite`.
+    *   Manually created `tailwind.config.js` and `postcss.config.js` due to initial `npx tailwindcss init -p` failures.
+    *   Updated `vite.config.ts` to use the `@tailwindcss/vite` plugin.
+    *   Updated `src/index.css` to use `@import "tailwindcss";` and later, Shadcn/UI added its theme variables here.
+
+3.  **Shadcn/UI Initialization:**
+    *   Updated `tsconfig.json` and `tsconfig.app.json` with `baseUrl` and `paths` for import aliases (`@/components`, `@/lib/utils`).
+    *   Updated `vite.config.ts` to include the resolve alias for `@`.
+    *   Ran `npx shadcn@latest init --base-color slate --yes --force` to initialize Shadcn/UI.
+        *   This created `components.json` with "slate" as the base color.
+        *   Created `src/lib/utils.ts`.
+        *   Updated `src/index.css` with CSS variables for the "slate" theme.
+
+4.  **Theme Provider Implementation:**
+    *   Created `src/components/theme-provider.tsx` with the provided logic for managing theme state (light, dark, system) and applying it to the HTML root.
+    *   Wrapped the main `<App />` component in `src/main.tsx` with `<ThemeProvider defaultTheme="dark" storageKey="vite-ui-theme">`.
+
+5.  **Verification Components:**
+    *   Added the Shadcn Button component (`npx shadcn@latest add button --yes`), creating `src/components/ui/button.tsx`.
+    *   Created `src/components/ThemeToggle.tsx` which uses `useTheme` and the Shadcn Button to provide a UI for toggling between light and dark modes.
+    *   Updated `src/components/Dashboard.tsx` to include an instance of the `Button` and the `ThemeToggle`.
+
+**Output/Result:**
+-   `gitwrite-web` directory configured with Tailwind CSS and Shadcn/UI (Slate theme).
+-   `components.json`, `lib/utils.ts`, `components/ui/button.tsx`, `components/theme-provider.tsx`, and `components/ThemeToggle.tsx` created/updated.
+-   `main.tsx` and `Dashboard.tsx` updated to use the theme provider and toggle.
+-   A working light/dark mode toggle is implemented and ready for user verification on the dashboard.
+
+**Status:** Completed (Pending user verification of UI functionality)
+
+**Issues/Blockers:**
+-   Encountered initial difficulties with `npx tailwindcss init -p` and `npx shadcn@latest init` due to sandbox environment specifics and CLI interactivity. These were resolved by:
+    -   Manually creating Tailwind config files.
+    -   Using the `--force` and `--base-color` flags for `shadcn@latest init`.
+    -   Correctly configuring `tsconfig.json`, `vite.config.ts` for aliases and Tailwind v4/Vite plugin setup.
+
+**Next Steps (Optional):**
+User to pull the `feature/ui-library-theming` branch, run `npm install && npm run dev` in `gitwrite-web`, and verify the theme toggle functionality on the dashboard.
+---
