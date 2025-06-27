@@ -36,11 +36,36 @@ Status: **Completed**
 
 ### Task 11.3 - Agent_Web_Dev: Project Dashboard and Repository Browser
 Objective: Create the main dashboard for users to see their projects and browse the file structure of a selected repository.
-Status: **Pending**
-1.  **API Integration:** Connect to `GET /projects` (or equivalent) to list user's repositories.
-2.  **Dashboard UI:** Build a component that displays projects in a grid or list format using Shadcn/UI components.
-3.  **File Browser:** Upon selecting a project, display a file tree view. Use API endpoints to fetch file listings for the repository's default branch.
-4.  **Repository Status:** Display basic status information (e.g., current branch, dirty status).
+Status: **Completed**
+Summary: Developed frontend components for listing projects and browsing repository file trees. Integrated these into the dashboard and application routing. Current implementation uses mock data for API calls pending backend development of conceptualized endpoints.
+Details:
+1.  **Conceptual API Definition:**
+    *   Outlined `GET /repositories` for listing projects.
+    *   Outlined `GET /repository/{repo_name}/tree/{ref}?path={dir_path}` for file/folder listing.
+2.  **SDK Enhancement:**
+    *   Added `listRepositories()` and `listRepositoryTree()` methods to `GitWriteClient` in `gitwrite_sdk`.
+    *   Defined corresponding response types (`RepositoriesListResponse`, `RepositoryTreeResponse`, etc.) in `gitwrite_sdk/src/types.ts`.
+3.  **Dashboard UI (`ProjectList.tsx`):**
+    *   Created a component to display a list of (mocked) projects using Shadcn/UI `Table`.
+    *   Implemented navigation to individual repository views.
+    *   Included loading (`Skeleton`) and error (`Alert`) states.
+4.  **Repository Browser UI (`RepositoryBrowser.tsx`):**
+    *   Created a component to display a (mocked) file/folder tree using Shadcn/UI `Table`.
+    *   Implemented breadcrumb navigation and ability to navigate into/up directories.
+    *   Integrated `RepositoryStatus.tsx` for basic repo info.
+    *   Handles URL parameters for `repoName` and file path.
+5.  **Status Display (`RepositoryStatus.tsx`):**
+    *   Created a component to show (mocked) current branch and placeholder for dirty status.
+6.  **Integration & Routing:**
+    *   Modified `Dashboard.tsx` to render `ProjectList.tsx`.
+    *   Updated `App.tsx` to include a route `/repository/:repoName/*` for `RepositoryBrowser.tsx`.
+    *   Ensured routes are protected and use a basic `AppLayout`.
+7.  **Styling:**
+    *   Applied Shadcn/UI components and Tailwind CSS for consistent styling.
+    *   Ensured user feedback for loading and error states.
+*Action Items Outstanding:*
+    *   Backend implementation of `GET /repositories` and `GET /repository/{repo_name}/tree/{ref}` API endpoints.
+    *   Replacement of mock data in frontend components with live API calls via the SDK.
 
 ### Task 11.4 - Agent_Web_Dev: Commit History and File Content Viewer
 Objective: Allow users to view the commit history of a branch and see the contents of a file at a specific version.

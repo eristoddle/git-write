@@ -93,6 +93,42 @@ export interface SaveFileResponseData {
   commit_id?: string; // Optional, as it might not be present on error
 }
 
+// Types for Project Dashboard and Repository Browser (Task 11.3)
+
+export interface RepositoryListItem {
+  name: string;
+  last_modified: string; // ISO 8601 timestamp
+  description?: string | null;
+  default_branch: string;
+}
+
+export interface RepositoriesListResponse {
+  repositories: RepositoryListItem[];
+}
+
+export interface RepositoryTreeEntry {
+  name: string;
+  path: string; // Full path from repo root
+  type: 'blob' | 'tree';
+  size?: number | null; // Size in bytes for blobs
+  mode: string; // Git mode
+  oid: string; // Git object ID (SHA)
+}
+
+export interface RepositoryTreeBreadcrumbItem {
+    name: string;
+    path: string;
+}
+
+export interface RepositoryTreeResponse {
+  repo_name: string;
+  ref: string;
+  request_path: string;
+  entries: RepositoryTreeEntry[];
+  breadcrumb?: RepositoryTreeBreadcrumbItem[];
+}
+
+
 // Types for API Parity - Task 8.1
 
 // From gitwrite_api/models.py and gitwrite_api/routers/repository.py

@@ -596,3 +596,66 @@ Resolved a Vite server startup error by updating the PostCSS configuration for T
 **Next Steps (Optional):**
 User to pull the `feature/ui-library-theming` branch, run `npm install && npm run dev` in `gitwrite-web`, and confirm the Vite server starts correctly without the PostCSS error.
 ---
+**Agent:** Jules (Software Engineer AI)
+**Task Reference:** Task 11.3 - Agent_Web_Dev: Project Dashboard and Repository Browser
+
+**Summary:**
+Developed the project dashboard and repository browser functionalities in the `gitwrite-web` application. This involved defining conceptual API endpoints, updating the SDK, creating new React components (`ProjectList`, `RepositoryBrowser`, `RepositoryStatus`), and integrating them into the existing application structure. Mock data is used for API responses pending backend implementation.
+
+**Details:**
+1.  **Conceptual API Definitions:**
+    *   Defined `GET /repositories` to list projects.
+        *   Response: `{"repositories": [{"name": "repo1", ...}]}`
+    *   Defined `GET /repository/{repo_name}/tree/{ref}?path={dir_path}` to list files/folders.
+        *   Response: `{"path": "...", "entries": [{"name": "file.txt", "type": "blob", ...}]}`
+
+2.  **SDK Updates (`gitwrite_sdk`):**
+    *   Added interfaces to `types.ts`: `RepositoryListItem`, `RepositoriesListResponse`, `RepositoryTreeEntry`, `RepositoryTreeBreadcrumbItem`, `RepositoryTreeResponse`.
+    *   Added methods to `apiClient.ts`: `listRepositories()` and `listRepositoryTree()`.
+    *   Exported new types from `index.ts`.
+
+3.  **Frontend Component Development (`gitwrite-web/src/components/`):**
+    *   `ProjectList.tsx`:
+        *   Fetches and displays a list of (mocked) projects using `Card` and `Table` from Shadcn/UI.
+        *   Handles loading and error states with `Skeleton` and `Alert`.
+        *   Project items are clickable, navigating to the repository browser view.
+        *   Uses `VITE_API_BASE_URL` for client instantiation.
+    *   `RepositoryStatus.tsx`:
+        *   Displays basic repository information like name and current branch (mocked).
+        *   Uses `Card` and `lucide-react` icons.
+    *   `RepositoryBrowser.tsx`:
+        *   Fetches and displays a (mocked) file/folder tree for a selected repository.
+        *   Uses `Table`, `Skeleton`, `Alert`, `Button`, and `lucide-react` icons.
+        *   Implements breadcrumb navigation and "up a level" functionality.
+        *   Integrates `RepositoryStatus` component.
+        *   Parses `repoName` and `*` (splatPath) from URL parameters.
+        *   Handles navigation for folders and placeholder action for files.
+
+4.  **Integration (`gitwrite-web/src/`):**
+    *   `components/Dashboard.tsx`: Modified to display the `ProjectList` component as its main content.
+    *   `App.tsx`:
+        *   Added a new protected route: `/repository/:repoName/*` that renders `RepositoryBrowser`.
+        *   Updated the root path `/` to default to `/dashboard`.
+        *   Included a basic `AppLayout` component for authenticated views.
+
+5.  **Styling and UI:**
+    *   Leveraged Shadcn/UI components and Tailwind CSS for styling.
+    *   Ensured loading states (skeletons) and error messages (alerts) are implemented.
+    *   Basic interactive elements (hover states, clickable rows) are included.
+
+**Output/Result:**
+-   New SDK methods and types for project and file browsing.
+-   New React components: `ProjectList.tsx`, `RepositoryBrowser.tsx`, `RepositoryStatus.tsx`.
+-   Updated `Dashboard.tsx` and `App.tsx` to integrate the new features and routes.
+-   The UI now presents a (mocked) list of projects and allows browsing their (mocked) file structures.
+
+**Status:** Completed (Frontend uses mock data; backend API endpoints are conceptual and not yet implemented).
+
+**Issues/Blockers:**
+-   The functionality relies on conceptual API endpoints (`GET /repositories` and `GET /repository/{repo_name}/tree/{ref}`) that are not yet implemented in the backend. The frontend uses mock data in their place.
+
+**Next Steps (Optional):**
+-   Implement the backend API endpoints for listing repositories and repository trees.
+-   Replace mock data fetching in frontend components with actual API calls using the SDK.
+-   Proceed with Task 11.4 (Commit History and File Content Viewer).
+---

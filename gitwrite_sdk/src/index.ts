@@ -21,6 +21,12 @@ export type {
   UploadInitiateResponseData,
   UploadCompleteRequestPayload,
   UploadCompleteResponseData,
+  // Types for Task 11.3
+  RepositoryListItem,
+  RepositoriesListResponse,
+  RepositoryTreeEntry,
+  RepositoryTreeResponse,
+  RepositoryTreeBreadcrumbItem,
 } from './types';
 
 // You can also export other modules or types here as the SDK grows

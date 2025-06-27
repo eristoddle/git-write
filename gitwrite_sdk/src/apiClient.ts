@@ -39,6 +39,9 @@ import {
   CherryPickResponse,
   EPUBExportRequest,
   EPUBExportResponse,
+  // Types for Task 11.3
+  RepositoriesListResponse,
+  RepositoryTreeResponse,
 } from './types';
 
 // Define a type for the token, which can be a string or null
@@ -211,6 +214,40 @@ export class GitWriteClient {
     const response = await this.post<SaveFileResponseData, AxiosResponse<SaveFileResponseData>, SaveFileRequestPayload>(
       '/repository/save',
       payload
+    );
+    return response.data;
+  }
+
+  // --- Methods for Project Dashboard and Repository Browser (Task 11.3) ---
+
+  /**
+   * Lists all available repositories (projects).
+   * Corresponds to conceptual API endpoint: GET /repositories
+   */
+  public async listRepositories(): Promise<RepositoriesListResponse> {
+    const response = await this.get<RepositoriesListResponse>('/repositories');
+    return response.data;
+  }
+
+  /**
+   * Lists files and folders within a repository at a specific path and ref.
+   * Corresponds to conceptual API endpoint: GET /repository/{repo_name}/tree/{ref}?path={dir_path}
+   * @param repoName The name of the repository.
+   * @param ref The branch name, tag, or commit SHA.
+   * @param path Optional directory path within the repository.
+   */
+  public async listRepositoryTree(
+    repoName: string,
+    ref: string,
+    path?: string
+  ): Promise<RepositoryTreeResponse> {
+    const queryParams: { path?: string } = {};
+    if (path) {
+      queryParams.path = path;
+    }
+    const response = await this.get<RepositoryTreeResponse>(
+      `/repository/${repoName}/tree/${ref}`,
+      { params: queryParams }
     );
     return response.data;
   }

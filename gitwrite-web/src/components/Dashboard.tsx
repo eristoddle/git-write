@@ -1,16 +1,15 @@
 import React from 'react';
-import { Button } from './ui/button';
 import ThemeToggle from './ThemeToggle';
+import ProjectList from './ProjectList'; // Import ProjectList
 
 const Dashboard: React.FC = () => {
   return (
-    <div className="flex flex-col items-center space-y-4">
-      <div className="absolute top-4 right-4">
-         <ThemeToggle />
+    <div className="container mx-auto p-4">
+      <div className="flex justify-between items-center mb-6">
+        <h1 className="text-3xl font-bold">GitWrite Dashboard</h1>
+        <ThemeToggle />
       </div>
-      <h2 className="text-3xl font-bold">Dashboard</h2>
-      <p>Welcome to your dashboard!</p>
-      <Button>Click me</Button>
+      <ProjectList />
     </div>
   );
 };
