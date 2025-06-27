@@ -468,3 +468,34 @@ Modified the frontend login component (`gitwrite-web/src/components/Login.tsx`) 
 **Next Steps (Optional):**
 -   Verify the login functionality by running the web application and API.
 -   If the `gitwrite-sdk` source becomes available, confirm the `client.login` signature.
+
+---
+
+---
+**Agent:** Project Manager AI
+**Task Reference:** UI Library Selection & Planning
+
+**Summary:**
+Selected Shadcn/UI and Tailwind CSS as the UI library and design system for the `gitwrite-web` application. This decision was made to ensure a flexible, modern, and themeable foundation for the UI, preventing future refactoring for theming or component customization.
+
+**Details:**
+-   **Analysis:** After completing the initial project setup and authentication flow, the next logical step was to establish the UI foundation. A theming-first approach was prioritized.
+-   **Decision:** Chose Shadcn/UI over traditional component libraries (like MUI or Chakra UI).
+-   **Rationale:**
+    -   **Ownership:** Shadcn/UI provides component code that lives directly in our project, allowing for complete customization without fighting library styles.
+    -   **Theming:** It is built on CSS variables and is designed for easy theming (e.g., light/dark mode, color palettes).
+    -   **Flexibility:** It uses unstyled, accessible primitives (Radix UI) and a utility-first CSS framework (Tailwind), which is ideal for building both standard and highly custom components (like the planned visual diff viewer).
+-   **Next Action:** Updated the `Implementation_Plan.md` to insert a new task (Task 11.2) for integrating Shadcn/UI and Tailwind CSS. Prepared the prompt for Jules to execute this task.
+
+**Output/Result:**
+-   Generated this log entry in `Memory_Bank.md`.
+-   Updated `Implementation_Plan.md` with the new UI integration task and renumbered subsequent tasks.
+-   Generated the prompt for Jules for Task 11.2.
+
+**Status:** Completed
+
+**Issues/Blockers:**
+None.
+
+**Next Steps (Optional):**
+Jules to execute Task 11.2: UI Library Integration (Shadcn/UI & Tailwind).
