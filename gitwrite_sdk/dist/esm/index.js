@@ -136,6 +136,30 @@ class GitWriteClient {
         const response = await this.post('/repository/save', payload);
         return response.data;
     }
+    // --- Methods for Project Dashboard and Repository Browser (Task 11.3) ---
+    /**
+     * Lists all available repositories (projects).
+     * Corresponds to conceptual API endpoint: GET /repositories
+     */
+    async listRepositories() {
+        const response = await this.get('/repositories');
+        return response.data;
+    }
+    /**
+     * Lists files and folders within a repository at a specific path and ref.
+     * Corresponds to conceptual API endpoint: GET /repository/{repo_name}/tree/{ref}?path={dir_path}
+     * @param repoName The name of the repository.
+     * @param ref The branch name, tag, or commit SHA.
+     * @param path Optional directory path within the repository.
+     */
+    async listRepositoryTree(repoName, ref, path) {
+        const queryParams = {};
+        if (path) {
+            queryParams.path = path;
+        }
+        const response = await this.get(`/repository/${repoName}/tree/${ref}`, { params: queryParams });
+        return response.data;
+    }
     /**
      * Saves multiple files to the repository using a multi-part upload process.
      * Handles initiating the upload, uploading individual files, and completing the upload.

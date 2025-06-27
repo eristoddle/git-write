@@ -85,6 +85,34 @@ interface SaveFileResponseData {
     message: string;
     commit_id?: string;
 }
+interface RepositoryListItem {
+    name: string;
+    last_modified: string;
+    description?: string | null;
+    default_branch: string;
+}
+interface RepositoriesListResponse {
+    repositories: RepositoryListItem[];
+}
+interface RepositoryTreeEntry {
+    name: string;
+    path: string;
+    type: 'blob' | 'tree';
+    size?: number | null;
+    mode: string;
+    oid: string;
+}
+interface RepositoryTreeBreadcrumbItem {
+    name: string;
+    path: string;
+}
+interface RepositoryTreeResponse {
+    repo_name: string;
+    ref: string;
+    request_path: string;
+    entries: RepositoryTreeEntry[];
+    breadcrumb?: RepositoryTreeBreadcrumbItem[];
+}
 /**
  * Request payload for initializing a repository.
  * POST /repository/repositories
@@ -460,6 +488,19 @@ declare class GitWriteClient {
      */
     save(filePath: string, content: string, commitMessage: string): Promise<SaveFileResponseData>;
     /**
+     * Lists all available repositories (projects).
+     * Corresponds to conceptual API endpoint: GET /repositories
+     */
+    listRepositories(): Promise<RepositoriesListResponse>;
+    /**
+     * Lists files and folders within a repository at a specific path and ref.
+     * Corresponds to conceptual API endpoint: GET /repository/{repo_name}/tree/{ref}?path={dir_path}
+     * @param repoName The name of the repository.
+     * @param ref The branch name, tag, or commit SHA.
+     * @param path Optional directory path within the repository.
+     */
+    listRepositoryTree(repoName: string, ref: string, path?: string): Promise<RepositoryTreeResponse>;
+    /**
      * Saves multiple files to the repository using a multi-part upload process.
      * Handles initiating the upload, uploading individual files, and completing the upload.
      * @param repoId The ID of the repository.
@@ -549,4 +590,4 @@ declare class GitWriteClient {
 }
 
 export { GitWriteClient };
-export type { ApiErrorResponse, AuthToken, Branch, CommitDetail, FileMetadataForUpload, InputFile, ListCommitsParams, LoginCredentials, RepositoryBranchesResponse, RepositoryCommitsResponse, RepositoryTagsResponse, SaveFileRequestPayload, SaveFileResponseData, Tag, TokenResponse, UploadCompleteRequestPayload, UploadCompleteResponseData, UploadInitiateRequestPayload, UploadInitiateResponseData, UploadURLData };
+export type { ApiErrorResponse, AuthToken, Branch, CommitDetail, FileMetadataForUpload, InputFile, ListCommitsParams, LoginCredentials, RepositoriesListResponse, RepositoryBranchesResponse, RepositoryCommitsResponse, RepositoryListItem, RepositoryTagsResponse, RepositoryTreeBreadcrumbItem, RepositoryTreeEntry, RepositoryTreeResponse, SaveFileRequestPayload, SaveFileResponseData, Tag, TokenResponse, UploadCompleteRequestPayload, UploadCompleteResponseData, UploadInitiateRequestPayload, UploadInitiateResponseData, UploadURLData };
