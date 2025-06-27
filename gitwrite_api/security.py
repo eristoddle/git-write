@@ -53,7 +53,7 @@ FAKE_USERS_DB = {
         "username": "johndoe",
         "full_name": "John Doe",
         "email": "johndoe@example.com",
-        "hashed_password": get_password_hash("secret"), # Hash a default password
+        "hashed_password": "$2b$12$m/Oxd60KIDPOcd8Kq.t4Eutw6xl91AvdKD7DbtKJCECo4yg9Z9eMS", # Hash a default password
         "disabled": False,
         "roles": [UserRole.OWNER],  # Assign OWNER role
     },

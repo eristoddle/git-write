@@ -23,8 +23,8 @@ const Login: React.FC = () => {
         setError('Login failed: No access token received.');
       }
     } catch (err) {
-      setError('Login failed: Invalid username or password.');
       console.error('Login error:', err);
+      setError('Login failed: Invalid username or password.');
     }
   };
 
