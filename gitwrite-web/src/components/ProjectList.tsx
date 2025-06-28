@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { GitWriteClient, RepositoryListItem, RepositoriesListResponse } from 'gitwrite-sdk';
+import { GitWriteClient, type RepositoryListItem, type RepositoriesListResponse } from 'gitwrite-sdk';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Skeleton } from '@/components/ui/skeleton'; // For loading state

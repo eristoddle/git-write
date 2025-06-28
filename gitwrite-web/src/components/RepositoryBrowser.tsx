@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { useParams, useNavigate, useLocation } from 'react-router-dom';
-import { GitWriteClient, RepositoryTreeResponse, RepositoryTreeEntry, RepositoryTreeBreadcrumbItem } from 'gitwrite-sdk';
+import { GitWriteClient, type RepositoryTreeResponse, type RepositoryTreeEntry, type RepositoryTreeBreadcrumbItem } from 'gitwrite-sdk';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
