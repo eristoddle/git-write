@@ -20,5 +20,5 @@ Here is how you run unit tests:
 
 
 Read Memory_Bank.md and Implementation_Plan.md for details on the current state of the project.
-Proceed with Task 11.3 - Agent_Web_Dev: Project Dashboard and Repository Browser.
+Proceed with Task 11.4 - Agent_Web_Dev: Commit History and File Content Viewer
 When you are done update Memory_Bank.md and Implementation_Plan.md according the the APM rules, located in the prompts folder of the project.
