@@ -2,8 +2,10 @@ import React from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate, Outlet } from 'react-router-dom';
 import Login from './components/Login';
 import Dashboard from './components/Dashboard';
-import RepositoryBrowser from './components/RepositoryBrowser'; // Import RepositoryBrowser
-import ThemeToggle from './components/ThemeToggle'; // For a consistent layout perhaps
+import RepositoryBrowser from './components/RepositoryBrowser';
+import CommitHistoryView from './components/CommitHistoryView'; // Added for Task 11.4
+import FileContentViewerPage from './pages/FileContentViewerPage'; // Wrapper page for FileContentViewer
+import ThemeToggle from './components/ThemeToggle';
 import './App.css';
 
 const ProtectedRoute: React.FC = () => {
@@ -33,15 +35,20 @@ const App: React.FC = () => {
       <Routes>
         <Route path="/login" element={<Login />} />
         <Route element={<ProtectedRoute />}>
-          <Route element={<AppLayout />}> {/* Wrap protected routes with AppLayout */}
+          <Route element={<AppLayout />}>
             <Route path="/dashboard" element={<Dashboard />} />
-            <Route path="/repository/:repoName/*" element={<RepositoryBrowser />} />
-             {/* The '*' in the path for repoName allows for deep linking into file paths */}
+            {/* Route for general repository browsing (files at current branch HEAD) */}
+            <Route path="/repository/:repoName/tree/*" element={<RepositoryBrowser />} />
+            {/* Route for commit history of a branch */}
+            <Route path="/repository/:repoName/history/*" element={<CommitHistoryView />} />
+            {/* Route for viewing a specific file at a specific commit */}
+            {/* The '*' (splat) in filePath will capture the full file path including slashes */}
+            <Route path="/repository/:repoName/commit/:commitSha/file/*" element={<FileContentViewerPage />} />
+            {/* Redirect base /repository/:repoName to its tree view of the default branch (e.g., main) */}
+            <Route path="/repository/:repoName" element={<Navigate to="tree/main" replace />} />
           </Route>
         </Route>
-        <Route path="/" element={<Navigate to="/dashboard" replace />} /> {/* Default to dashboard if logged in */}
-        {/* Fallback for non-authenticated users if they try to go to '/' directly could be /login */}
-        {/* This is slightly changed: if not authenticated, ProtectedRoute handles redirect to /login */}
+        <Route path="/" element={<Navigate to="/dashboard" replace />} />
       </Routes>
     </Router>
   );

@@ -433,3 +433,132 @@ def test_api_compare_refs_invalid_diff_mode(mock_get_diff):
     assert isinstance(data["patch_text"], str)
     mock_get_diff.assert_called_once()
     app.dependency_overrides = {}
+
+
+# --- Tests for /repository/file-content ---
+
+@patch('gitwrite_api.routers.repository.core_get_file_content_at_commit')
+def test_api_get_file_content_success(mock_core_get_content):
+    app.dependency_overrides[actual_repo_auth_dependency] = mock_get_current_active_user
+    file_path_param = "src/main.py"
+    commit_sha_param = "a1b2c3d4e5f6"
+    mock_core_get_content.return_value = {
+        'status': 'success',
+        'file_path': file_path_param,
+        'commit_sha': commit_sha_param,
+        'content': 'print("Hello, World!")',
+        'size': 22,
+        'mode': '100644',
+        'is_binary': False,
+        'message': 'File content retrieved successfully.'
+    }
+
+    response = client.get(f"/repository/file-content?file_path={file_path_param}&commit_sha={commit_sha_param}")
+
+    assert response.status_code == HTTPStatus.OK
+    data = response.json()
+    assert data["file_path"] == file_path_param
+    assert data["commit_sha"] == commit_sha_param
+    assert data["content"] == 'print("Hello, World!")'
+    assert data["is_binary"] is False
+    mock_core_get_content.assert_called_once_with(
+        repo_path_str=MOCK_REPO_PATH,
+        file_path=file_path_param,
+        commit_sha_str=commit_sha_param
+    )
+    app.dependency_overrides = {}
+
+
+@patch('gitwrite_api.routers.repository.core_get_file_content_at_commit')
+def test_api_get_file_content_binary(mock_core_get_content):
+    app.dependency_overrides[actual_repo_auth_dependency] = mock_get_current_active_user
+    file_path_param = "image.png"
+    commit_sha_param = "b2c3d4e5f6a1"
+    mock_core_get_content.return_value = {
+        'status': 'success',
+        'file_path': file_path_param,
+        'commit_sha': commit_sha_param,
+        'content': '[Binary content of size 1024 bytes]',
+        'size': 1024,
+        'mode': '100644',
+        'is_binary': True,
+        'message': 'File content retrieved successfully.'
+    }
+
+    response = client.get(f"/repository/file-content?file_path={file_path_param}&commit_sha={commit_sha_param}")
+
+    assert response.status_code == HTTPStatus.OK
+    data = response.json()
+    assert data["file_path"] == file_path_param
+    assert data["is_binary"] is True
+    assert data["content"] == '[Binary content of size 1024 bytes]'
+    app.dependency_overrides = {}
+
+
+@patch('gitwrite_api.routers.repository.core_get_file_content_at_commit')
+def test_api_get_file_content_file_not_found_in_commit(mock_core_get_content):
+    app.dependency_overrides[actual_repo_auth_dependency] = mock_get_current_active_user
+    mock_core_get_content.return_value = {
+        'status': 'error',
+        'message': "File 'ghost.txt' not found in commit 'a1b2c3d4e5f6'."
+    }
+    response = client.get("/repository/file-content?file_path=ghost.txt&commit_sha=a1b2c3d4e5f6")
+    assert response.status_code == HTTPStatus.NOT_FOUND
+    assert "File 'ghost.txt' not found in commit" in response.json()["detail"]
+    app.dependency_overrides = {}
+
+
+@patch('gitwrite_api.routers.repository.core_get_file_content_at_commit')
+def test_api_get_file_content_commit_not_found(mock_core_get_content):
+    app.dependency_overrides[actual_repo_auth_dependency] = mock_get_current_active_user
+    invalid_sha = "000000"
+    mock_core_get_content.return_value = {
+        'status': 'error',
+        'message': f"Commit with SHA '{invalid_sha}' not found or invalid."
+    }
+    response = client.get(f"/repository/file-content?file_path=any.txt&commit_sha={invalid_sha}")
+    assert response.status_code == HTTPStatus.NOT_FOUND
+    assert f"Commit with SHA '{invalid_sha}' not found or invalid" in response.json()["detail"]
+    app.dependency_overrides = {}
+
+
+@patch('gitwrite_api.routers.repository.core_get_file_content_at_commit')
+def test_api_get_file_content_repo_config_error(mock_core_get_content):
+    app.dependency_overrides[actual_repo_auth_dependency] = mock_get_current_active_user
+    mock_core_get_content.return_value = {
+        'status': 'error',
+        'message': "Repository not found at /nonexistent/path."
+    }
+    response = client.get("/repository/file-content?file_path=any.txt&commit_sha=a1b2c3")
+    assert response.status_code == HTTPStatus.INTERNAL_SERVER_ERROR # 500 due to repo config
+    assert "Repository not found" in response.json()["detail"]
+    app.dependency_overrides = {}
+
+
+@patch('gitwrite_api.routers.repository.core_get_file_content_at_commit')
+def test_api_get_file_content_path_is_directory(mock_core_get_content):
+    app.dependency_overrides[actual_repo_auth_dependency] = mock_get_current_active_user
+    mock_core_get_content.return_value = {
+        'status': 'error',
+        'message': "Path 'src_dir' in commit 'a1b2c3' is not a file (it's a tree)."
+    }
+    response = client.get("/repository/file-content?file_path=src_dir&commit_sha=a1b2c3")
+    assert response.status_code == HTTPStatus.BAD_REQUEST # 400 because path is not a file
+    assert "is not a file (it's a tree)" in response.json()["detail"]
+    app.dependency_overrides = {}
+
+
+@patch('gitwrite_api.routers.repository.core_get_file_content_at_commit')
+def test_api_get_file_content_generic_core_error(mock_core_get_content):
+    app.dependency_overrides[actual_repo_auth_dependency] = mock_get_current_active_user
+    mock_core_get_content.return_value = {
+        'status': 'error',
+        'message': "A generic core layer error occurred."
+    }
+    response = client.get("/repository/file-content?file_path=some.txt&commit_sha=a1b2c3")
+    assert response.status_code == HTTPStatus.INTERNAL_SERVER_ERROR
+    assert "A generic core layer error occurred" in response.json()["detail"]
+    app.dependency_overrides = {}
+
+# Test with actual core exceptions being raised (if core layer changes to that pattern)
+# For now, sticking to dict-based error reporting from core.

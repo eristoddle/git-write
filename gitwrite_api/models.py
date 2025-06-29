@@ -159,3 +159,14 @@ class UpdateAnnotationStatusRequest(BaseModel):
 class UpdateAnnotationStatusResponse(BaseModel):
     annotation: Annotation = Field(..., description="The full annotation object with its updated status.")
     message: str = Field(..., description="A message indicating the outcome of the status update.")
+
+
+# --- API Request/Response Models for File Content ---
+
+class FileContentResponse(BaseModel):
+    file_path: str = Field(..., description="The path of the retrieved file.")
+    commit_sha: str = Field(..., description="The commit SHA from which the file content was retrieved.")
+    content: str = Field(..., description="The content of the file.")
+    size: int = Field(..., description="The size of the file in bytes.")
+    mode: str = Field(..., description="The file mode (e.g., '100644' for a regular file).")
+    is_binary: bool = Field(..., description="Indicates if the content is binary.")

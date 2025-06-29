@@ -85,6 +85,18 @@ interface SaveFileResponseData {
     message: string;
     commit_id?: string;
 }
+/**
+ * Response data for retrieving file content.
+ * Maps to FileContentResponse in API (gitwrite_api/models.py).
+ */
+interface FileContentResponse {
+    file_path: string;
+    commit_sha: string;
+    content: string;
+    size: number;
+    mode: string;
+    is_binary: boolean;
+}
 interface RepositoryListItem {
     name: string;
     last_modified: string;
@@ -587,7 +599,16 @@ declare class GitWriteClient {
      * @param payload Contains commit-ish, file list, and output filename.
      */
     exportToEPUB(payload: EPUBExportRequest): Promise<EPUBExportResponse>;
+    /**
+     * Retrieves the content of a specific file at a given commit SHA.
+     * Corresponds to API endpoint: GET /repository/file-content
+     * @param repoName The name of the repository (currently unused by API, but good for consistency).
+     * @param filePath The relative path of the file in the repository.
+     * @param commitSha The commit SHA from which to retrieve the file.
+     */
+    getFileContent(repoName: string, // repoName might be used in future if API becomes multi-repo or needs it for namespacing
+    filePath: string, commitSha: string): Promise<FileContentResponse>;
 }
 
 export { GitWriteClient };
-export type { ApiErrorResponse, AuthToken, Branch, CommitDetail, FileMetadataForUpload, InputFile, ListCommitsParams, LoginCredentials, RepositoriesListResponse, RepositoryBranchesResponse, RepositoryCommitsResponse, RepositoryListItem, RepositoryTagsResponse, RepositoryTreeBreadcrumbItem, RepositoryTreeEntry, RepositoryTreeResponse, SaveFileRequestPayload, SaveFileResponseData, Tag, TokenResponse, UploadCompleteRequestPayload, UploadCompleteResponseData, UploadInitiateRequestPayload, UploadInitiateResponseData, UploadURLData };
+export type { ApiErrorResponse, AuthToken, Branch, CommitDetail, FileContentResponse, FileMetadataForUpload, InputFile, ListCommitsParams, LoginCredentials, RepositoriesListResponse, RepositoryBranchesResponse, RepositoryCommitsResponse, RepositoryListItem, RepositoryTagsResponse, RepositoryTreeBreadcrumbItem, RepositoryTreeEntry, RepositoryTreeResponse, SaveFileRequestPayload, SaveFileResponseData, Tag, TokenResponse, UploadCompleteRequestPayload, UploadCompleteResponseData, UploadInitiateRequestPayload, UploadInitiateResponseData, UploadURLData };

@@ -93,6 +93,21 @@ export interface SaveFileResponseData {
   commit_id?: string; // Optional, as it might not be present on error
 }
 
+// --- Types for File Content Viewer (Task 11.4) ---
+
+/**
+ * Response data for retrieving file content.
+ * Maps to FileContentResponse in API (gitwrite_api/models.py).
+ */
+export interface FileContentResponse {
+  file_path: string;
+  commit_sha: string;
+  content: string;
+  size: number;
+  mode: string; // e.g., "100644"
+  is_binary: boolean;
+}
+
 // Types for Project Dashboard and Repository Browser (Task 11.3)
 
 export interface RepositoryListItem {

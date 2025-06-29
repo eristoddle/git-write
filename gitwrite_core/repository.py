@@ -902,6 +902,103 @@ def save_and_commit_file(repo_path_str: str, file_path: str, content: str, commi
         return {'status': 'error', 'message': f"An unexpected error occurred: {e}", 'commit_id': None}
 
 
+def get_file_content_at_commit(repo_path_str: str, file_path: str, commit_sha_str: str) -> Dict[str, Any]:
+    """
+    Retrieves the content and metadata of a specific file at a given commit.
+
+    Args:
+        repo_path_str: String path to the root of the repository.
+        file_path: The relative path of the file within the repository.
+        commit_sha_str: The SHA of the commit.
+
+    Returns:
+        A dictionary with 'status', 'message', and file details ('content', 'size', 'mode', 'is_binary')
+        if successful.
+    """
+    from .exceptions import RepositoryNotFoundError, CommitNotFoundError, FileNotFoundInCommitError, GitWriteError
+
+    try:
+        try:
+            repo_path = pygit2.discover_repository(repo_path_str)
+            if repo_path is None:
+                raise RepositoryNotFoundError(f"No Git repository found at or above '{repo_path_str}'.")
+            repo = pygit2.Repository(repo_path)
+        except pygit2.GitError as e:
+            raise RepositoryNotFoundError(f"Error accessing repository at '{repo_path_str}': {e}")
+
+        if repo.is_bare:
+            # For bare repos, file_path is directly relative to the repo root.
+            pass
+
+        try:
+            commit = repo.revparse_single(commit_sha_str)
+            if not isinstance(commit, pygit2.Commit): # Ensure it's a commit object
+                commit = repo.get(commit.id) # Try to get the commit object if revparse_single returned a tag or tree
+                if not isinstance(commit, pygit2.Commit):
+                     raise CommitNotFoundError(f"Object with SHA '{commit_sha_str}' is not a commit.")
+        except (KeyError, pygit2.GitError, TypeError) as e: # TypeError for invalid SHA format
+            raise CommitNotFoundError(f"Commit with SHA '{commit_sha_str}' not found or invalid: {e}")
+
+        try:
+            tree_entry = commit.tree[file_path]
+        except KeyError:
+            raise FileNotFoundInCommitError(f"File '{file_path}' not found in commit '{commit_sha_str}'.")
+        except pygit2.GitError as e: # Other errors accessing tree entry
+             raise GitWriteError(f"Error accessing file '{file_path}' in tree of commit '{commit_sha_str}': {e}")
+
+
+        if tree_entry.type_str != 'blob':
+            raise FileNotFoundInCommitError(f"Path '{file_path}' in commit '{commit_sha_str}' is not a file (it's a {tree_entry.type_str}).")
+
+        blob = repo.get(tree_entry.id)
+        if not isinstance(blob, pygit2.Blob):
+            # Should not happen if type_str was 'blob'
+            raise GitWriteError(f"Object for '{file_path}' in commit '{commit_sha_str}' is not a blob, despite tree entry type.")
+
+        content_bytes = blob.data
+        is_binary = blob.is_binary
+
+        content_str = ""
+        if is_binary:
+            # For now, return placeholder for binary, or base64, or decide policy
+            # For this task, we'll assume text files primarily, but indicate binary.
+            content_str = f"[Binary content of size {blob.size} bytes]"
+            # Alternatively, to try decoding with fallback:
+            # try:
+            #     content_str = content_bytes.decode('utf-8')
+            # except UnicodeDecodeError:
+            #     content_str = content_bytes.decode('latin-1', errors='replace') # Or some other fallback
+        else:
+            try:
+                content_str = content_bytes.decode('utf-8')
+            except UnicodeDecodeError:
+                # If not binary but still fails utf-8, it's likely an encoding issue.
+                # Fallback to latin-1 or return error/representation.
+                # Forcing latin-1 might mangle some non-UTF-8 text files.
+                # A more robust solution would be to detect encoding or allow user to specify.
+                # For now, we mark as binary if UTF-8 fails, as a simple heuristic.
+                is_binary = True # Treat as binary if not valid UTF-8
+                content_str = f"[Non-UTF-8 text content of size {blob.size} bytes, treated as binary]"
+
+
+        return {
+            'status': 'success',
+            'file_path': file_path,
+            'commit_sha': commit_sha_str,
+            'content': content_str,
+            'size': blob.size,
+            'mode': oct(tree_entry.filemode)[2:], # Format as string like '100644'
+            'is_binary': is_binary,
+            'message': 'File content retrieved successfully.'
+        }
+
+    except (RepositoryNotFoundError, CommitNotFoundError, FileNotFoundInCommitError, GitWriteError) as e:
+        return {'status': 'error', 'message': str(e)}
+    except Exception as e:
+        # Log detailed error: logger.error(f"Unexpected error in get_file_content_at_commit: {e}", exc_info=True)
+        return {'status': 'error', 'message': f"An unexpected error occurred: {e}"}
+
+
 def save_and_commit_multiple_files(repo_path_str: str, files_to_commit: Dict[str, str], commit_message: str, author_name: Optional[str] = None, author_email: Optional[str] = None) -> Dict[str, Any]:
     """
     Saves multiple files to the repository and creates a single commit with all changes.

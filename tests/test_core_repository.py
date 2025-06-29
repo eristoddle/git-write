@@ -970,3 +970,156 @@ def test_save_file_empty_commit_message_allowed(tmp_repo_for_save: Path):
     last_commit = repo.head.peel(pygit2.Commit)
     # pygit2 might store it as empty or add a newline. Let's check if it's essentially empty.
     assert last_commit.message.strip() == ""
+
+
+# --- Tests for get_file_content_at_commit ---
+
+@pytest.fixture
+def repo_with_commits_for_file_content(tmp_path: Path) -> Path:
+    repo_dir = tmp_path / "content_repo"
+    repo_dir.mkdir()
+    repo = pygit2.init_repository(str(repo_dir))
+    config = repo.config
+    config["user.name"] = "Test Author"
+    config["user.email"] = "testauthor@example.com"
+    sig = pygit2.Signature("Test Author", "testauthor@example.com")
+
+    # Commit 1: Create file1.txt and binary_file.bin
+    file1_rel = "text_file.txt"
+    binary_file_rel = "data/binary_file.bin"
+    (repo_dir / "data").mkdir()
+
+    (repo_dir / file1_rel).write_text("Hello World\nThis is a test file.")
+    (repo_dir / binary_file_rel).write_bytes(b"\x00\x01\x02\x03\x04\xff\xfe")
+
+    repo.index.add(file1_rel)
+    repo.index.add(binary_file_rel)
+    repo.index.write()
+    tree1_oid = repo.index.write_tree()
+    commit1_oid = repo.create_commit("HEAD", sig, sig, "Initial commit with text and binary files", tree1_oid, [])
+
+    # Commit 2: Modify file1.txt, add file2.txt in subdir
+    subdir_file_rel = "subdir/another.txt"
+    (repo_dir / "subdir").mkdir()
+    (repo_dir / file1_rel).write_text("Hello Universe\nThis is an updated test file.\nWith a new line.")
+    (repo_dir / subdir_file_rel).write_text("Subdirectory file content.")
+
+    repo.index.add(file1_rel)
+    repo.index.add(subdir_file_rel)
+    repo.index.write() # Write after all adds for the commit
+    tree2_oid = repo.index.write_tree()
+    commit2_oid = repo.create_commit("HEAD", sig, sig, "Second commit, modified text_file, added subdir_file", tree2_oid, [commit1_oid])
+
+    return repo_dir
+
+from gitwrite_core.repository import get_file_content_at_commit
+from gitwrite_core.exceptions import RepositoryNotFoundError, CommitNotFoundError, FileNotFoundInCommitError, GitWriteError
+
+
+def test_get_file_content_success_text(repo_with_commits_for_file_content: Path):
+    repo_path = repo_with_commits_for_file_content
+    repo = pygit2.Repository(str(repo_path))
+    commit1_sha = str(repo.revparse_single("HEAD~1").id)
+    commit2_sha = str(repo.revparse_single("HEAD").id)
+
+    # Test file from commit 1
+    result1 = get_file_content_at_commit(str(repo_path), "text_file.txt", commit1_sha)
+    assert result1["status"] == "success"
+    assert result1["file_path"] == "text_file.txt"
+    assert result1["commit_sha"] == commit1_sha
+    assert result1["content"] == "Hello World\nThis is a test file."
+    assert result1["is_binary"] is False
+    assert result1["mode"] == "100644" # Standard file mode
+    assert result1["size"] == len("Hello World\nThis is a test file.".encode('utf-8'))
+
+    # Test same file from commit 2 (modified)
+    result2 = get_file_content_at_commit(str(repo_path), "text_file.txt", commit2_sha)
+    assert result2["status"] == "success"
+    assert result2["content"] == "Hello Universe\nThis is an updated test file.\nWith a new line."
+    assert result2["is_binary"] is False
+
+    # Test new file from commit 2 (in subdir)
+    result3 = get_file_content_at_commit(str(repo_path), "subdir/another.txt", commit2_sha)
+    assert result3["status"] == "success"
+    assert result3["content"] == "Subdirectory file content."
+    assert result3["is_binary"] is False
+
+
+def test_get_file_content_success_binary(repo_with_commits_for_file_content: Path):
+    repo_path = repo_with_commits_for_file_content
+    repo = pygit2.Repository(str(repo_path))
+    commit1_sha = str(repo.revparse_single("HEAD~1").id)
+
+    result = get_file_content_at_commit(str(repo_path), "data/binary_file.bin", commit1_sha)
+    assert result["status"] == "success"
+    assert result["file_path"] == "data/binary_file.bin"
+    assert result["is_binary"] is True
+    assert result["content"] == "[Binary content of size 7 bytes]" # As per current core logic for binary
+    assert result["size"] == 7
+    assert result["mode"] == "100644"
+
+
+def test_get_file_content_file_not_in_commit(repo_with_commits_for_file_content: Path):
+    repo_path = repo_with_commits_for_file_content
+    repo = pygit2.Repository(str(repo_path))
+    commit1_sha = str(repo.revparse_single("HEAD~1").id) # subdir/another.txt doesn't exist here
+
+    result = get_file_content_at_commit(str(repo_path), "subdir/another.txt", commit1_sha)
+    assert result["status"] == "error"
+    assert "File 'subdir/another.txt' not found in commit" in result["message"]
+
+
+def test_get_file_content_file_is_a_directory(repo_with_commits_for_file_content: Path):
+    repo_path = repo_with_commits_for_file_content
+    repo = pygit2.Repository(str(repo_path))
+    commit2_sha = str(repo.revparse_single("HEAD").id) # 'subdir' exists here
+
+    result = get_file_content_at_commit(str(repo_path), "subdir", commit2_sha)
+    assert result["status"] == "error"
+    assert "Path 'subdir' in commit" in result["message"]
+    assert "is not a file (it's a tree)" in result["message"]
+
+
+def test_get_file_content_commit_not_found(repo_with_commits_for_file_content: Path):
+    repo_path = repo_with_commits_for_file_content
+    invalid_sha = "abcdef1234567890abcdef1234567890abcdef12"
+
+    result = get_file_content_at_commit(str(repo_path), "text_file.txt", invalid_sha)
+    assert result["status"] == "error"
+    assert f"Commit with SHA '{invalid_sha}' not found or invalid" in result["message"]
+
+
+def test_get_file_content_repo_not_found(tmp_path: Path):
+    non_repo_path = tmp_path / "ghost_repo"
+    # Do not create or init non_repo_path
+
+    result = get_file_content_at_commit(str(non_repo_path), "file.txt", "any_sha")
+    assert result["status"] == "error"
+    assert "No Git repository found at or above" in result["message"] or \
+           "Error accessing repository at" in result["message"]
+
+
+def test_get_file_content_non_utf8_text_file(repo_with_commits_for_file_content: Path):
+    # This test requires modifying the fixture or adding a new one with a non-UTF-8 file.
+    # For simplicity, we'll add a non-UTF-8 file to the existing fixture repo.
+    repo_path = repo_with_commits_for_file_content
+    repo = pygit2.Repository(str(repo_path))
+    sig = pygit2.Signature("Test Author", "testauthor@example.com")
+    head_commit_oid = repo.head.target
+
+    non_utf8_file_rel = "non_utf8.txt"
+    # Create content with latin-1 specific characters that will fail UTF-8 decoding
+    latin1_content = "This contains a Latin-1 character: \xe9 (é)".encode('latin-1')
+    (repo_path / non_utf8_file_rel).write_bytes(latin1_content)
+
+    repo.index.add(non_utf8_file_rel)
+    repo.index.write()
+    tree_oid = repo.index.write_tree()
+    new_commit_oid = repo.create_commit("HEAD", sig, sig, "Add non-UTF-8 file", tree_oid, [head_commit_oid])
+    new_commit_sha = str(new_commit_oid)
+
+    result = get_file_content_at_commit(str(repo_path), non_utf8_file_rel, new_commit_sha)
+    assert result["status"] == "success"
+    assert result["is_binary"] is True # Because it failed UTF-8 decode in core function
+    assert f"[Non-UTF-8 text content of size {len(latin1_content)} bytes, treated as binary]" in result["content"]
+    assert result["size"] == len(latin1_content)

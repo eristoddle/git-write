@@ -12,7 +12,8 @@ from gitwrite_core.repository import (
     list_branches, list_tags, list_commits, save_and_commit_file,
     list_gitignore_patterns as core_list_gitignore_patterns,
     add_pattern_to_gitignore as core_add_pattern_to_gitignore,
-    initialize_repository as core_initialize_repository
+    initialize_repository as core_initialize_repository,
+    get_file_content_at_commit as core_get_file_content_at_commit
 )
 from gitwrite_core.versioning import (
     get_branch_review_commits as core_get_branch_review_commits,
@@ -23,7 +24,7 @@ from gitwrite_core.versioning import (
 # Adjust the import path if your security module is located differently.
 # For this example, let's assume a flat structure for simplicity or direct placement:
 from ..security import get_current_active_user, require_role # Actual import
-from ..models import User, UserRole # Import the canonical User model and UserRole
+from ..models import User, UserRole, FileContentResponse # Import the canonical User model and UserRole
 from ..models import SaveFileRequest, SaveFileResponse # Added for the new save endpoint
 
 # Import core branching functions and exceptions
@@ -38,11 +39,12 @@ from gitwrite_core.exceptions import (
     MergeConflictError as CoreMergeConflictError, # Added for merge, also used by revert and sync
     GitWriteError as CoreGitWriteError, # Also used by get_branch_review_commits
     DetachedHeadError as CoreDetachedHeadError, # Added for merge, also used by sync
-    CommitNotFoundError as CoreCommitNotFoundError, # Added for compare, also used by revert
+    CommitNotFoundError as CoreCommitNotFoundError, # Added for compare, also used by revert, and file content
     NotEnoughHistoryError as CoreNotEnoughHistoryError, # Added for compare
     RemoteNotFoundError as CoreRemoteNotFoundError, # For sync
     FetchError as CoreFetchError, # For sync
-    PushError as CorePushError # For sync
+    PushError as CorePushError, # For sync
+    FileNotFoundInCommitError as CoreFileNotFoundInCommitError # For file content
 )
 from gitwrite_core.branching import merge_branch_into_current # Core function for merge
 from gitwrite_core.versioning import get_diff as core_get_diff, get_word_level_diff as core_get_word_level_diff # Core functions for compare
@@ -820,6 +822,62 @@ async def api_list_ignore_patterns(current_user: User = Depends(get_current_acti
         raise HTTPException(status_code=500, detail="Repository configuration error.")
     # Note: Specific business logic exceptions from core layer (if any) should be caught if they are not already
     # handled by the result['status'] checks. For now, focusing on existing structure.
+
+
+@router.get("/file-content", response_model=FileContentResponse)
+async def api_get_file_content(
+    file_path: str = Query(..., description="Relative path of the file in the repository."),
+    commit_sha: str = Query(..., description="The commit SHA to retrieve the file from."),
+    current_user: User = Depends(get_current_active_user)
+):
+    """
+    Retrieves the content of a specific file at a given commit.
+    Requires authentication.
+    """
+    repo_path = PLACEHOLDER_REPO_PATH
+    try:
+        result = core_get_file_content_at_commit(
+            repo_path_str=repo_path,
+            file_path=file_path,
+            commit_sha_str=commit_sha
+        )
+
+        if result['status'] == 'success':
+            return FileContentResponse(
+                file_path=result['file_path'],
+                commit_sha=result['commit_sha'],
+                content=result['content'],
+                size=result['size'],
+                mode=result['mode'],
+                is_binary=result['is_binary']
+            )
+        elif result['status'] == 'error':
+            # Determine appropriate HTTP status code based on core message
+            message = result.get('message', 'Error retrieving file content.')
+            if "Repository not found" in message:
+                raise HTTPException(status_code=500, detail=message) # Config issue
+            elif "Commit with SHA" in message and ("not found" in message or "invalid" in message):
+                raise HTTPException(status_code=404, detail=message)
+            elif "File" in message and "not found in commit" in message:
+                raise HTTPException(status_code=404, detail=message)
+            elif "is not a file" in message: # e.g. path is a directory
+                raise HTTPException(status_code=400, detail=message)
+            else: # General core error
+                raise HTTPException(status_code=500, detail=message)
+        else: # Should not happen if core adheres to spec
+            raise HTTPException(status_code=500, detail="Unknown error from core file content retrieval.")
+
+    # Specific exceptions from core layer (if used instead of dict status)
+    except CoreRepositoryNotFoundError as e: # Should be caught by dict status 'Repository not found'
+        raise HTTPException(status_code=500, detail=str(e))
+    except CoreCommitNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except CoreFileNotFoundInCommitError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except CoreGitWriteError as e: # Other general errors from core
+        raise HTTPException(status_code=400, detail=f"File content retrieval failed: {str(e)}")
+    except Exception as e: # Fallback for unexpected errors
+        raise HTTPException(status_code=500, detail=f"An unexpected error occurred: {str(e)}")
 
 
 # --- EPUB Export Endpoint ---

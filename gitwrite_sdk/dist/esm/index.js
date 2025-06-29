@@ -326,6 +326,26 @@ class GitWriteClient {
         const response = await this.post('/repository/export/epub', payload);
         return response.data;
     }
+    // --- Methods for Commit History and File Content Viewer (Task 11.4) ---
+    /**
+     * Retrieves the content of a specific file at a given commit SHA.
+     * Corresponds to API endpoint: GET /repository/file-content
+     * @param repoName The name of the repository (currently unused by API, but good for consistency).
+     * @param filePath The relative path of the file in the repository.
+     * @param commitSha The commit SHA from which to retrieve the file.
+     */
+    async getFileContent(repoName, // repoName might be used in future if API becomes multi-repo or needs it for namespacing
+    filePath, commitSha) {
+        // Construct query parameters
+        const queryParams = new URLSearchParams({
+            file_path: filePath,
+            commit_sha: commitSha,
+        });
+        // The API endpoint is /repository/file-content, repoName is not part of the URL path for this specific endpoint
+        // It's included as a parameter for potential future use or consistency with other SDK methods.
+        const response = await this.get(`/repository/file-content?${queryParams.toString()}`);
+        return response.data;
+    }
 }
 // Example usage (optional, for testing within this file)
 /*

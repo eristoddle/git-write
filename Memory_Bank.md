@@ -743,3 +743,64 @@ None.
 -   User to re-run `npm run dev --prefix gitwrite-web` to confirm the SDK export fix and that the web application now runs without the import error.
 -   If the error persists, further investigation into the SDK build process or Vite's module resolution for linked local packages might be needed.
 ---
+**Agent:** Jules (Software Engineer AI)
+**Task Reference:** Task 11.4 - Agent_Web_Dev: Commit History and File Content Viewer
+
+**Summary:**
+Implemented features for viewing commit history and file content within the web application. This involved creating a new API endpoint to fetch file content at a specific commit, updating the SDK, and developing new frontend components.
+
+**Details:**
+1.  **API Endpoint & Core Function (`GET /repository/file-content`):**
+    *   **Core Function (`gitwrite_core/repository.py::get_file_content_at_commit`):**
+        *   Created `get_file_content_at_commit(repo_path_str, file_path, commit_sha_str)`.
+        *   Uses `pygit2` to retrieve file blob data, size, mode, and determine if binary.
+        *   Handles errors like repo/commit/file not found.
+    *   **API Endpoint (`gitwrite_api/routers/repository.py`):**
+        *   Added `GET /repository/file-content` endpoint.
+        *   Accepts `file_path` and `commit_sha` query parameters.
+        *   Calls the new core function and returns `FileContentResponse`.
+    *   **Models (`gitwrite_api/models.py`):**
+        *   Added `FileContentResponse` Pydantic model.
+    *   **Unit Tests:**
+        *   Added tests for `get_file_content_at_commit` in `tests/test_core_repository.py`.
+        *   Added tests for the `GET /repository/file-content` endpoint in `tests/test_api_repository.py`.
+
+2.  **SDK Updates (`gitwrite_sdk`):**
+    *   **Types (`src/types.ts`):** Added `FileContentResponse` interface.
+    *   **Client (`src/apiClient.ts`):** Added `getFileContent(repoName, filePath, commitSha)` method.
+    *   **Exports (`src/index.ts`):** Exported `FileContentResponse`.
+    *   Rebuilt the SDK.
+
+3.  **Frontend Components (`gitwrite-web`):**
+    *   **`CommitHistoryView.tsx`:**
+        *   Fetches and displays commit history for a branch using `client.listCommits()`.
+        *   Allows selection of a commit, navigating to the `RepositoryBrowser` to view the tree at that commit's state (`/repository/:repoName/tree/:commitSha/`).
+    *   **`FileContentViewer.tsx`:**
+        *   Displays file content fetched using `client.getFileContent()`.
+        *   Includes syntax highlighting using `react-syntax-highlighter`.
+    *   **`pages/FileContentViewerPage.tsx`:**
+        *   Wrapper component to parse URL parameters (`repoName`, `commitSha`, `filePath`) and pass them to `FileContentViewer.tsx`.
+    *   **`App.tsx` (Routing):**
+        *   Added route `/repository/:repoName/history/*` for `CommitHistoryView`.
+        *   Added route `/repository/:repoName/commit/:commitSha/file/*` for `FileContentViewerPage`.
+    *   **`RepositoryBrowser.tsx` Updates:**
+        *   Added "View History" button linking to `CommitHistoryView` for the current branch.
+        *   Modified file click handler to navigate to `FileContentViewerPage`, using the latest commit SHA of the current branch (fetched via `client.listCommits({ maxCount: 1 })`).
+        *   Adapted to interpret the ref in its URL (`/repository/:repoName/tree/:ref/*`) as either a branch name or a commit SHA, allowing it to display the tree for a specific commit.
+    *   **`RepositoryStatus.tsx` Updates:**
+        *   Modified to display whether the current view is for a branch or a specific commit.
+
+**Output/Result:**
+-   New API endpoint and core logic for fetching file content.
+-   Updated SDK with the new functionality.
+-   New frontend components for commit history and file viewing.
+-   Enhanced existing frontend components (`RepositoryBrowser`, `RepositoryStatus`, `App.tsx`) to integrate the new views and logic.
+
+**Status:** Completed
+
+**Issues/Blockers:**
+-   `RepositoryBrowser.tsx` still uses mock data for its primary tree listing function. This is outside the scope of the current task but will need to be addressed when its corresponding backend API is implemented.
+
+**Next Steps (Optional):**
+Proceed with Task 11.5 as per the `Implementation_Plan.md`.
+---

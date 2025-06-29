@@ -1,11 +1,11 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { useParams, useNavigate, useLocation } from 'react-router-dom';
-import { GitWriteClient, type RepositoryTreeResponse, type RepositoryTreeEntry, type RepositoryTreeBreadcrumbItem } from 'gitwrite-sdk';
+import { GitWriteClient, type RepositoryTreeResponse, type RepositoryTreeEntry, type RepositoryTreeBreadcrumbItem, type CommitDetail } from 'gitwrite-sdk';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
-import { FolderIcon, FileTextIcon, ArrowLeftIcon, HomeIcon } from 'lucide-react'; // Icons
+import { FolderIcon, FileTextIcon, ArrowLeftIcon, HomeIcon, HistoryIcon } from 'lucide-react'; // Icons
 import { Button } from '@/components/ui/button';
 import RepositoryStatus from './RepositoryStatus'; // Import the status component
 
@@ -22,11 +22,48 @@ const RepositoryBrowser: React.FC = () => {
   const [treeData, setTreeData] = useState<RepositoryTreeResponse | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
+  const [headCommitSha, setHeadCommitSha] = useState<string | null>(null);
 
-  // TODO: Branch selection logic. For now, hardcode or get from a non-existent query param for structure.
-  const queryParams = new URLSearchParams(location.search);
-  const currentBranch = queryParams.get('branch') || treeData?.ref || 'main'; // Fallback to main
-  const currentPath = getPathFromSplat(splatPath);
+  // The splatPath in this route `repository/:repoName/tree/*` is expected to contain the ref (branch name or commit SHA)
+  // and then the path. e.g., "main/src/components", "main", or "<commit_sha>/src/components"
+  const pathParts = splatPath?.split('/') || ['main']; // Default to 'main' if splat is empty
+  const currentRef = pathParts[0] || 'main'; // This can be a branch name or a commit SHA
+  const currentPath = pathParts.slice(1).join('/');
+
+  // Determine if the currentRef is likely a commit SHA (e.g., 40 hex chars)
+  // This is a heuristic. A more robust way might involve an API check or specific URL structure.
+  const isViewingCommit = /^[0-9a-f]{40}$/i.test(currentRef);
+  const currentBranchForDisplay = isViewingCommit ? `Commit: ${currentRef.substring(0,7)}...` : currentRef;
+  const branchForHistoryAndStatus = isViewingCommit ? null : currentRef; // Use null if viewing a commit for status components
+
+  const fetchLatestCommitSha = useCallback(async () => {
+    if (!repoName || !branchForHistoryAndStatus || isViewingCommit) {
+      // If viewing a commit, the headCommitSha is the commit SHA itself for file viewing purposes.
+      // If no branch (e.g. viewing a specific commit directly), don't fetch latest commit of a branch.
+      if(isViewingCommit) setHeadCommitSha(currentRef);
+      return;
+    }
+    try {
+      const client = new GitWriteClient(import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000');
+      const token = localStorage.getItem('jwtToken');
+      if (token) client.setToken(token);
+      else { navigate('/login'); return; }
+
+      const commitsResponse = await client.listCommits({ branchName: branchForHistoryAndStatus, maxCount: 1 });
+      if (commitsResponse.status === 'success' && commitsResponse.commits.length > 0) {
+        setHeadCommitSha(commitsResponse.commits[0].sha);
+      } else if (commitsResponse.status !== 'no_commits') {
+        console.warn(`Failed to fetch latest commit for ${branchForHistoryAndStatus}: ${commitsResponse.message}`);
+        setHeadCommitSha(null); // Explicitly set to null on failure to fetch
+      } else {
+        setHeadCommitSha(null); // No commits on the branch
+      }
+    } catch (err) {
+      console.warn(`Error fetching latest commit for ${branchForHistoryAndStatus}:`, err);
+      setHeadCommitSha(null);
+    }
+  }, [repoName, branchForHistoryAndStatus, navigate, isViewingCommit, currentRef]);
+
 
   const fetchTree = useCallback(async (pathToList: string) => {
     if (!repoName) return;
@@ -43,7 +80,7 @@ const RepositoryBrowser: React.FC = () => {
       }
 
       // MOCK DATA - Replace with actual API call
-      // const response = await client.listRepositoryTree(repoName, currentBranch, pathToList);
+      // const response = await client.listRepositoryTree(repoName, currentRef, pathToList);
       // setTreeData(response);
 
       // Simulating API call
@@ -78,7 +115,7 @@ const RepositoryBrowser: React.FC = () => {
 
       const mockResponse: RepositoryTreeResponse = {
         repo_name: repoName,
-        ref: currentBranch,
+        ref: currentRef, // Use currentRef here
         request_path: pathToList,
         entries: mockEntries,
         breadcrumb: mockBreadcrumb,
@@ -86,34 +123,51 @@ const RepositoryBrowser: React.FC = () => {
       setTreeData(mockResponse);
 
     } catch (err) {
-      console.error(`Failed to fetch tree for ${repoName}/${pathToList}:`, err);
+      console.error(`Failed to fetch tree for ${repoName}/${currentRef}/${pathToList}:`, err);
       setError(`Failed to load directory contents for "${pathToList || '/'}".`);
     } finally {
       setIsLoading(false);
     }
-  }, [repoName, currentBranch]); // Removed currentPath from deps as it's derived and causes re-fetch loops if not careful
+  }, [repoName, currentRef, navigate]); // Depends on currentRef now
 
   useEffect(() => {
     fetchTree(currentPath);
-  }, [currentPath, fetchTree]); // fetchTree is memoized with useCallback
+    fetchLatestCommitSha();
+  }, [currentPath, currentRef, fetchTree, fetchLatestCommitSha]); // Added currentRef dependency
 
   const handleEntryClick = (entry: RepositoryTreeEntry) => {
+    // entry.path from API is relative to repo root. We need to build the URL with currentRef
+    const targetTreePath = `${currentRef}/${entry.path}`;
     if (entry.type === 'tree') {
-      navigate(`/repository/${repoName}/${entry.path}${location.search}`); // Preserve query params like branch
+      navigate(`/repository/${repoName}/tree/${targetTreePath}`);
     } else {
-      // TODO: Navigate to file viewer (Task 11.4)
-      alert(`File clicked: ${entry.path}. File viewing not yet implemented.`);
+      // If viewing a specific commit (isViewingCommit is true), currentRef is the commit SHA.
+      // If viewing a branch, headCommitSha should be the latest commit of that branch.
+      const commitShaToView = isViewingCommit ? currentRef : headCommitSha;
+      if (commitShaToView) {
+        navigate(`/repository/${repoName}/commit/${commitShaToView}/file/${entry.path}`);
+      } else {
+        setError("Could not determine the commit SHA to view the file. Please try again or check branch/commit status.");
+      }
     }
   };
 
   const handleBreadcrumbClick = (path: string) => {
-    navigate(`/repository/${repoName}/${path}${location.search}`);
+    const targetPath = path ? `${currentRef}/${path}` : currentRef;
+    navigate(`/repository/${repoName}/tree/${targetPath}`);
+  };
+
+  const navigateToHistory = () => {
+    if (branchForHistoryAndStatus) { // Only allow navigating to history if viewing a branch
+        navigate(`/repository/${repoName}/history/${branchForHistoryAndStatus}`);
+    }
   };
 
   const navigateUp = () => {
-    if (!currentPath) return; // Already at root
+    if (!currentPath) return; // Already at root of the current branch view
     const parentPath = currentPath.substring(0, currentPath.lastIndexOf('/'));
-    navigate(`/repository/${repoName}/${parentPath}${location.search}`);
+    const targetPath = parentPath ? `${currentBranch}/${parentPath}` : currentBranch;
+    navigate(`/repository/${repoName}/tree/${targetPath}`);
   };
 
   if (!repoName) {
@@ -142,15 +196,23 @@ const RepositoryBrowser: React.FC = () => {
         </div>
       </CardHeader>
       <CardContent>
-        <RepositoryStatus repoName={repoName} currentBranch={currentBranch} />
+        {/* Pass branchForHistoryAndStatus which will be null if viewing a commit */}
+        <RepositoryStatus repoName={repoName} currentBranch={branchForHistoryAndStatus} commitSha={isViewingCommit ? currentRef : undefined} />
 
-        <div className="mb-4">
-          {currentPath && (
-             <Button variant="outline" size="sm" onClick={navigateUp} className="mr-2">
-                <ArrowLeftIcon className="mr-2 h-4 w-4" /> Up a level
+        <div className="mb-4 flex justify-between items-center">
+          <div>
+            {currentPath && (
+              <Button variant="outline" size="sm" onClick={navigateUp} className="mr-2">
+                  <ArrowLeftIcon className="mr-2 h-4 w-4" /> Up a level
+              </Button>
+            )}
+            {/* TODO: Add branch/ref selector dropdown here */}
+          </div>
+          {!isViewingCommit && branchForHistoryAndStatus && ( // Only show history button if viewing a branch
+            <Button variant="outline" size="sm" onClick={navigateToHistory}>
+              <HistoryIcon className="mr-2 h-4 w-4" /> View Branch History
             </Button>
           )}
-          {/* TODO: Add branch selector dropdown here */}
         </div>
 
         {isLoading && (

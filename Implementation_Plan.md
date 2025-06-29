@@ -69,9 +69,27 @@ Details:
 
 ### Task 11.4 - Agent_Web_Dev: Commit History and File Content Viewer
 Objective: Allow users to view the commit history of a branch and see the contents of a file at a specific version.
-Status: **Pending**
-1.  **History View:** Implement a UI to display the output from `GET /repository/history`. Each entry should be selectable.
-2.  **File Viewer:** Create a component to display the content of a selected file. It should be able to fetch file content from a specific commit hash.
+Status: **Completed**
+Summary: Implemented API endpoint (`GET /repository/file-content`) and core function (`get_file_content_at_commit`) to retrieve file content at a specific commit. Updated SDK with new types and methods. Developed frontend components (`CommitHistoryView`, `FileContentViewer`, `FileContentViewerPage`) and integrated them into the application, enabling users to browse commit history and view file contents at different versions.
+Details:
+1.  **API & Core (`gitwrite_api`, `gitwrite_core`):**
+    *   Created `core_get_file_content_at_commit` in `repository.py` using `pygit2`.
+    *   Added `GET /repository/file-content` endpoint in `routers/repository.py`.
+    *   Defined `FileContentResponse` model in `models.py`.
+    *   Wrote unit tests for both core function and API endpoint.
+2.  **SDK (`gitwrite_sdk`):**
+    *   Added `FileContentResponse` interface to `types.ts`.
+    *   Implemented `getFileContent()` method in `apiClient.ts`.
+    *   Exported new type from `index.ts` and rebuilt SDK.
+3.  **Frontend (`gitwrite-web`):**
+    *   `CommitHistoryView.tsx`: Displays commit list, navigates to tree view for a selected commit.
+    *   `FileContentViewer.tsx`: Displays file content with syntax highlighting.
+    *   `pages/FileContentViewerPage.tsx`: Handles URL params for file viewer.
+    *   `App.tsx`: Added routes for history and file content views.
+    *   `RepositoryBrowser.tsx`: Integrated history navigation, file viewing at current ref, and can display tree for a specific commit.
+    *   `RepositoryStatus.tsx`: Updated to show commit/branch context.
+*Action Items Outstanding:*
+    *   The `RepositoryBrowser.tsx` component still uses mock data for its primary tree listing function. This needs to be updated when the backend API for `listRepositoryTree` (conceptualized in Task 11.3) is fully implemented.
 
 ### Task 11.5 - Agent_Web_Dev: Visual Word-by-Word Diff Viewer
 Objective: Implement a rich, side-by-side comparison view for changes between commits, utilizing the word-level diff API.
