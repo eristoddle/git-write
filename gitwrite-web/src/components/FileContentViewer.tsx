@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { GitWriteClient, type FileContentResponse as SdkFileContentResponse, Annotation, AnnotationStatus, AnnotationListResponse } from 'gitwrite-sdk';
+import { GitWriteClient, type FileContentResponse as SdkFileContentResponse, type Annotation, AnnotationStatus } from 'gitwrite-sdk';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import AnnotationSidebar from './AnnotationSidebar'; // Import the new sidebar

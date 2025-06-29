@@ -1,5 +1,5 @@
 import React from 'react';
-import { Annotation, AnnotationStatus } from 'gitwrite-sdk';
+import { type Annotation, AnnotationStatus } from 'gitwrite-sdk';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';

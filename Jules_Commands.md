@@ -20,5 +20,5 @@ Here is how you run unit tests:
 
 
 Read Memory_Bank.md and Implementation_Plan.md for details on the current state of the project.
-Proceed with Task 11.5 - Agent_Web_Dev: Visual Word-by-Word Diff Viewer
+Proceed with Task 11.7 - Agent_Web_Dev: Selective Change Integration (Cherry-Picking).
 When you are done update Memory_Bank.md and Implementation_Plan.md according the the APM rules, located in the prompts folder of the project.
