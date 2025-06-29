@@ -5,8 +5,9 @@ import Dashboard from './components/Dashboard';
 import RepositoryBrowser from './components/RepositoryBrowser';
 import CommitHistoryView from './components/CommitHistoryView';
 import FileContentViewerPage from './pages/FileContentViewerPage';
-import WordDiffViewerPage from './pages/WordDiffViewerPage'; // Added for Task 11.5
-import ThemeToggle from './components/ThemeToggle'; // ThemeToggle might be part of AppLayout if used globally
+import WordDiffViewerPage from './pages/WordDiffViewerPage';
+import BranchReviewPage from './pages/BranchReviewPage'; // Added for Task 11.7
+import ThemeToggle from './components/ThemeToggle';
 import './App.css';
 
 const ProtectedRoute: React.FC = () => {

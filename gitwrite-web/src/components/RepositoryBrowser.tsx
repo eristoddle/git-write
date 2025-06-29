@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { useParams, useNavigate, useLocation } from 'react-router-dom';
-import { GitWriteClient, type RepositoryTreeResponse, type RepositoryTreeEntry, type RepositoryTreeBreadcrumbItem, type CommitDetail } from 'gitwrite-sdk';
+import { GitWriteClient, type RepositoryTreeResponse, type RepositoryTreeEntry, type RepositoryTreeBreadcrumbItem, type CommitDetail, type RepositoryBranchesResponse } from 'gitwrite-sdk'; // Added RepositoryBranchesResponse
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -115,7 +115,7 @@ const RepositoryBrowser: React.FC = () => {
 
       const mockResponse: RepositoryTreeResponse = {
         repo_name: repoName,
-        ref: currentRef, // Use currentRef here
+        ref: currentRef,
         request_path: pathToList,
         entries: mockEntries,
         breadcrumb: mockBreadcrumb,
@@ -128,12 +128,16 @@ const RepositoryBrowser: React.FC = () => {
     } finally {
       setIsLoading(false);
     }
-  }, [repoName, currentRef, navigate]); // Depends on currentRef now
+  }, [repoName, currentRef, navigate]);
+
+  useEffect(() => {
+    fetchAllBranches(); // Fetch all branches once when repoName changes or on mount
+  }, [fetchAllBranches]); // Removed repoName as it's already a dep of fetchAllBranches
 
   useEffect(() => {
     fetchTree(currentPath);
     fetchLatestCommitSha();
-  }, [currentPath, currentRef, fetchTree, fetchLatestCommitSha]); // Added currentRef dependency
+  }, [currentPath, currentRef, fetchTree, fetchLatestCommitSha]);
 
   const handleEntryClick = (entry: RepositoryTreeEntry) => {
     // entry.path from API is relative to repo root. We need to build the URL with currentRef

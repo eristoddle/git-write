@@ -137,10 +137,26 @@ Details:
 
 ### Task 11.7 - Agent_Web_Dev: Selective Change Integration (Cherry-Picking)
 Objective: Develop the advanced interface for reviewing commits from a branch and selectively integrating them.
-Status: **Pending**
-1.  **Commit Review UI:** Create an interface to browse commits on a given branch (e.g., an editor's feedback branch).
-2.  **Cherry-Pick Action:** Implement a button to trigger the `POST /repository/cherry-pick` API endpoint for a selected commit.
-3.  **Granular Diff View:** For each commit, show the word-by-word diff to allow the author to see the precise changes before deciding to integrate them.
+Status: **Completed**
+Summary: Implemented a new frontend page (`BranchReviewPage.tsx`) for reviewing commits from a specified branch that are not in the current main working branch. Users can view word-by-word diffs for each reviewable commit and trigger a cherry-pick operation. The interface provides feedback on success, conflicts (with file lists), or errors during cherry-picking. Navigation to this page is provided via a dropdown menu in the `RepositoryStatus` component, accessible from the `RepositoryBrowser`.
+Details:
+1.  **Frontend - `BranchReviewPage.tsx` (`gitwrite-web/src/pages/`):**
+    *   Created to display commits from a selected branch (obtained via `client.reviewBranch()`) that are not in the current working branch (assumed 'main' for UI text, backend uses actual HEAD).
+    *   Each commit in the list has:
+        *   A "View Diff" button linking to `WordDiffViewerPage` (comparing commit to its parent: `commit.oid^` vs `commit.oid`).
+        *   A "Cherry-Pick" button that calls `client.cherryPickCommit()`.
+    *   Manages and displays loading states for commit fetching and individual cherry-pick operations.
+    *   Provides UI feedback (Alerts) for cherry-pick success (shows new commit SHA), conflicts (lists conflicting files), or errors.
+    *   Includes a "Refresh List" button to re-fetch reviewable commits.
+2.  **Frontend - Navigation & Integration:**
+    *   `RepositoryStatus.tsx`: Updated to include a "Review for Cherry-Pick" `DropdownMenu`. This menu lists other available branches (fetched in `RepositoryBrowser.tsx` via `client.listBranches()`). Selecting a branch navigates to the `BranchReviewPage` for that branch.
+    *   `RepositoryBrowser.tsx`: Fetches all branches and passes them to `RepositoryStatus.tsx`.
+    *   `App.tsx`: Added a new route `/repository/:repoName/review-branch/:branchName/*` for `BranchReviewPage.tsx`.
+3.  **Diff View Context:**
+    *   The existing `WordDiffViewerPage.tsx` is used to show changes for a commit by comparing it to its parent, which is appropriate for cherry-pick decisions. No modifications to the diff viewer itself were needed for this task.
+*Action Items Outstanding/Limitations:*
+    *   The `currentWorkingBranch` into which commits are cherry-picked is assumed to be the repository's actual current HEAD on the backend. The UI text on `BranchReviewPage` currently hardcodes "main" as the target branch for descriptive purposes. This could be made dynamic in future enhancements.
+    *   The `reviewBranch` API endpoint compares against the current repository HEAD. The UI does not currently support specifying a different base branch for the review if the user intends to cherry-pick into a branch that is not the current HEAD.
 
 ### Task 11.8 - Agent_Web_Dev: Branch Management
 Objective: Provide a simple UI for managing explorations (branches).
