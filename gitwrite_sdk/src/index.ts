@@ -24,6 +24,11 @@ import type {
   RepositoryTreeBreadcrumbItem,
   // Task 11.4
   FileContentResponse,
+  // Word Diff Viewer types (Task 11.5)
+  StructuredDiffFile,
+  WordDiffHunk,
+  WordDiffLine,
+  WordDiffSegment,
 } from './types';
 
 // These are the types we need to ensure are exported for runtime checks or direct use by JS consumers
@@ -56,6 +61,11 @@ export type {
   RepositoryTreeBreadcrumbItem,
   // Task 11.4
   FileContentResponse,
+  // Word Diff Viewer types (Task 11.5)
+  StructuredDiffFile,
+  WordDiffHunk,
+  WordDiffLine,
+  WordDiffSegment,
 };
 
 export {
