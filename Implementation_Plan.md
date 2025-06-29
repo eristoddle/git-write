@@ -93,10 +93,24 @@ Details:
 
 ### Task 11.5 - Agent_Web_Dev: Visual Word-by-Word Diff Viewer
 Objective: Implement a rich, side-by-side comparison view for changes between commits, utilizing the word-level diff API.
-Status: **Pending**
-1.  **API Integration:** Connect to the `GET /repository/compare?diff_mode=word` endpoint.
-2.  **Diff Component:** Build a React component that takes the structured JSON diff data and renders it in a side-by-side or inline view, highlighting added and removed words.
-3.  **Integration:** Allow users to trigger a comparison between any two commits from the history view.
+Status: **Completed**
+Summary: Implemented a visual word-by-word diff viewer. Updated the SDK for structured diff data. Added a "Compare to Parent" button in `CommitHistoryView`. Created `WordDiffDisplay` for rendering detailed line/word changes and `WordDiffViewerPage` for data fetching and routing. Corrected SDK type exports post-initial implementation based on user feedback.
+Details:
+1.  **SDK Updates (`gitwrite_sdk`):**
+    *   Defined TypeScript interfaces (`StructuredDiffFile`, `WordDiffHunk`, `WordDiffLine`, `WordDiffSegment`) for structured diff data.
+    *   Updated `CompareRefsResponse` and `CompareRefsParams` to support word-level diff mode.
+    *   Adjusted `compareRefs` method to handle the new mode and response.
+    *   Ensured all new types are correctly exported from `index.ts`.
+    *   Rebuilt SDK.
+2.  **Frontend - Commit History (`CommitHistoryView.tsx`):**
+    *   Added "Compare to Parent" button, navigating to the diff viewer route with parent and current commit SHAs.
+3.  **Frontend - Diff Viewer (`WordDiffViewerPage.tsx`, `WordDiffDisplay.tsx`):**
+    *   `WordDiffViewerPage.tsx`: Fetches structured diff data using SDK's `compareRefs` with `diff_mode: 'word'`. Manages loading/error states.
+    *   `WordDiffDisplay.tsx`: Renders the structured diff, highlighting file changes, line additions/deletions, and word-level additions/removals with distinct styles.
+4.  **Frontend - Routing (`App.tsx`):**
+    *   Added route `/repository/:repoName/compare/:ref1/:ref2` for `WordDiffViewerPage.tsx`.
+*Action Items Outstanding:*
+    *   Full end-to-end testing dependent on live API and preceding UI views providing a path to this feature.
 
 ### Task 11.6 - Agent_Web_Dev: Annotation Review Interface
 Objective: Create a user interface for viewing and managing beta reader annotations within the context of a file.

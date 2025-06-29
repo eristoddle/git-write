@@ -804,3 +804,57 @@ Implemented features for viewing commit history and file content within the web 
 **Next Steps (Optional):**
 Proceed with Task 11.5 as per the `Implementation_Plan.md`.
 ---
+**Agent:** Jules (Software Engineer AI)
+**Task Reference:** Task 11.5 - Agent_Web_Dev: Visual Word-by-Word Diff Viewer
+
+**Summary:**
+Implemented a visual word-by-word diff viewer in the web application. This feature allows users to compare a commit with its parent and see detailed, highlighted changes at both line and word levels. The SDK was updated to support structured diff data, and new frontend components were created for fetching, displaying, and routing to the diff view.
+
+**Details:**
+1.  **SDK Updates (`gitwrite_sdk`):**
+    *   Defined TypeScript interfaces (`StructuredDiffFile`, `WordDiffHunk`, `WordDiffLine`, `WordDiffSegment`) in `src/types.ts` for the structured JSON output of the word-level diff API.
+    *   Updated `CompareRefsResponse` in `src/types.ts`: `patch_text` field changed to `patch_data: string | StructuredDiffFile[]`.
+    *   Updated `CompareRefsParams` in `src/types.ts` to include `diff_mode?: 'text' | 'word'`.
+    *   Modified `compareRefs` method in `src/apiClient.ts` to pass the `diff_mode` query parameter and handle the updated response type.
+    *   Exported the new diff-related types from `src/index.ts`.
+    *   Rebuilt the SDK.
+
+2.  **Frontend - Commit History View (`gitwrite-web/src/components/CommitHistoryView.tsx`):**
+    *   Added a "Compare to Parent" button to each commit in the history list (disabled for initial commits).
+    *   On click, this button navigates to a new route (`/repository/:repoName/compare/:parentSha/:currentSha`) dedicated to showing the diff.
+
+3.  **Frontend - Diff Viewer Components (`gitwrite-web`):**
+    *   Created `WordDiffDisplay.tsx`: A component that takes structured diff data and renders it.
+        *   Displays file paths (handles renames/copies).
+        *   Shows messages for binary files or non-content changes.
+        *   Renders hunks and lines with appropriate background colors for additions (green) and deletions (red).
+        *   Within changed lines, highlights individual added/removed words with stronger background colors and appropriate text styling (e.g., strikethrough for removed).
+    *   Created `WordDiffViewerPage.tsx`: A page component that:
+        *   Parses repository name and commit SHAs (`ref1`, `ref2`) from URL parameters.
+        *   Fetches the structured diff data using `client.compareRefs({ ref1, ref2, diff_mode: 'word' })`.
+        *   Manages loading and error states.
+        *   Renders the `WordDiffDisplay` component with the fetched data.
+        *   Includes a back button and displays the SHAs being compared.
+
+4.  **Frontend - Routing (`gitwrite-web/src/App.tsx`):**
+    *   Added a new route `/repository/:repoName/compare/:ref1/:ref2` that maps to `WordDiffViewerPage.tsx`.
+
+5.  **Post-implementation Fix (User Feedback):**
+    *   Corrected an issue where new SDK types (`StructuredDiffFile`, `WordDiffHunk`, `WordDiffLine`, `WordDiffSegment`) were defined but not exported from `gitwrite_sdk/src/index.ts`, causing TypeScript errors in the web app. Updated exports and rebuilt SDK.
+    *   Ensured `WordDiffDisplay.tsx` correctly imports all necessary types from the SDK.
+
+
+**Output/Result:**
+-   SDK updated to handle structured word-level diffs.
+-   Web application now features a visual diff viewer accessible from the commit history page.
+-   `Implementation_Plan.md` updated to mark Task 11.5 as complete.
+
+**Status:** Completed
+
+**Issues/Blockers:**
+-   Initial test runs for backend failed due to environment issues (missing `pygit2`, missing `pandoc`). These are considered pre-existing or environment-specific and not regressions from this task. User confirmed Python tests pass in their correct environment.
+-   The full end-to-end testing of this feature in the web app relies on the `GET /repository/compare` API endpoint being functional and the preceding UI views (project list, repo browser, commit history) being able to provide live data or a path to trigger the comparison.
+
+**Next Steps (Optional):**
+Proceed with Task 11.6 as per the `Implementation_Plan.md`.
+---
