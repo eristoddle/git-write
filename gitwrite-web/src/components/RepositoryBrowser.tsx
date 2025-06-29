@@ -23,6 +23,7 @@ const RepositoryBrowser: React.FC = () => {
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
   const [headCommitSha, setHeadCommitSha] = useState<string | null>(null);
+  const [allBranches, setAllBranches] = useState<string[] | null>(null); // ADDED
 
   // The splatPath in this route `repository/:repoName/tree/*` is expected to contain the ref (branch name or commit SHA)
   // and then the path. e.g., "main/src/components", "main", or "<commit_sha>/src/components"
@@ -64,6 +65,27 @@ const RepositoryBrowser: React.FC = () => {
     }
   }, [repoName, branchForHistoryAndStatus, navigate, isViewingCommit, currentRef]);
 
+  // ADDED fetchAllBranches definition
+  const fetchAllBranches = useCallback(async () => {
+    if (!repoName) return;
+    try {
+      const client = new GitWriteClient(import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000');
+      const token = localStorage.getItem('jwtToken');
+      if (token) client.setToken(token);
+      else { navigate('/login'); return; }
+
+      const response: RepositoryBranchesResponse = await client.listBranches();
+      if (response.status === 'success') {
+        setAllBranches(response.branches);
+      } else {
+        console.warn(`Failed to fetch all branches for ${repoName}: ${response.message}`);
+        setAllBranches(null); // Explicitly set to null on failure
+      }
+    } catch (err) {
+      console.warn(`Error fetching all branches for ${repoName}:`, err);
+      setAllBranches(null); // Explicitly set to null on error
+    }
+  }, [repoName, navigate]);
 
   const fetchTree = useCallback(async (pathToList: string) => {
     if (!repoName) return;
@@ -131,8 +153,8 @@ const RepositoryBrowser: React.FC = () => {
   }, [repoName, currentRef, navigate]);
 
   useEffect(() => {
-    fetchAllBranches(); // Fetch all branches once when repoName changes or on mount
-  }, [fetchAllBranches]); // Removed repoName as it's already a dep of fetchAllBranches
+    fetchAllBranches();
+  }, [fetchAllBranches]); // This useEffect IS ALREADY PRESENT and now fetchAllBranches will be defined
 
   useEffect(() => {
     fetchTree(currentPath);
@@ -201,7 +223,12 @@ const RepositoryBrowser: React.FC = () => {
       </CardHeader>
       <CardContent>
         {/* Pass branchForHistoryAndStatus which will be null if viewing a commit */}
-        <RepositoryStatus repoName={repoName} currentBranch={branchForHistoryAndStatus} commitSha={isViewingCommit ? currentRef : undefined} />
+        <RepositoryStatus
+          repoName={repoName}
+          currentBranch={branchForHistoryAndStatus}
+          commitSha={isViewingCommit ? currentRef : undefined}
+          allBranches={allBranches} // ADDED allBranches prop
+        />
 
         <div className="mb-4 flex justify-between items-center">
           <div>
