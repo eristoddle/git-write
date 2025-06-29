@@ -248,10 +248,12 @@ class GitWriteClient {
     /**
      * Compares two references in the repository and returns the diff.
      * Corresponds to API endpoint: GET /repository/compare
-     * @param params Optional ref1 and ref2. Defaults to HEAD~1 and HEAD.
+     * @param params Optional ref1, ref2, and diff_mode. Defaults to HEAD~1 and HEAD, and 'text' diff_mode.
      */
     async compareRefs(params) {
-        const response = await this.get('/repository/compare', { params });
+        // Ensure params is an object even if undefined is passed.
+        const queryParams = { ...params };
+        const response = await this.get('/repository/compare', { params: queryParams });
         return response.data;
     }
     /**

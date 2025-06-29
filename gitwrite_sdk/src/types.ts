@@ -228,6 +228,7 @@ export interface MergeBranchResponse {
 export interface CompareRefsParams {
   ref1?: string | null;
   ref2?: string | null;
+  diff_mode?: 'text' | 'word'; // Added for word-level diff
 }
 
 /**
@@ -239,8 +240,46 @@ export interface CompareRefsResponse {
   ref2_oid: string;
   ref1_display_name: string;
   ref2_display_name: string;
-  patch_text: string;
+  patch_data: string | StructuredDiffFile[]; // Updated for word-level diff
 }
+
+/**
+ * Represents a segment of a word diff (added, removed, context).
+ */
+export interface WordDiffSegment {
+  type: 'added' | 'removed' | 'context';
+  content: string;
+}
+
+/**
+ * Represents a line in a structured diff, potentially with word-level details.
+ */
+export interface WordDiffLine {
+  type: 'context' | 'deletion' | 'addition' | 'no_newline';
+  content: string;
+  words?: WordDiffSegment[]; // Present for 'deletion' and 'addition' lines
+}
+
+/**
+ * Represents a hunk of changes in a structured diff.
+ */
+export interface WordDiffHunk {
+  lines: WordDiffLine[];
+}
+
+/**
+ * Represents the structured diff for a single file.
+ * This mirrors the structure from `gitwrite_core.versioning.get_word_level_diff`.
+ */
+export interface StructuredDiffFile {
+  file_path: string;
+  change_type: 'modified' | 'added' | 'deleted' | 'renamed' | 'copied';
+  old_file_path?: string; // For renames/copies
+  new_file_path?: string; // For renames/copies
+  is_binary?: boolean;
+  hunks: WordDiffHunk[];
+}
+
 
 /**
  * Request payload for reverting a commit.

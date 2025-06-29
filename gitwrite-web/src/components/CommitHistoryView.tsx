@@ -119,7 +119,7 @@ const CommitHistoryView: React.FC = () => {
                 <TableHead>Message</TableHead>
                 <TableHead>Author</TableHead>
                 <TableHead className="w-[200px]">Date</TableHead>
-                <TableHead className="text-right w-[100px]">Actions</TableHead>
+                <TableHead className="text-right w-[220px]">Actions</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -131,9 +131,21 @@ const CommitHistoryView: React.FC = () => {
                   <TableCell>{commit.message.split('\n')[0]}</TableCell> {/* Show first line */}
                   <TableCell>{commit.author_name}</TableCell>
                   <TableCell>{new Date(commit.author_date).toLocaleString()}</TableCell>
-                  <TableCell className="text-right">
+                  <TableCell className="text-right space-x-2">
                     <Button variant="outline" size="sm" onClick={() => handleCommitSelect(commit.sha)}>
                       View
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      disabled={!commit.parents || commit.parents.length === 0}
+                      onClick={() => {
+                        if (commit.parents && commit.parents.length > 0) {
+                          navigate(`/repository/${repoName}/compare/${commit.parents[0]}/${commit.sha}`);
+                        }
+                      }}
+                    >
+                      Compare to Parent
                     </Button>
                   </TableCell>
                 </TableRow>

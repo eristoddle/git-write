@@ -198,6 +198,7 @@ interface MergeBranchResponse {
 interface CompareRefsParams {
     ref1?: string | null;
     ref2?: string | null;
+    diff_mode?: 'text' | 'word';
 }
 /**
  * Response data for comparing references.
@@ -208,7 +209,40 @@ interface CompareRefsResponse {
     ref2_oid: string;
     ref1_display_name: string;
     ref2_display_name: string;
-    patch_text: string;
+    patch_data: string | StructuredDiffFile[];
+}
+/**
+ * Represents a segment of a word diff (added, removed, context).
+ */
+interface WordDiffSegment {
+    type: 'added' | 'removed' | 'context';
+    content: string;
+}
+/**
+ * Represents a line in a structured diff, potentially with word-level details.
+ */
+interface WordDiffLine {
+    type: 'context' | 'deletion' | 'addition' | 'no_newline';
+    content: string;
+    words?: WordDiffSegment[];
+}
+/**
+ * Represents a hunk of changes in a structured diff.
+ */
+interface WordDiffHunk {
+    lines: WordDiffLine[];
+}
+/**
+ * Represents the structured diff for a single file.
+ * This mirrors the structure from `gitwrite_core.versioning.get_word_level_diff`.
+ */
+interface StructuredDiffFile {
+    file_path: string;
+    change_type: 'modified' | 'added' | 'deleted' | 'renamed' | 'copied';
+    old_file_path?: string;
+    new_file_path?: string;
+    is_binary?: boolean;
+    hunks: WordDiffHunk[];
 }
 /**
  * Request payload for reverting a commit.
@@ -548,7 +582,7 @@ declare class GitWriteClient {
     /**
      * Compares two references in the repository and returns the diff.
      * Corresponds to API endpoint: GET /repository/compare
-     * @param params Optional ref1 and ref2. Defaults to HEAD~1 and HEAD.
+     * @param params Optional ref1, ref2, and diff_mode. Defaults to HEAD~1 and HEAD, and 'text' diff_mode.
      */
     compareRefs(params?: CompareRefsParams): Promise<CompareRefsResponse>;
     /**

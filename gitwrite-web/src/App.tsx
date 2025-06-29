@@ -3,9 +3,10 @@ import { BrowserRouter as Router, Routes, Route, Navigate, Outlet } from 'react-
 import Login from './components/Login';
 import Dashboard from './components/Dashboard';
 import RepositoryBrowser from './components/RepositoryBrowser';
-import CommitHistoryView from './components/CommitHistoryView'; // Added for Task 11.4
-import FileContentViewerPage from './pages/FileContentViewerPage'; // Wrapper page for FileContentViewer
-import ThemeToggle from './components/ThemeToggle';
+import CommitHistoryView from './components/CommitHistoryView';
+import FileContentViewerPage from './pages/FileContentViewerPage';
+import WordDiffViewerPage from './pages/WordDiffViewerPage'; // Added for Task 11.5
+import ThemeToggle from './components/ThemeToggle'; // ThemeToggle might be part of AppLayout if used globally
 import './App.css';
 
 const ProtectedRoute: React.FC = () => {
@@ -44,6 +45,8 @@ const App: React.FC = () => {
             {/* Route for viewing a specific file at a specific commit */}
             {/* The '*' (splat) in filePath will capture the full file path including slashes */}
             <Route path="/repository/:repoName/commit/:commitSha/file/*" element={<FileContentViewerPage />} />
+            {/* Route for comparing two refs (commits, branches, etc.) */}
+            <Route path="/repository/:repoName/compare/:ref1/:ref2" element={<WordDiffViewerPage />} />
             {/* Redirect base /repository/:repoName to its tree view of the default branch (e.g., main) */}
             <Route path="/repository/:repoName" element={<Navigate to="tree/main" replace />} />
           </Route>
