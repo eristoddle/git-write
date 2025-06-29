@@ -93,7 +93,7 @@ Details:
 
 ### Task 11.5 - Agent_Web_Dev: Visual Word-by-Word Diff Viewer
 Objective: Implement a rich, side-by-side comparison view for changes between commits, utilizing the word-level diff API.
-Status: **Pending**
+Status: **Completed**
 1.  **API Integration:** Connect to the `GET /repository/compare?diff_mode=word` endpoint.
 2.  **Diff Component:** Build a React component that takes the structured JSON diff data and renders it in a side-by-side or inline view, highlighting added and removed words.
 3.  **Integration:** Allow users to trigger a comparison between any two commits from the history view.
