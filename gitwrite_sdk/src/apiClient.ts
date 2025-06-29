@@ -44,6 +44,14 @@ import {
   RepositoryTreeResponse,
   // Types for Task 11.4
   FileContentResponse,
+  // Types for Task 11.6 (Annotations)
+  AnnotationListResponse,
+  AnnotationStatus,
+  UpdateAnnotationStatusRequest,
+  UpdateAnnotationStatusResponse,
+  CreateAnnotationRequest,
+  CreateAnnotationResponse,
+  Annotation, // Base Annotation type
 } from './types';
 
 // Define a type for the token, which can be a string or null
@@ -517,6 +525,60 @@ export class GitWriteClient {
     // The API endpoint is /repository/file-content, repoName is not part of the URL path for this specific endpoint
     // It's included as a parameter for potential future use or consistency with other SDK methods.
     const response = await this.get<FileContentResponse>(`/repository/file-content?${queryParams.toString()}`);
+    return response.data;
+  }
+
+  // --- Methods for Annotation Handling (Task 11.6) ---
+
+  /**
+   * Lists all annotations from a specified feedback branch.
+   * Corresponds to API endpoint: GET /repository/annotations
+   * @param repoName The name of the repository (currently for consistency, not used in API path).
+   * @param feedbackBranch The name of the feedback branch.
+   */
+  public async listAnnotations(
+    repoName: string, // Included for consistency, though API endpoint doesn't use it in path
+    feedbackBranch: string
+  ): Promise<AnnotationListResponse> {
+    const queryParams = new URLSearchParams({
+      feedback_branch: feedbackBranch,
+    });
+    const response = await this.get<AnnotationListResponse>(`/repository/annotations?${queryParams.toString()}`);
+    return response.data;
+  }
+
+  /**
+   * Updates the status of an existing annotation.
+   * Corresponds to API endpoint: PUT /repository/annotations/{annotation_commit_id}
+   * @param annotationCommitId The commit ID (SHA) of the original annotation to update.
+   * @param payload The request payload, including new_status and feedback_branch.
+   */
+  public async updateAnnotationStatus(
+    annotationCommitId: string,
+    payload: UpdateAnnotationStatusRequest
+  ): Promise<UpdateAnnotationStatusResponse> {
+    const response = await this.put<UpdateAnnotationStatusResponse, AxiosResponse<UpdateAnnotationStatusResponse>, UpdateAnnotationStatusRequest>(
+      `/repository/annotations/${annotationCommitId}`,
+      payload
+    );
+    return response.data;
+  }
+
+  /**
+   * Creates a new annotation.
+   * Corresponds to API endpoint: POST /repository/annotations
+   * (Added for SDK completeness, though not strictly part of Task 11.6 UI)
+   * @param repoName The name of the repository.
+   * @param payload The request payload for creating the annotation.
+   */
+  public async createAnnotation(
+    repoName: string, // For consistency
+    payload: CreateAnnotationRequest
+  ): Promise<CreateAnnotationResponse> {
+    const response = await this.post<CreateAnnotationResponse, AxiosResponse<CreateAnnotationResponse>, CreateAnnotationRequest>(
+        `/repository/annotations`,
+        payload
+    );
     return response.data;
   }
 }

@@ -29,14 +29,24 @@ import type {
   WordDiffHunk,
   WordDiffLine,
   WordDiffSegment,
+  // Task 11.6 (Annotation Types)
+  Annotation,
+  AnnotationListResponse,
+  UpdateAnnotationStatusRequest,
+  UpdateAnnotationStatusResponse,
+  CreateAnnotationRequest,
+  CreateAnnotationResponse,
 } from './types';
 
 // These are the types we need to ensure are exported for runtime checks or direct use by JS consumers
+// For enums, they are actual values, so they need to be imported normally and exported as values.
 import {
     RepositoryListItem,
     RepositoriesListResponse,
     RepositoryTreeResponse,
     // Task 11.4: No value-level export needed for FileContentResponse, it's a type.
+    // Task 11.6 (Annotation Enum)
+    AnnotationStatus,
 } from './types';
 
 export type {
@@ -66,6 +76,13 @@ export type {
   WordDiffHunk,
   WordDiffLine,
   WordDiffSegment,
+  // Task 11.6 (Annotation Types)
+  Annotation,
+  AnnotationListResponse,
+  UpdateAnnotationStatusRequest,
+  UpdateAnnotationStatusResponse,
+  CreateAnnotationRequest,
+  CreateAnnotationResponse,
 };
 
 export {
@@ -73,6 +90,8 @@ export {
     RepositoriesListResponse,
     RepositoryTreeResponse,
     // Task 11.4: No value-level export needed for FileContentResponse
+    // Task 11.6 (Annotation Enum)
+    AnnotationStatus,
 };
 
 // You can also export other modules or types here as the SDK grows

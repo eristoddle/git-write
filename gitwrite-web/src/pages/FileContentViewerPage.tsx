@@ -37,6 +37,7 @@ const FileContentViewerPage: React.FC = () => {
             repoName={repoName}
             filePath={filePath}
             commitSha={commitSha}
+            feedbackBranch="feedback/main" // Hardcoded for now
         />
     </div>
   );

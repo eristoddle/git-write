@@ -86,6 +86,74 @@ interface SaveFileResponseData {
     commit_id?: string;
 }
 /**
+ * Represents the status of an annotation.
+ * Mirrors AnnotationStatus enum in gitwrite_api/models.py.
+ */
+declare enum AnnotationStatus {
+    NEW = "new",
+    ACCEPTED = "accepted",
+    REJECTED = "rejected"
+}
+/**
+ * Represents an annotation object.
+ * Mirrors Annotation Pydantic model in gitwrite_api/models.py.
+ */
+interface Annotation {
+    id?: string | null;
+    file_path: string;
+    highlighted_text: string;
+    start_line: number;
+    end_line: number;
+    comment: string;
+    author: string;
+    status: AnnotationStatus;
+    commit_id?: string | null;
+    original_annotation_id?: string | null;
+}
+/**
+ * Represents the response for listing annotations.
+ * Mirrors AnnotationListResponse Pydantic model in gitwrite_api/models.py.
+ */
+interface AnnotationListResponse {
+    annotations: Annotation[];
+    count: number;
+}
+/**
+ * Represents the request payload for updating an annotation's status.
+ * Mirrors UpdateAnnotationStatusRequest Pydantic model in gitwrite_api/models.py.
+ */
+interface UpdateAnnotationStatusRequest {
+    new_status: AnnotationStatus;
+    feedback_branch: string;
+}
+/**
+ * Represents the response for updating an annotation's status.
+ * Mirrors UpdateAnnotationStatusResponse Pydantic model in gitwrite_api/models.py.
+ */
+interface UpdateAnnotationStatusResponse {
+    annotation: Annotation;
+    message: string;
+}
+/**
+ * Represents the request payload for creating an annotation. (Added for completeness, though not strictly part of Task 11.6 UI)
+ * Mirrors CreateAnnotationRequest Pydantic model in gitwrite_api/models.py.
+ */
+interface CreateAnnotationRequest {
+    file_path: string;
+    highlighted_text: string;
+    start_line: number;
+    end_line: number;
+    comment: string;
+    author: string;
+    feedback_branch: string;
+}
+/**
+ * Represents the response for creating an annotation. (Added for completeness)
+ * Mirrors AnnotationResponse Pydantic model which inherits from Annotation.
+ */
+interface CreateAnnotationResponse extends Annotation {
+}
+/**
  * Response data for retrieving file content.
  * Maps to FileContentResponse in API (gitwrite_api/models.py).
  */
@@ -642,7 +710,31 @@ declare class GitWriteClient {
      */
     getFileContent(repoName: string, // repoName might be used in future if API becomes multi-repo or needs it for namespacing
     filePath: string, commitSha: string): Promise<FileContentResponse>;
+    /**
+     * Lists all annotations from a specified feedback branch.
+     * Corresponds to API endpoint: GET /repository/annotations
+     * @param repoName The name of the repository (currently for consistency, not used in API path).
+     * @param feedbackBranch The name of the feedback branch.
+     */
+    listAnnotations(repoName: string, // Included for consistency, though API endpoint doesn't use it in path
+    feedbackBranch: string): Promise<AnnotationListResponse>;
+    /**
+     * Updates the status of an existing annotation.
+     * Corresponds to API endpoint: PUT /repository/annotations/{annotation_commit_id}
+     * @param annotationCommitId The commit ID (SHA) of the original annotation to update.
+     * @param payload The request payload, including new_status and feedback_branch.
+     */
+    updateAnnotationStatus(annotationCommitId: string, payload: UpdateAnnotationStatusRequest): Promise<UpdateAnnotationStatusResponse>;
+    /**
+     * Creates a new annotation.
+     * Corresponds to API endpoint: POST /repository/annotations
+     * (Added for SDK completeness, though not strictly part of Task 11.6 UI)
+     * @param repoName The name of the repository.
+     * @param payload The request payload for creating the annotation.
+     */
+    createAnnotation(repoName: string, // For consistency
+    payload: CreateAnnotationRequest): Promise<CreateAnnotationResponse>;
 }
 
-export { GitWriteClient };
-export type { ApiErrorResponse, AuthToken, Branch, CommitDetail, FileContentResponse, FileMetadataForUpload, InputFile, ListCommitsParams, LoginCredentials, RepositoriesListResponse, RepositoryBranchesResponse, RepositoryCommitsResponse, RepositoryListItem, RepositoryTagsResponse, RepositoryTreeBreadcrumbItem, RepositoryTreeEntry, RepositoryTreeResponse, SaveFileRequestPayload, SaveFileResponseData, StructuredDiffFile, Tag, TokenResponse, UploadCompleteRequestPayload, UploadCompleteResponseData, UploadInitiateRequestPayload, UploadInitiateResponseData, UploadURLData, WordDiffHunk, WordDiffLine, WordDiffSegment };
+export { AnnotationStatus, GitWriteClient };
+export type { Annotation, AnnotationListResponse, ApiErrorResponse, AuthToken, Branch, CommitDetail, CreateAnnotationRequest, CreateAnnotationResponse, FileContentResponse, FileMetadataForUpload, InputFile, ListCommitsParams, LoginCredentials, RepositoriesListResponse, RepositoryBranchesResponse, RepositoryCommitsResponse, RepositoryListItem, RepositoryTagsResponse, RepositoryTreeBreadcrumbItem, RepositoryTreeEntry, RepositoryTreeResponse, SaveFileRequestPayload, SaveFileResponseData, StructuredDiffFile, Tag, TokenResponse, UpdateAnnotationStatusRequest, UpdateAnnotationStatusResponse, UploadCompleteRequestPayload, UploadCompleteResponseData, UploadInitiateRequestPayload, UploadInitiateResponseData, UploadURLData, WordDiffHunk, WordDiffLine, WordDiffSegment };

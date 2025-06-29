@@ -350,6 +350,43 @@ class GitWriteClient {
         const response = await this.get(`/repository/file-content?${queryParams.toString()}`);
         return response.data;
     }
+    // --- Methods for Annotation Handling (Task 11.6) ---
+    /**
+     * Lists all annotations from a specified feedback branch.
+     * Corresponds to API endpoint: GET /repository/annotations
+     * @param repoName The name of the repository (currently for consistency, not used in API path).
+     * @param feedbackBranch The name of the feedback branch.
+     */
+    async listAnnotations(repoName, // Included for consistency, though API endpoint doesn't use it in path
+    feedbackBranch) {
+        const queryParams = new URLSearchParams({
+            feedback_branch: feedbackBranch,
+        });
+        const response = await this.get(`/repository/annotations?${queryParams.toString()}`);
+        return response.data;
+    }
+    /**
+     * Updates the status of an existing annotation.
+     * Corresponds to API endpoint: PUT /repository/annotations/{annotation_commit_id}
+     * @param annotationCommitId The commit ID (SHA) of the original annotation to update.
+     * @param payload The request payload, including new_status and feedback_branch.
+     */
+    async updateAnnotationStatus(annotationCommitId, payload) {
+        const response = await this.put(`/repository/annotations/${annotationCommitId}`, payload);
+        return response.data;
+    }
+    /**
+     * Creates a new annotation.
+     * Corresponds to API endpoint: POST /repository/annotations
+     * (Added for SDK completeness, though not strictly part of Task 11.6 UI)
+     * @param repoName The name of the repository.
+     * @param payload The request payload for creating the annotation.
+     */
+    async createAnnotation(repoName, // For consistency
+    payload) {
+        const response = await this.post(`/repository/annotations`, payload);
+        return response.data;
+    }
 }
 // Example usage (optional, for testing within this file)
 /*
@@ -385,6 +422,19 @@ async function main() {
 
 // main(); // Uncomment to run example
 */
+
+// src/types.ts
+// --- Types for Annotation Handling (Task 11.6) ---
+/**
+ * Represents the status of an annotation.
+ * Mirrors AnnotationStatus enum in gitwrite_api/models.py.
+ */
+exports.AnnotationStatus = void 0;
+(function (AnnotationStatus) {
+    AnnotationStatus["NEW"] = "new";
+    AnnotationStatus["ACCEPTED"] = "accepted";
+    AnnotationStatus["REJECTED"] = "rejected";
+})(exports.AnnotationStatus || (exports.AnnotationStatus = {}));
 
 exports.GitWriteClient = GitWriteClient;
 //# sourceMappingURL=index.js.map

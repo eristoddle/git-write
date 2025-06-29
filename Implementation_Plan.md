@@ -114,10 +114,26 @@ Details:
 
 ### Task 11.6 - Agent_Web_Dev: Annotation Review Interface
 Objective: Create a user interface for viewing and managing beta reader annotations within the context of a file.
-Status: **Pending**
-1.  **API Integration:** Fetch annotations for a given file and feedback branch using `GET /repository/annotations`.
-2.  **Annotation Display:** Overlay or list annotations alongside the file content in the file viewer.
-3.  **Status Update:** Implement UI elements (e.g., buttons) to accept or reject an annotation, calling the `PUT /repository/annotations/{annotation_commit_id}` endpoint.
+Status: **Completed**
+Summary: Implemented an annotation review interface within the `FileContentViewer`. Updated the SDK with annotation types and API client methods. Created an `AnnotationSidebar` component to list annotations relevant to the current file, display their details (author, comment, status), and provide "Accept"/"Reject" buttons. `FileContentViewer` now fetches annotations, manages their state, handles status updates via the SDK, and renders the sidebar. The feedback branch is currently hardcoded to "feedback/main".
+Details:
+1.  **SDK Update (`gitwrite_sdk`):**
+    *   Added `AnnotationStatus` enum, `Annotation` interface, and related request/response types (`AnnotationListResponse`, `UpdateAnnotationStatusRequest`, `UpdateAnnotationStatusResponse`) to `types.ts`.
+    *   Implemented `listAnnotations` and `updateAnnotationStatus` methods in `apiClient.ts`.
+    *   Exported new types and rebuilt the SDK.
+2.  **Frontend - `AnnotationSidebar.tsx`:**
+    *   Created to display annotations, each with details and Accept/Reject buttons.
+    *   Filters annotations by `currentFilePath`.
+    *   Handles loading states for status updates on individual annotations.
+3.  **Frontend - `FileContentViewer.tsx` Integration:**
+    *   Fetches annotations for a (currently hardcoded) `feedbackBranch` in parallel with file content.
+    *   Renders `AnnotationSidebar` alongside the file content.
+    *   Manages annotation state, loading, errors, and handles status update logic.
+4.  **Frontend - `FileContentViewerPage.tsx`:**
+    *   Modified to pass a hardcoded `feedbackBranch="feedback/main"` prop to `FileContentViewer`.
+*Action Items Outstanding:*
+    *   Make `feedbackBranch` selection dynamic for the user.
+    *   Consider visual integration of annotation markers directly into the file content viewer (e.g., line highlighting).
 
 ### Task 11.7 - Agent_Web_Dev: Selective Change Integration (Cherry-Picking)
 Objective: Develop the advanced interface for reviewing commits from a branch and selectively integrating them.

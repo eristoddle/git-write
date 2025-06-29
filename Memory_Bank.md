@@ -858,3 +858,46 @@ Implemented a visual word-by-word diff viewer in the web application. This featu
 **Next Steps (Optional):**
 Proceed with Task 11.6 as per the `Implementation_Plan.md`.
 ---
+**Agent:** Jules (Software Engineer AI)
+**Task Reference:** Task 11.6 - Agent_Web_Dev: Annotation Review Interface
+
+**Summary:**
+Successfully implemented the Annotation Review Interface in the `gitwrite-web` application. This involved updating the `gitwrite-sdk` with new types and methods for annotation handling, creating an `AnnotationSidebar` React component to display and manage annotations, and integrating this sidebar into the existing `FileContentViewer` component. Users can now view annotations relevant to a file and update their status (Accept/Reject).
+
+**Details:**
+1.  **SDK Updates (`gitwrite_sdk`):**
+    *   Added TypeScript interfaces/enums to `src/types.ts`: `AnnotationStatus`, `Annotation`, `AnnotationListResponse`, `UpdateAnnotationStatusRequest`, `UpdateAnnotationStatusResponse`, `CreateAnnotationRequest`, `CreateAnnotationResponse`.
+    *   Added methods to `src/apiClient.ts`: `listAnnotations(repoName, feedbackBranch)` and `updateAnnotationStatus(annotationCommitId, payload)`. Also added `createAnnotation` for completeness.
+    *   Exported new types from `src/index.ts`.
+    *   Rebuilt the SDK successfully.
+
+2.  **Frontend - `AnnotationSidebar.tsx` (`gitwrite-web`):**
+    *   Created a new component to display a list of annotations filtered for the `currentFilePath`.
+    *   Each annotation card shows author, comment, highlighted text, and status (as a badge).
+    *   Provides "Accept" and "Reject" buttons, calling a prop function `onUpdateStatus`.
+    *   Manages loading states for individual status updates.
+    *   Uses Shadcn UI components (`Card`, `Button`, `Badge`, `ScrollArea`).
+
+3.  **Frontend - `FileContentViewer.tsx` (`gitwrite-web`):**
+    *   Modified to fetch annotations for a given `feedbackBranch` (prop added, initially hardcoded in page) in parallel with file content.
+    *   Manages state for annotations, loading, and errors related to annotations.
+    *   Implements `handleUpdateAnnotationStatus` to call the SDK's `updateAnnotationStatus` method and then refreshes the annotation list.
+    *   Renders the `AnnotationSidebar`, passing down annotations, the update handler, loading state, and the current file path.
+    *   Adjusted overall layout to a two-column view (file content and annotation sidebar).
+
+4.  **Frontend - `FileContentViewerPage.tsx` (`gitwrite-web`):**
+    *   Updated to pass a hardcoded `feedbackBranch="feedback/main"` prop to `FileContentViewer`.
+
+**Output/Result:**
+-   SDK enhanced for annotation interactions.
+-   Web application now has an interface for viewing and managing annotations alongside file content.
+-   The `feedbackBranch` is currently hardcoded, suggesting a future enhancement for dynamic selection.
+
+**Status:** Completed
+
+**Issues/Blockers:**
+-   Full end-to-end manual testing was limited by the lack of a running backend with pre-existing annotations in the development environment. Verification was based on code compilation, successful dev server startup, and conceptual review.
+
+**Next Steps (Optional):**
+Proceed with Task 11.7 as per the `Implementation_Plan.md`.
+---

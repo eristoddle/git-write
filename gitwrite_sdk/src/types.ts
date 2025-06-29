@@ -93,6 +93,85 @@ export interface SaveFileResponseData {
   commit_id?: string; // Optional, as it might not be present on error
 }
 
+// --- Types for Annotation Handling (Task 11.6) ---
+
+/**
+ * Represents the status of an annotation.
+ * Mirrors AnnotationStatus enum in gitwrite_api/models.py.
+ */
+export enum AnnotationStatus {
+  NEW = "new",
+  ACCEPTED = "accepted",
+  REJECTED = "rejected",
+}
+
+/**
+ * Represents an annotation object.
+ * Mirrors Annotation Pydantic model in gitwrite_api/models.py.
+ */
+export interface Annotation {
+  id?: string | null; // Optional: Unique identifier, typically commit SHA of creation.
+  file_path: string;
+  highlighted_text: string;
+  start_line: number;
+  end_line: number;
+  comment: string;
+  author: string;
+  status: AnnotationStatus;
+  commit_id?: string | null; // Optional: Git commit SHA where this version of annotation is recorded.
+  original_annotation_id?: string | null; // Optional: ID of the original annotation if this is an update.
+}
+
+/**
+ * Represents the response for listing annotations.
+ * Mirrors AnnotationListResponse Pydantic model in gitwrite_api/models.py.
+ */
+export interface AnnotationListResponse {
+  annotations: Annotation[];
+  count: number;
+}
+
+/**
+ * Represents the request payload for updating an annotation's status.
+ * Mirrors UpdateAnnotationStatusRequest Pydantic model in gitwrite_api/models.py.
+ */
+export interface UpdateAnnotationStatusRequest {
+  new_status: AnnotationStatus;
+  feedback_branch: string;
+}
+
+/**
+ * Represents the response for updating an annotation's status.
+ * Mirrors UpdateAnnotationStatusResponse Pydantic model in gitwrite_api/models.py.
+ */
+export interface UpdateAnnotationStatusResponse {
+  annotation: Annotation;
+  message: string;
+}
+
+/**
+ * Represents the request payload for creating an annotation. (Added for completeness, though not strictly part of Task 11.6 UI)
+ * Mirrors CreateAnnotationRequest Pydantic model in gitwrite_api/models.py.
+ */
+export interface CreateAnnotationRequest {
+    file_path: string;
+    highlighted_text: string;
+    start_line: number;
+    end_line: number;
+    comment: string;
+    author: string;
+    feedback_branch: string;
+}
+
+/**
+ * Represents the response for creating an annotation. (Added for completeness)
+ * Mirrors AnnotationResponse Pydantic model which inherits from Annotation.
+ */
+export interface CreateAnnotationResponse extends Annotation {}
+
+
+// --- End of Types for Annotation Handling ---
+
 // --- Types for File Content Viewer (Task 11.4) ---
 
 /**
