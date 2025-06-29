@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { GitWriteClient, FileContentResponse as SdkFileContentResponse } from 'gitwrite-sdk';
+import { GitWriteClient, type FileContentResponse as SdkFileContentResponse } from 'gitwrite-sdk';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Skeleton } from '@/components/ui/skeleton';
