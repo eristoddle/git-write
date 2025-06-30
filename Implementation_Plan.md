@@ -160,10 +160,31 @@ Details:
 
 ### Task 11.8 - Agent_Web_Dev: Branch Management
 Objective: Provide a simple UI for managing explorations (branches).
-Status: **Pending**
-1.  **Branch List:** Display a list of available branches.
-2.  **Create/Switch:** Implement forms/buttons to create and switch between branches.
-3.  **Merge UI:** Create a simple interface to merge one branch into another, including a way to handle conflicts (e.g., by guiding the user to the CLI for complex cases).
+Status: **Completed**
+Summary: Implemented a `BranchManagementPage.tsx` accessible via the `RepositoryStatus` component. This page allows users to list, create, switch, and merge branches. It uses existing SDK methods that call corresponding API endpoints. User feedback for operations is provided via toasts.
+Details:
+1.  **New Page (`BranchManagementPage.tsx`):**
+    *   Created `gitwrite-web/src/pages/BranchManagementPage.tsx`.
+    *   Fetches and displays a list of all branches using `client.listBranches()`.
+    *   Identifies and displays the current active branch (using a heuristic: 'main', 'master', or first in list if specific data not available from API).
+    *   Provides UI sections (Cards) for:
+        *   **Listing Branches:** A table showing all branches, highlighting the current one, with "Switch To" buttons.
+        *   **Creating Branch:** An input field and button to create a new branch (`client.createBranch()`).
+        *   **Switching Branch (Card UI):** A dropdown (`Select`) to choose a branch and a button to switch (`client.switchBranch()`).
+        *   **Merging Branch:** A dropdown (`Select`) to choose a source branch to merge into the current active branch (`client.mergeBranch()`).
+    *   Handles loading states for asynchronous operations.
+    *   Displays success or error messages using `toast` notifications.
+    *   Includes navigation back to the repository browser.
+2.  **Routing and Navigation:**
+    *   Added a route `/repository/:repoName/branches` in `gitwrite-web/src/App.tsx` pointing to `BranchManagementPage`.
+    *   Added a "Manage Branches" button in `gitwrite-web/src/components/RepositoryStatus.tsx` to navigate to this new page. This button is visible when viewing a branch, not a specific commit.
+3.  **Functionality Details:**
+    *   **Branch Creation:** Takes a new branch name, calls SDK, refreshes branch list, and updates current branch display.
+    *   **Branch Switching:** Allows selection from a list or direct click from table, calls SDK, updates current branch display.
+    *   **Branch Merging:** Allows selection of a source branch, calls SDK, displays outcomes including conflicts (with file list if provided by API).
+*Action Items Outstanding/Limitations:*
+    *   The determination of the "current active branch" relies on a heuristic. A more robust solution would involve the API explicitly providing this information (e.g., in `listBranches` response or a dedicated status endpoint).
+    *   Advanced conflict resolution is not part of this UI; users are informed of conflicts.
 
 ---
 

@@ -7,6 +7,7 @@ import CommitHistoryView from './components/CommitHistoryView';
 import FileContentViewerPage from './pages/FileContentViewerPage';
 import WordDiffViewerPage from './pages/WordDiffViewerPage';
 import BranchReviewPage from './pages/BranchReviewPage'; // Added for Task 11.7
+import BranchManagementPage from './pages/BranchManagementPage'; // Added for Task 11.8
 import ThemeToggle from './components/ThemeToggle';
 import './App.css';
 
@@ -48,7 +49,10 @@ const App: React.FC = () => {
             <Route path="/repository/:repoName/commit/:commitSha/file/*" element={<FileContentViewerPage />} />
             {/* Route for comparing two refs (commits, branches, etc.) */}
             <Route path="/repository/:repoName/compare/:ref1/:ref2" element={<WordDiffViewerPage />} />
+            {/* Branch Management Route - Task 11.8 */}
+            <Route path="/repository/:repoName/branches" element={<BranchManagementPage />} />
             {/* Redirect base /repository/:repoName to its tree view of the default branch (e.g., main) */}
+            {/* Ensure this redirect is specific enough not to catch /branches */}
             <Route path="/repository/:repoName" element={<Navigate to="tree/main" replace />} />
           </Route>
         </Route>

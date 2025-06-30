@@ -10,7 +10,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { GitCommitIcon, GitBranchIcon, AlertTriangleIcon, EyeIcon, GitMergeIcon, ChevronsUpDownIcon } from 'lucide-react';
+import { GitCommitIcon, GitBranchIcon, AlertTriangleIcon, EyeIcon, GitMergeIcon, ChevronsUpDownIcon, SettingsIcon } from 'lucide-react';
 
 interface RepositoryStatusProps {
   repoName: string; // Changed from currentRepoName to repoName for consistency
@@ -41,25 +41,33 @@ const RepositoryStatus: React.FC<RepositoryStatusProps> = ({
     <Card className="w-full mb-4">
       <CardHeader className="pb-2 flex flex-row items-center justify-between">
         <CardTitle className="text-lg">{repoName} Status</CardTitle>
-        {/* Cherry Pick Dropdown - only if not viewing a specific commit and other branches exist */}
-        {!commitSha && currentBranch && otherBranches.length > 0 && (
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button variant="outline" size="sm">
-                <GitMergeIcon className="mr-2 h-4 w-4" /> Review for Cherry-Pick <ChevronsUpDownIcon className="ml-2 h-4 w-4" />
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end">
-              <DropdownMenuLabel>Review Commits From Branch</DropdownMenuLabel>
-              <DropdownMenuSeparator />
-              {otherBranches.map((branch) => (
-                <DropdownMenuItem key={branch} onClick={() => handleReviewBranchSelect(branch)}>
-                  {branch}
-                </DropdownMenuItem>
-              ))}
-            </DropdownMenuContent>
-          </DropdownMenu>
-        )}
+        <div className="flex space-x-2">
+          {/* Branch Management Button */}
+          {!commitSha && currentBranch && ( // Show only when viewing a branch, not a specific commit
+            <Button variant="outline" size="sm" onClick={() => navigate(`/repository/${repoName}/branches`)}>
+              <GitBranchIcon className="mr-2 h-4 w-4" /> Manage Branches
+            </Button>
+          )}
+          {/* Cherry Pick Dropdown - only if not viewing a specific commit and other branches exist */}
+          {!commitSha && currentBranch && otherBranches.length > 0 && (
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="outline" size="sm">
+                  <GitMergeIcon className="mr-2 h-4 w-4" /> Review for Cherry-Pick <ChevronsUpDownIcon className="ml-2 h-4 w-4" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuLabel>Review Commits From Branch</DropdownMenuLabel>
+                <DropdownMenuSeparator />
+                {otherBranches.map((branch) => (
+                  <DropdownMenuItem key={branch} onClick={() => handleReviewBranchSelect(branch)}>
+                    {branch}
+                  </DropdownMenuItem>
+                ))}
+              </DropdownMenuContent>
+            </DropdownMenu>
+          )}
+        </div>
       </CardHeader>
       <CardContent className="text-sm space-y-2 pt-2">
         {commitSha ? (

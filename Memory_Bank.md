@@ -956,3 +956,44 @@ Implemented an interface in the `gitwrite-web` application for reviewing commits
 **Next Steps (Optional):**
 Proceed with Task 11.8 as per the `Implementation_Plan.md`.
 ---
+---
+**Agent:** Jules (Software Engineer AI)
+**Task Reference:** Task 11.8 - Agent_Web_Dev: Branch Management
+
+**Summary:**
+Implemented a branch management interface in the `gitwrite-web` application. This new page allows users to list, create, switch to, and merge branches within a repository, utilizing existing API and SDK capabilities.
+
+**Details:**
+1.  **Created `BranchManagementPage.tsx` (`gitwrite-web/src/pages/`):**
+    *   This new React component serves as the UI for all branch operations.
+    *   It fetches the list of branches using `client.listBranches()` and displays them, highlighting the current branch (determined by a heuristic: 'main', 'master', or first in list).
+    *   Provides a form to input a new branch name and a button to call `client.createBranch()`.
+    *   Includes a `Select` dropdown and a button to switch to an existing branch using `client.switchBranch()`. Also, "Switch To" buttons are available per branch in the list table.
+    *   Features a `Select` dropdown to choose a source branch and a button to merge it into the current active branch using `client.mergeBranch()`.
+    *   Manages loading states for all asynchronous operations (create, switch, merge).
+    *   Uses Shadcn/UI `toast` notifications to provide feedback on the success or failure of operations, including details for merge conflicts (listing conflicting files).
+    *   Includes basic error display using `Alert` components for page-level errors (e.g., initial branch fetch failure).
+    *   A "Back to Browser" button allows navigation away from the page.
+
+2.  **Routing and Navigation:**
+    *   Added a new route `/repository/:repoName/branches` in `gitwrite-web/src/App.tsx` that renders `BranchManagementPage`.
+    *   Added a "Manage Branches" button to `gitwrite-web/src/components/RepositoryStatus.tsx`. This button is conditionally displayed when viewing a branch (not a specific commit) and navigates the user to the new branch management page.
+
+3.  **Functionality Refinements:**
+    *   The `handleSwitchBranch` method in `BranchManagementPage.tsx` was updated to correctly handle being called from both the main "Switch" card and the individual "Switch To" buttons in the branch list table by accepting an optional branch name parameter.
+
+**Output/Result:**
+-   New page component `gitwrite-web/src/pages/BranchManagementPage.tsx` created.
+-   Routing in `gitwrite-web/src/App.tsx` updated.
+-   Navigation link added to `gitwrite-web/src/components/RepositoryStatus.tsx`.
+-   Users can now manage branches (list, create, switch, merge) through the web UI.
+-   `Implementation_Plan.md` updated to mark Task 11.8 as complete.
+
+**Status:** Completed
+
+**Issues/Blockers:**
+-   The determination of the "current active branch" within `BranchManagementPage.tsx` relies on a simple heuristic. Ideally, the API should provide this information directly for more robust display.
+-   The UI informs about merge conflicts but does not provide in-app resolution tools; users would need to use CLI or other means for complex conflict resolution.
+
+**Next Steps (Optional):**
+All tasks in Phase 11 are now complete. The project may move to a new phase or QA.
