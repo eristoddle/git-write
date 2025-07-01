@@ -188,6 +188,43 @@ Details:
 
 ---
 
+## Phase 12: API and UI Integration for Repository Browsing
+Status: **Pending**
+Agent: **Agent_API_Dev** (for API tasks), **Agent_Web_Dev** (for frontend integration)
+Objective: Implement the backend APIs required for the web application's repository browser and integrate them into the frontend, replacing all mock data.
+
+### Task 12.1 - Agent_API_Dev: Implement Repository Listing API
+Objective: Create the API endpoint to list all available GitWrite repositories.
+1.  In `gitwrite_api/routers/repository.py`, create a new endpoint: `GET /repositories`.
+2.  The endpoint logic should scan the designated base directory (e.g., `/tmp/gitwrite_repos_api/gitwrite_user_repos`) for valid Git repositories.
+3.  For each repository found, gather metadata: name, last modification time, and potentially a description from `metadata.yml`.
+4.  Define a `RepositoryListItem` and `RepositoriesListResponse` model in `gitwrite_api/models.py`.
+5.  Return the list of repositories.
+6.  Add corresponding unit tests in `tests/test_api_repository.py`.
+
+### Task 12.2 - Agent_API_Dev: Implement Repository Tree API
+Objective: Create the API endpoint to list files and folders for a given repository path and reference.
+1.  In `gitwrite_api/routers/repository.py`, create a new endpoint: `GET /repository/{repo_name}/tree/{ref:path}`. The `{ref:path}` will capture branch names with slashes.
+2.  The endpoint should accept an optional `path` query parameter for subdirectories.
+3.  The logic should use `pygit2` to:
+    *   Open the repository specified by `repo_name`.
+    *   Resolve the `ref` to a commit object.
+    *   Access the tree for that commit.
+    *   Navigate to the subdirectory specified by the `path` query parameter.
+    *   List the entries (blobs and trees) in that directory.
+4.  Define `RepositoryTreeEntry`, `RepositoryTreeBreadcrumbItem`, and `RepositoryTreeResponse` models in `gitwrite_api/models.py`.
+5.  Return the list of entries and breadcrumb data.
+6.  Add corresponding unit tests in `tests/test_api_repository.py`.
+
+### Task 12.3 - Agent_Web_Dev: Integrate Frontend with New APIs
+Objective: Remove all mock data from the web application and replace it with live data from the newly created API endpoints.
+1.  In `gitwrite-web/src/components/ProjectList.tsx`, replace the mock data fetching with a call to `client.listRepositories()`.
+2.  In `gitwrite-web/src/components/RepositoryBrowser.tsx`, replace the mock data fetching with a call to `client.listRepositoryTree(repoName, ref, path)`.
+3.  Update the `RepositoryStatus.tsx` component to use live data for the current branch, if this information can be derived from the new API responses or a new dedicated status endpoint.
+4.  Ensure all loading and error states in the UI correctly handle real network requests.
+
+---
+
 ## Note on Handover Protocol
 
 For long-running projects or situations requiring context transfer (e.g., exceeding LLM context limits, changing specialized agents), the APM Handover Protocol should be initiated. This ensures smooth transitions and preserves project knowledge. Detailed procedures are outlined in the framework guide:
