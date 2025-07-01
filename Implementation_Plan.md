@@ -6,6 +6,9 @@ Project Goal: Develop a comprehensive, Git-based version control ecosystem for w
 *   **Memory Bank System:** Single file `Memory_Bank.md`.
 *   **Architectural Goal:** Achieve feature parity between the API, the CLI, and the core features defined in `writegit-project-doc.md`. The TypeScript SDK will be developed once the API is feature-complete.
 *   **Project Status Re-evaluation:** This plan has been updated to reflect a detailed analysis of feature parity. The previous plan was completed, and new phases have been added to cover all remaining features from the project documentation.
+*   **Test Status (as of 2024-07-14):**
+    *   Python backend: `poetry.lock` updated, `pandoc` dependency addressed. However, 9 unit tests in `tests/test_api_repository.py` and `tests/test_core_repository.py` are still failing. These relate to API error propagation for file content retrieval, mock setup for repository listing, and core metadata fetching logic. Further investigation is required.
+    *   JavaScript SDK (`gitwrite_sdk`): All tests pass after fixing a type error (`patch_text` to `patch_data` in mocks), installing `ts-jest`, and adjusting a test expectation for default parameters in `compareRefs`.
 
 ---
 

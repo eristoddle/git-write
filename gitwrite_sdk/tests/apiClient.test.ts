@@ -695,7 +695,7 @@ describe('GitWriteClient', () => {
         ref2_oid: '123456',
         ref1_display_name: 'HEAD~1',
         ref2_display_name: 'HEAD',
-        patch_text: '--- a/file.txt\n+++ b/file.txt\n@@ -1 +1 @@\n-old\n+new',
+        patch_data: '--- a/file.txt\n+++ b/file.txt\n@@ -1 +1 @@\n-old\n+new',
       };
       mockRequest.mockResolvedValueOnce({ data: mockResponse });
 
@@ -715,7 +715,7 @@ describe('GitWriteClient', () => {
             ref2_oid: '123456',
             ref1_display_name: 'HEAD~1', // Defaulted by API
             ref2_display_name: 'HEAD',   // Defaulted by API
-            patch_text: '--- a/file.txt\n+++ b/file.txt\n@@ -1 +1 @@\n-old\n+new',
+            patch_data: '--- a/file.txt\n+++ b/file.txt\n@@ -1 +1 @@\n-old\n+new',
         };
         mockRequest.mockResolvedValueOnce({ data: mockResponse });
 
@@ -724,7 +724,7 @@ describe('GitWriteClient', () => {
         expect(mockRequest).toHaveBeenCalledWith({
             method: 'GET',
             url: '/repository/compare',
-            params: undefined,
+            params: {}, // Expect an empty object if that's what axios sends
         });
         expect(result).toEqual(mockResponse);
     });

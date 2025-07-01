@@ -939,20 +939,29 @@ async def api_get_file_content(
                 is_binary=result['is_binary']
             )
         elif result['status'] == 'error':
-            # Determine appropriate HTTP status code based on core message
-            message = result.get('message', 'Error retrieving file content.')
-            if "Repository not found" in message:
+            message = result.get('message', 'Error retrieving file content default message') # Ensure message is always a string
+
+            # Order matters: more specific checks earlier if messages can overlap, though these seem distinct.
+            if "Repository not found" in message: # Catches "Repository not found at /nonexistent/path."
                 raise HTTPException(status_code=500, detail=message) # Config issue
-            elif "Commit with SHA" in message and ("not found" in message or "invalid" in message):
+
+            # Using 'if' instead of 'elif' to ensure each condition is evaluated independently UNLESS one raises.
+            # This is only safe if the conditions are mutually exclusive or if order handles overlap.
+            # For these specific messages, they appear distinct enough.
+            if "Commit with SHA" in message and ("not found" in message or "invalid" in message):
                 raise HTTPException(status_code=404, detail=message)
-            elif "File" in message and "not found in commit" in message:
+
+            if "File" in message and "not found in commit" in message:
                 raise HTTPException(status_code=404, detail=message)
-            elif "is not a file" in message: # e.g. path is a directory
+
+            if "is not a file" in message: # e.g. "Path 'src_dir' in commit 'a1b2c3' is not a file (it's a tree)."
                 raise HTTPException(status_code=400, detail=message)
-            else: # General core error
-                raise HTTPException(status_code=500, detail=message)
-        else: # Should not happen if core adheres to spec
-            raise HTTPException(status_code=500, detail="Unknown error from core file content retrieval.")
+
+            # If none of the above specific error messages matched, it's a general core error.
+            # The original core message will be used.
+            raise HTTPException(status_code=500, detail=message)
+        else: # Should not happen if core adheres to spec (e.g. unknown status string from core)
+            raise HTTPException(status_code=500, detail="Unknown error status from core file content retrieval.")
 
     # Specific exceptions from core layer (if used instead of dict status)
     except CoreRepositoryNotFoundError as e: # Should be caught by dict status 'Repository not found'
