@@ -1,15 +1,15 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { GitWriteClient, RepositoryBranchesResponse, BranchResponse, MergeBranchResponse } from 'gitwrite-sdk';
+import { GitWriteClient } from 'gitwrite-sdk';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { toast } from 'sonner'; // Corrected import for sonner
-import { LucideGitBranch, LucideGitMerge, LucideGitFork, LucideAlertCircle, LucideCheckCircle, LucideInfo } from 'lucide-react';
+import { LucideGitBranch, LucideGitMerge, LucideGitFork, LucideAlertCircle } from 'lucide-react';
 
 const BranchManagementPage: React.FC = () => {
   const { repoName } = useParams<{ repoName: string }>();
