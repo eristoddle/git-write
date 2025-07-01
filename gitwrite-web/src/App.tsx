@@ -9,6 +9,7 @@ import WordDiffViewerPage from './pages/WordDiffViewerPage';
 import BranchReviewPage from './pages/BranchReviewPage'; // Added for Task 11.7
 import BranchManagementPage from './pages/BranchManagementPage'; // Added for Task 11.8
 import ThemeToggle from './components/ThemeToggle';
+import { Toaster } from 'sonner'; // Added for toast notifications
 import './App.css';
 
 const ProtectedRoute: React.FC = () => {
@@ -29,6 +30,7 @@ const AppLayout: React.FC = () => (
     <main>
       <Outlet /> {/* Nested routes will render here */}
     </main>
+    <Toaster richColors closeButton /> {/* Added Toaster component here */}
   </div>
 );
 

@@ -8,7 +8,7 @@ import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle }
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { toast } from '@/components/ui/use-toast'; // Assuming use-toast is available from Shadcn
+import { toast } from 'sonner'; // Corrected import for sonner
 import { LucideGitBranch, LucideGitMerge, LucideGitFork, LucideAlertCircle, LucideCheckCircle, LucideInfo } from 'lucide-react';
 
 const BranchManagementPage: React.FC = () => {
@@ -90,10 +90,8 @@ const BranchManagementPage: React.FC = () => {
     setError(null);
     try {
       const response = await client.createBranch({ branch_name: newBranchName.trim() });
-      toast({
-        title: "Branch Created",
+      toast.success("Branch Created", {
         description: `Branch '${response.branch_name}' created successfully. Head: ${response.head_commit_oid?.substring(0,7)}`,
-        variant: "default",
       });
       setNewBranchName('');
       await fetchBranches(); // Refresh branch list
@@ -101,10 +99,8 @@ const BranchManagementPage: React.FC = () => {
     } catch (err: any) {
       const errorMessage = err.response?.data?.detail || err.message || 'Failed to create branch.';
       setError(errorMessage);
-      toast({
-        title: "Error Creating Branch",
+      toast.error("Error Creating Branch", {
         description: errorMessage,
-        variant: "destructive",
       });
     } finally {
       setIsCreating(false);
@@ -119,20 +115,16 @@ const BranchManagementPage: React.FC = () => {
     setError(null);
     try {
       const response = await client.switchBranch({ branch_name: branchToSwitch });
-      toast({
-        title: "Branch Switched",
+      toast.success("Branch Switched", {
         description: `Switched to branch '${response.branch_name}'. ${response.message}`,
-        variant: "default",
       });
       setCurrentBranch(response.branch_name); // Update current branch context
       await fetchBranches(); // Refresh list and potentially other state
     } catch (err: any) {
       const errorMessage = err.response?.data?.detail || err.message || 'Failed to switch branch.';
       setError(errorMessage);
-      toast({
-        title: "Error Switching Branch",
+      toast.error("Error Switching Branch", {
         description: errorMessage,
-        variant: "destructive",
       });
     } finally {
       setIsSwitching(false);
@@ -145,35 +137,40 @@ const BranchManagementPage: React.FC = () => {
     setError(null);
     try {
       const response = await client.mergeBranch({ source_branch: selectedBranchToMerge });
-      let toastTitle = "Merge Operation";
-      let toastDescription = response.message;
-      let toastVariant: "default" | "destructive" = "default";
+      const toastDescription = response.message;
 
       if (response.status === 'conflict') {
-        toastTitle = "Merge Conflict";
-        toastDescription = `${response.message} Conflicting files: ${response.conflicting_files?.join(', ')}`;
-        toastVariant = "destructive";
+        toast.error("Merge Conflict", {
+          description: `${toastDescription} Conflicting files: ${response.conflicting_files?.join(', ')}`,
+        });
       } else if (response.status.includes('error')) {
-        toastTitle = "Merge Error";
-        toastVariant = "destructive";
-      } else {
-        toastTitle = "Merge Successful";
+        toast.error("Merge Error", { description: toastDescription });
+      } else if (response.status === 'merged_ok' || response.status === 'fast_forwarded') {
+        toast.success("Merge Successful", { description: toastDescription });
+      } else if (response.status === 'up_to_date') {
+        toast.info("Already Up-to-date", { description: toastDescription });
+      } else { // Should not happen ideally
+        toast.info("Merge Operation", { description: toastDescription });
       }
 
-      toast({
-        title: toastTitle,
-        description: toastDescription,
-        variant: toastVariant,
-      });
       // Potentially refresh other data if merge affects current view, e.g., commit list
       await fetchBranches(); // Refresh branch list, current branch might have new commits
     } catch (err: any) {
-      const errorMessage = err.response?.data?.detail || err.message || 'Failed to merge branch.';
-      setError(errorMessage);
-      toast({
-        title: "Error Merging Branch",
-        description: typeof errorMessage === 'string' ? errorMessage : JSON.stringify(errorMessage),
-        variant: "destructive",
+      const errorMessageContent = err.response?.data?.detail || err.message || 'Failed to merge branch.';
+      let descriptionForToast = '';
+      if (typeof errorMessageContent === 'string') {
+          descriptionForToast = errorMessageContent;
+      } else if (typeof errorMessageContent === 'object' && errorMessageContent !== null && 'message' in errorMessageContent) {
+          descriptionForToast = (errorMessageContent as any).message;
+          if ((errorMessageContent as any).conflicting_files) {
+              descriptionForToast += ` Conflicting files: ${((errorMessageContent as any).conflicting_files as string[]).join(', ')}`;
+          }
+      } else {
+          descriptionForToast = JSON.stringify(errorMessageContent);
+      }
+      setError(descriptionForToast); // Keep page level error state if needed
+      toast.error("Error Merging Branch", {
+        description: descriptionForToast,
       });
     } finally {
       setIsMerging(false);
