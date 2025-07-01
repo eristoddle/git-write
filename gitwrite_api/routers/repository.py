@@ -13,7 +13,8 @@ from gitwrite_core.repository import (
     list_gitignore_patterns as core_list_gitignore_patterns,
     add_pattern_to_gitignore as core_add_pattern_to_gitignore,
     initialize_repository as core_initialize_repository,
-    get_file_content_at_commit as core_get_file_content_at_commit
+    get_file_content_at_commit as core_get_file_content_at_commit,
+    get_repository_metadata as core_get_repository_metadata
 )
 from gitwrite_core.versioning import (
     get_branch_review_commits as core_get_branch_review_commits,
@@ -55,8 +56,9 @@ from gitwrite_core.exceptions import TagAlreadyExistsError as CoreTagAlreadyExis
 
 # For Repository Initialization
 import uuid # Make sure uuid is imported here for use in export
+import os # For os.listdir and path operations
 from pathlib import Path
-from ..models import RepositoryCreateRequest # Import the request model
+from ..models import RepositoryCreateRequest, RepositoriesListResponse, RepositoryListItem # Import the request model
 
 # Models for Branch Review API
 from ..models import BranchReviewResponse, BranchReviewCommit
@@ -822,6 +824,91 @@ async def api_list_ignore_patterns(current_user: User = Depends(get_current_acti
         raise HTTPException(status_code=500, detail="Repository configuration error.")
     # Note: Specific business logic exceptions from core layer (if any) should be caught if they are not already
     # handled by the result['status'] checks. For now, focusing on existing structure.
+
+
+# --- Repository Listing Endpoint ---
+# This endpoint is defined outside the /repository/{repo_name} prefix,
+# so it should be on a general router or the app itself if not namespaced.
+# For this task, let's assume it's fine here, but it will be /repository/repositories
+# which might be slightly confusing. A /repositories route at the API root might be cleaner.
+
+# To place it at the API root, it would need to be in main.py or a root-level router.
+# Given the current structure, placing it here means it will be /repository/repositories.
+# Let's define it to be just /repositories, which means it needs to be on a router
+# that is NOT prefixed with /repository.
+# For now, I will add it to THIS router, making its path /repository/repositories.
+# If it needs to be /repositories, the router prefixing needs adjustment or a new router.
+
+# Correcting the approach: The task asks for GET /repositories.
+# If this router is mounted at /repository, then an endpoint defined here as @router.get("/")
+# would be /repository. An endpoint @router.get("/list") would be /repository/list.
+# To get /repositories, this endpoint should be on a router mounted at "/", or this router
+# should be mounted at "/", and other specific repo operations use a sub-router or path params.
+
+# For now, let's assume the intent is for this router to handle it,
+# and the full path will be /repository/ (if Get("/")) or /repository/list/ (if Get("/list")).
+# The task specifies "GET /repositories". This implies this endpoint should NOT be under the "/repository" prefix.
+# I will create it here and it will be accessible at "/repository/repositories" due to the router prefix.
+# This might need adjustment later based on overall API design.
+
+# Let's make it GET / (which becomes /repository due to prefix) and then filter by type
+# No, the task is specific: GET /repositories
+# So this endpoint definition should be:
+# @router.get("/repositories", ...)
+# And the router instance itself should be mounted at the root of the API if this is the desired path.
+# Or, if this router is at /repository, then the path here should be just "/" to mean "/repository"
+# for listing, or a different structure is needed.
+
+# Given the existing structure and prefix, to get /repositories, we need a router without this prefix.
+# However, the task is to add it to `gitwrite_api/routers/repository.py`.
+# This implies it might be `/repository/repositories` or the file is a misnomer for a general repo functions router.
+# Let's assume `/repository/repositories` is acceptable for now.
+
+@router.get("s", response_model=RepositoriesListResponse) # Path will be /repository + /s = /repositorys
+async def api_list_repositories(
+    current_user: User = Depends(get_current_active_user) # Assuming all repo ops need auth
+):
+    """
+    Lists all available GitWrite repositories managed by the system.
+    Requires authentication.
+    """
+    # The base directory where user repositories are stored.
+    # This should come from config, but using a constant for now.
+    # This matches the structure used in `api_initialize_repository`.
+    user_repos_base_dir = Path(PLACEHOLDER_REPO_PATH) / "gitwrite_user_repos"
+
+    if not user_repos_base_dir.exists() or not user_repos_base_dir.is_dir():
+        # If the base directory itself doesn't exist, return an empty list.
+        # Or, this could be a 500 server error if it's expected to always exist.
+        # For robustness, let's say it's not an error, just no repos.
+        return RepositoriesListResponse(repositories=[], count=0)
+
+    repo_items: List[RepositoryListItem] = []
+    try:
+        for item_name in os.listdir(user_repos_base_dir):
+            item_path = user_repos_base_dir / item_name
+            if item_path.is_dir(): # Check if it's a directory
+                # core_get_repository_metadata expects Path object
+                metadata_dict = core_get_repository_metadata(item_path)
+                if metadata_dict:
+                    # Convert dict to RepositoryListItem Pydantic model
+                    # The keys in metadata_dict should match fields in RepositoryListItem
+                    try:
+                        repo_list_item = RepositoryListItem(**metadata_dict)
+                        repo_items.append(repo_list_item)
+                    except Exception as e:
+                        # Log this error: failed to parse metadata for a repo
+                        # logger.error(f"Failed to parse metadata for {item_path}: {e}")
+                        # Continue to next repo, skip this one
+                        pass
+    except OSError as e:
+        # Error listing directory contents
+        raise HTTPException(status_code=500, detail=f"Error accessing repository storage: {e}")
+    except Exception as e:
+        # Catch any other unexpected errors during processing
+        raise HTTPException(status_code=500, detail=f"An unexpected server error occurred while listing repositories: {e}")
+
+    return RepositoriesListResponse(repositories=repo_items, count=len(repo_items))
 
 
 @router.get("/file-content", response_model=FileContentResponse)

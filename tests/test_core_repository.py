@@ -1123,3 +1123,136 @@ def test_get_file_content_non_utf8_text_file(repo_with_commits_for_file_content:
     assert result["is_binary"] is True # Because it failed UTF-8 decode in core function
     assert f"[Non-UTF-8 text content of size {len(latin1_content)} bytes, treated as binary]" in result["content"]
     assert result["size"] == len(latin1_content)
+
+
+# --- Tests for get_repository_metadata ---
+
+from gitwrite_core.repository import get_repository_metadata
+import yaml
+
+@pytest.fixture
+def metadata_repo(tmp_path: Path) -> Path:
+    repo_dir = tmp_path / "metadata_test_repo"
+    repo_dir.mkdir()
+    repo = pygit2.init_repository(str(repo_dir))
+    config = repo.config
+    config["user.name"] = "Metadata Tester"
+    config["user.email"] = "meta@example.com"
+    sig = pygit2.Signature("Metadata Tester", "meta@example.com", int(datetime.now(timezone.utc).timestamp()) - 60, 0) # 1 min ago
+
+    # Initial commit
+    (repo_dir / "initial_file.txt").write_text("Initial content.")
+    repo.index.add("initial_file.txt")
+    repo.index.write()
+    tree1_oid = repo.index.write_tree()
+    commit1_oid = repo.create_commit("HEAD", sig, sig, "Initial commit", tree1_oid, [])
+
+    # Create metadata.yml
+    metadata_content = {"description": "This is a test repository for metadata."}
+    with open(repo_dir / "metadata.yml", 'w') as f:
+        yaml.dump(metadata_content, f)
+
+    repo.index.add("metadata.yml") # Stage it but don't commit yet for one test case
+    # repo.index.write()
+    # tree2_oid = repo.index.write_tree()
+    # commit2_oid = repo.create_commit("HEAD", sig, sig, "Add metadata.yml", tree2_oid, [commit1_oid])
+
+    return repo_dir
+
+def test_get_repository_metadata_success_with_metadata_file(metadata_repo: Path):
+    # Commit metadata.yml for this test case
+    repo = pygit2.Repository(str(metadata_repo))
+    sig = pygit2.Signature("Metadata Tester", "meta@example.com", int(datetime.now(timezone.utc).timestamp()), 0) # Now
+    repo.index.read() # Ensure index is fresh
+    if "metadata.yml" not in repo.index: # If not staged in fixture somehow
+        repo.index.add("metadata.yml")
+    repo.index.write()
+    tree_oid = repo.index.write_tree()
+    # Check if HEAD is unborn (e.g. if initial commit was removed from fixture)
+    parents = [] if repo.head_is_unborn else [repo.head.target]
+    if not parents and not repo.is_empty: # Should have a parent from fixture's initial commit
+        pytest.fail("Repository HEAD is unborn or has no target after initial commit in fixture.")
+
+    commit_meta_oid = repo.create_commit("HEAD", sig, sig, "Commit metadata.yml", tree_oid, parents)
+
+    metadata = get_repository_metadata(metadata_repo)
+    assert metadata is not None
+    assert metadata["name"] == "metadata_test_repo"
+    assert metadata["description"] == "This is a test repository for metadata."
+
+    # Check last_modified is from the latest commit
+    latest_commit_dt = datetime.fromtimestamp(repo.head.peel(pygit2.Commit).commit_time,
+                                              tz=timezone(datetime.timedelta(minutes=repo.head.peel(pygit2.Commit).commit_time_offset)))
+    assert metadata["last_modified"] == latest_commit_dt
+
+def test_get_repository_metadata_success_no_metadata_file(tmp_path: Path):
+    repo_dir = tmp_path / "no_meta_repo"
+    repo_dir.mkdir()
+    repo = pygit2.init_repository(str(repo_dir))
+    config = repo.config # Minimal setup for a valid repo
+    config["user.name"] = "NoMeta Tester"
+    config["user.email"] = "nometa@example.com"
+    sig = pygit2.Signature("NoMeta Tester", "nometa@example.com", int(datetime.now(timezone.utc).timestamp()), 0)
+
+    # Make a commit so it's not empty/unborn
+    (repo_dir / "file.txt").write_text("content")
+    repo.index.add("file.txt")
+    repo.index.write()
+    tree_oid = repo.index.write_tree()
+    commit_oid = repo.create_commit("HEAD", sig, sig, "Initial commit", tree_oid, [])
+
+    metadata = get_repository_metadata(repo_dir)
+    assert metadata is not None
+    assert metadata["name"] == "no_meta_repo"
+    assert metadata["description"] is None
+    latest_commit_dt = datetime.fromtimestamp(repo.head.peel(pygit2.Commit).commit_time,
+                                              tz=timezone(datetime.timedelta(minutes=repo.head.peel(pygit2.Commit).commit_time_offset)))
+    assert metadata["last_modified"] == latest_commit_dt
+
+
+def test_get_repository_metadata_empty_repo(tmp_path: Path):
+    repo_dir = tmp_path / "empty_metadata_repo"
+    repo_dir.mkdir()
+    pygit2.init_repository(str(repo_dir)) # Init but no commits
+
+    # Touch the directory to update its mtime for predictability if needed
+    # os.utime(repo_dir) # This might not be necessary if stat().st_mtime is recent enough
+
+    metadata = get_repository_metadata(repo_dir)
+    assert metadata is not None
+    assert metadata["name"] == "empty_metadata_repo"
+    assert metadata["description"] is None
+
+    # For empty/unborn repo, last_modified should be dir's mtime
+    expected_mtime = datetime.fromtimestamp(repo_dir.stat().st_mtime, tz=timezone.utc)
+    assert metadata["last_modified"] == expected_mtime
+
+def test_get_repository_metadata_invalid_metadata_file(metadata_repo: Path):
+    # metadata_repo fixture creates metadata.yml but doesn't commit it initially.
+    # For this test, we want it to exist but be malformed.
+    (metadata_repo / "metadata.yml").write_text("description: {not_yaml_at_all") # Malformed YAML
+
+    # We still need a commit for last_modified to be predictable from commit time
+    # The fixture's initial commit is fine.
+    repo = pygit2.Repository(str(metadata_repo))
+
+    metadata = get_repository_metadata(metadata_repo)
+    assert metadata is not None
+    assert metadata["description"] is None # Should be None due to parse error
+    initial_commit_dt = datetime.fromtimestamp(repo.head.peel(pygit2.Commit).commit_time,
+                                               tz=timezone(datetime.timedelta(minutes=repo.head.peel(pygit2.Commit).commit_time_offset)))
+    assert metadata["last_modified"] == initial_commit_dt # From the initial commit in fixture
+
+def test_get_repository_metadata_not_a_git_repo(tmp_path: Path):
+    not_a_repo_dir = tmp_path / "not_a_repo"
+    not_a_repo_dir.mkdir()
+    (not_a_repo_dir / "some_file.txt").write_text("hello")
+
+    metadata = get_repository_metadata(not_a_repo_dir)
+    assert metadata is None
+
+def test_get_repository_metadata_path_is_file(tmp_path: Path):
+    file_path = tmp_path / "just_a_file.txt"
+    file_path.write_text("I am a file, not a repo.")
+    metadata = get_repository_metadata(file_path)
+    assert metadata is None

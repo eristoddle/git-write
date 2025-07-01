@@ -902,6 +902,73 @@ def save_and_commit_file(repo_path_str: str, file_path: str, content: str, commi
         return {'status': 'error', 'message': f"An unexpected error occurred: {e}", 'commit_id': None}
 
 
+from datetime import datetime, timezone # For timezone.utc
+import yaml # For reading metadata.yml
+
+def get_repository_metadata(repo_path: Path) -> Optional[Dict[str, Any]]:
+    """
+    Retrieves metadata for a given GitWrite repository path.
+
+    Args:
+        repo_path: Path object for the repository's root directory.
+
+    Returns:
+        A dictionary containing metadata (name, last_modified, description)
+        or None if it's not a valid Git repository or essential metadata cannot be fetched.
+    """
+    try:
+        if not repo_path.is_dir() or not pygit2.discover_repository(str(repo_path)):
+            return None
+
+        repo = pygit2.Repository(str(repo_path))
+        if repo.is_empty or repo.head_is_unborn:
+            # For an empty/unborn repo, use directory's mtime if no commits
+            last_modified_ts = repo_path.stat().st_mtime
+            last_modified_dt = datetime.fromtimestamp(last_modified_ts, tz=timezone.utc)
+        else:
+            try:
+                # Get the last commit on the current HEAD
+                last_commit = repo.head.peel(pygit2.Commit)
+                # last_commit.commit_time is Unix timestamp (seconds since epoch, UTC)
+                # last_commit.commit_time_offset is the offset in minutes.
+                commit_offset_timedelta = datetime.timedelta(minutes=last_commit.commit_time_offset)
+                commit_tz = timezone(commit_offset_timedelta)
+                # Create a timezone-aware datetime object
+                last_modified_dt = datetime.fromtimestamp(last_commit.commit_time, tz=commit_tz)
+
+            except (pygit2.GitError, KeyError): # KeyError if HEAD doesn't exist or other issues
+                # Fallback to directory's mtime if commit info fails
+                last_modified_ts = repo_path.stat().st_mtime
+                last_modified_dt = datetime.fromtimestamp(last_modified_ts, tz=timezone.utc)
+
+        repo_name = repo_path.name
+        description = None
+        metadata_file = repo_path / "metadata.yml"
+
+        if metadata_file.exists() and metadata_file.is_file():
+            try:
+                with open(metadata_file, 'r') as f:
+                    metadata_content = yaml.safe_load(f)
+                    if isinstance(metadata_content, dict):
+                        description = metadata_content.get("description")
+            except (yaml.YAMLError, IOError):
+                # Failed to read or parse YAML, so no description from file
+                pass # description remains None
+
+        return {
+            "name": repo_name,
+            "last_modified": last_modified_dt,
+            "description": description,
+            # "path": str(repo_path.resolve()) # Optional: if needed internally by API layer
+        }
+
+    except pygit2.GitError: # Not a git repository or other git error
+        return None
+    except Exception: # Catch any other unexpected errors
+        # Optionally log the exception here
+        return None
+
+
 def get_file_content_at_commit(repo_path_str: str, file_path: str, commit_sha_str: str) -> Dict[str, Any]:
     """
     Retrieves the content and metadata of a specific file at a given commit.

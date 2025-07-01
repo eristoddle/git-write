@@ -11,7 +11,8 @@ from pathlib import Path
 
 from gitwrite_api.models import (
     User, UserRole, SaveFileRequest, RepositoryCreateRequest, EPUBExportRequest,
-    CherryPickRequest, BranchReviewCommit, BranchReviewResponse # These are in models.py
+    CherryPickRequest, BranchReviewCommit, BranchReviewResponse, # These are in models.py
+    RepositoriesListResponse, RepositoryListItem # Added for new tests
 )
 # Models defined within routers/repository.py:
 from gitwrite_api.routers.repository import (
@@ -562,3 +563,162 @@ def test_api_get_file_content_generic_core_error(mock_core_get_content):
 
 # Test with actual core exceptions being raised (if core layer changes to that pattern)
 # For now, sticking to dict-based error reporting from core.
+
+# --- Tests for GET /repositorys (List Repositories) ---
+
+from gitwrite_api.models import RepositoriesListResponse, RepositoryListItem # Ensure these are imported
+
+@patch('gitwrite_api.routers.repository.core_get_repository_metadata')
+@patch('gitwrite_api.routers.repository.os.listdir')
+@patch('gitwrite_api.routers.repository.Path.is_dir')
+def test_api_list_repositories_success(mock_is_dir, mock_listdir, mock_get_metadata):
+    app.dependency_overrides[actual_repo_auth_dependency] = mock_get_current_active_user
+
+    mock_listdir.return_value = ["repo1", "repo2", "not_a_repo_file.txt"]
+
+    # Simulate Path.is_dir behavior for items from listdir
+    # repo1 and repo2 are dirs, not_a_repo_file.txt is not
+    def is_dir_side_effect(path_arg):
+        if path_arg.name in ["repo1", "repo2"]:
+            return True
+        return False
+    mock_is_dir.side_effect = is_dir_side_effect
+
+    # Mock metadata returned by core_get_repository_metadata
+    now = datetime.datetime.now(datetime.timezone.utc)
+    mock_get_metadata.side_effect = [
+        {"name": "repo1", "last_modified": now, "description": "First repo"},
+        {"name": "repo2", "last_modified": now - datetime.timedelta(days=1), "description": None},
+        # Note: core_get_repository_metadata will only be called for directories.
+        # For "not_a_repo_file.txt", mock_is_dir returns False, so core_get_repository_metadata isn't called.
+    ]
+
+    expected_user_repos_base_dir = Path(MOCK_REPO_PATH) / "gitwrite_user_repos"
+
+    response = client.get("/repositorys") # Path will be /repository + s
+
+    assert response.status_code == HTTPStatus.OK
+    data = response.json()
+
+    assert data["count"] == 2
+    assert len(data["repositories"]) == 2
+
+    # Check repo1 details
+    assert data["repositories"][0]["name"] == "repo1"
+    assert data["repositories"][0]["description"] == "First repo"
+    # Pydantic will convert datetime to ISO string
+    assert datetime.datetime.fromisoformat(data["repositories"][0]["last_modified"]) == now
+
+    # Check repo2 details
+    assert data["repositories"][1]["name"] == "repo2"
+    assert data["repositories"][1]["description"] is None
+    assert datetime.datetime.fromisoformat(data["repositories"][1]["last_modified"]) == now - datetime.timedelta(days=1)
+
+    mock_listdir.assert_called_once_with(expected_user_repos_base_dir)
+    # mock_is_dir should be called for each item from listdir
+    assert mock_is_dir.call_count == 3
+    # core_get_repository_metadata should be called for each directory
+    assert mock_get_metadata.call_count == 2
+    mock_get_metadata.assert_any_call(expected_user_repos_base_dir / "repo1")
+    mock_get_metadata.assert_any_call(expected_user_repos_base_dir / "repo2")
+
+    app.dependency_overrides = {}
+
+
+@patch('gitwrite_api.routers.repository.os.listdir')
+@patch('gitwrite_api.routers.repository.Path.is_dir') # Mock is_dir as well
+def test_api_list_repositories_empty(mock_is_dir, mock_listdir):
+    app.dependency_overrides[actual_repo_auth_dependency] = mock_get_current_active_user
+    mock_listdir.return_value = []
+    mock_is_dir.return_value = False # Default for empty or non-dirs
+
+    response = client.get("/repositorys")
+    assert response.status_code == HTTPStatus.OK
+    data = response.json()
+    assert data["count"] == 0
+    assert len(data["repositories"]) == 0
+    app.dependency_overrides = {}
+
+
+@patch('gitwrite_api.routers.repository.os.listdir')
+def test_api_list_repositories_os_error(mock_listdir):
+    app.dependency_overrides[actual_repo_auth_dependency] = mock_get_current_active_user
+    mock_listdir.side_effect = OSError("Simulated permission denied")
+
+    response = client.get("/repositorys")
+    assert response.status_code == HTTPStatus.INTERNAL_SERVER_ERROR
+    assert "Error accessing repository storage" in response.json()["detail"]
+    app.dependency_overrides = {}
+
+@patch('gitwrite_api.routers.repository.Path.exists')
+@patch('gitwrite_api.routers.repository.Path.is_dir')
+def test_api_list_repositories_base_dir_not_exist(mock_path_is_dir, mock_path_exists):
+    app.dependency_overrides[actual_repo_auth_dependency] = mock_get_current_active_user
+
+    # Simulate the base path not existing or not being a directory
+    # user_repos_base_dir = Path(MOCK_REPO_PATH) / "gitwrite_user_repos"
+    # We need to mock its .exists() or .is_dir() call.
+    # The check is `if not user_repos_base_dir.exists() or not user_repos_base_dir.is_dir():`
+
+    # Case 1: Base path does not exist
+    mock_path_exists.return_value = False
+    mock_path_is_dir.return_value = False # Doesn't matter if exists is false
+
+    response_no_exist = client.get("/repositorys")
+    assert response_no_exist.status_code == HTTPStatus.OK
+    data_no_exist = response_no_exist.json()
+    assert data_no_exist["count"] == 0
+    assert len(data_no_exist["repositories"]) == 0
+
+    # Case 2: Base path exists but is not a directory
+    mock_path_exists.return_value = True
+    mock_path_is_dir.return_value = False
+
+    response_not_dir = client.get("/repositorys")
+    assert response_not_dir.status_code == HTTPStatus.OK
+    data_not_dir = response_not_dir.json()
+    assert data_not_dir["count"] == 0
+    assert len(data_not_dir["repositories"]) == 0
+
+    app.dependency_overrides = {}
+
+@patch('gitwrite_api.routers.repository.core_get_repository_metadata')
+@patch('gitwrite_api.routers.repository.os.listdir')
+@patch('gitwrite_api.routers.repository.Path.is_dir')
+def test_api_list_repositories_metadata_parse_failure(mock_is_dir, mock_listdir, mock_get_metadata):
+    app.dependency_overrides[actual_repo_auth_dependency] = mock_get_current_active_user
+    mock_listdir.return_value = ["repo_bad_meta"]
+    mock_is_dir.return_value = True # It's a directory
+
+    # Simulate core_get_repository_metadata returning valid data, but then Pydantic model fails
+    # No, the test should be that core_get_repository_metadata returns data, and Pydantic parsing is tested here.
+    # If core_get_repository_metadata returns None, it's skipped.
+    # This test aims for when core_get_repository_metadata returns a dict that RepositoryListItem can't parse.
+    # This is more of an integration test of the Pydantic model itself.
+    # Let's assume core_get_repository_metadata returns a valid dict for one, and an invalid for another.
+
+    mock_listdir.return_value = ["repo_good", "repo_invalid_structure"]
+    now = datetime.datetime.now(datetime.timezone.utc)
+
+    def get_meta_side_effect(path_arg):
+        if path_arg.name == "repo_good":
+            return {"name": "repo_good", "last_modified": now, "description": "Good one"}
+        elif path_arg.name == "repo_invalid_structure":
+            # This dict is missing 'last_modified', which is required by RepositoryListItem
+            return {"name": "repo_invalid_structure", "description": "Bad structure"}
+        return None # Should not be called for others if is_dir handles it
+
+    mock_get_metadata.side_effect = get_meta_side_effect
+    mock_is_dir.return_value = True # All are dirs for this test
+
+    response = client.get("/repositorys")
+    assert response.status_code == HTTPStatus.OK
+    data = response.json()
+
+    # Only the "repo_good" should be in the list, as "repo_invalid_structure" would fail Pydantic validation
+    # within the endpoint loop and be skipped.
+    assert data["count"] == 1
+    assert len(data["repositories"]) == 1
+    assert data["repositories"][0]["name"] == "repo_good"
+
+    app.dependency_overrides = {}

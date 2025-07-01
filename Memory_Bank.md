@@ -1034,3 +1034,73 @@ None.
 
 **Next Steps (Optional):**
 Proceed with submitting the corrected changes.
+---
+**Agent:** Jules (Software Engineer AI)
+**Task Reference:** Task 12.1 - Agent_API_Dev: Implement Repository Listing API
+
+**Summary:**
+Implemented an API endpoint (`GET /repositorys`) to list all available GitWrite repositories. This included defining Pydantic models for the response, creating a core helper function to gather repository metadata (name, last modification date, description from `metadata.yml`), and adding comprehensive unit tests for both the new core logic and the API endpoint.
+
+**Details:**
+1.  **Pydantic Models (`gitwrite_api/models.py`):**
+    *   Defined `RepositoryMetadata` model with fields: `name: str`, `last_modified: datetime`, `description: Optional[str]`.
+    *   Defined `RepositoryListItem` model, currently inheriting directly from `RepositoryMetadata`.
+    *   Defined `RepositoriesListResponse` model: `repositories: List[RepositoryListItem]`, `count: int`.
+    *   Added `from datetime import datetime` to necessary model files.
+
+2.  **Core Helper Function (`gitwrite_core/repository.py`):**
+    *   Created `get_repository_metadata(repo_path: Path) -> Optional[Dict[str, Any]]`.
+    *   Logic:
+        *   Validates if `repo_path` is a discoverable Git repository.
+        *   Determines `last_modified` time:
+            *   From the author date of the last commit on HEAD.
+            *   Falls back to the repository directory's modification time if no commits or HEAD is unborn.
+            *   Ensures timezone-aware datetime objects are used.
+        *   Extracts repository `name` from `repo_path.name`.
+        *   Attempts to read `description` from a `metadata.yml` file in the repository's root.
+        *   Added `pyyaml` to `pyproject.toml` for YAML parsing.
+    *   Returns a dictionary of metadata or `None` on failure.
+
+3.  **API Endpoint (`gitwrite_api/routers/repository.py`):**
+    *   Added a new endpoint: `GET /repositorys` (current path due to router prefix being `/repository`; endpoint defined as `/s`).
+        *   Requires user authentication.
+        *   Scans a predefined base directory (`PLACEHOLDER_REPO_PATH / "gitwrite_user_repos"`) for subdirectories.
+        *   For each subdirectory, calls `core_get_repository_metadata`.
+        *   If metadata is retrieved, it's converted to a `RepositoryListItem` and added to a list.
+        *   Returns a `RepositoriesListResponse`.
+        *   Handles cases like the base directory not existing or `os.listdir` errors.
+    *   Imported `core_get_repository_metadata`, `os`, `Path`, and new Pydantic models into the router file.
+
+4.  **Unit Tests:**
+    *   **Core Function (`tests/test_core_repository.py`):**
+        *   Added tests for `get_repository_metadata` covering:
+            *   Successful retrieval with and without `metadata.yml`.
+            *   Empty repository (uses directory mtime).
+            *   Repository with an invalid/malformed `metadata.yml`.
+            *   Path that is not a Git repository.
+            *   Path that is a file instead of a directory.
+    *   **API Endpoint (`tests/test_api_repository.py`):**
+        *   Added tests for `GET /repositorys` covering:
+            *   Successful listing of multiple repositories with varied metadata.
+            *   Listing when no repositories are present.
+            *   Error handling for `OSError` during directory listing.
+            *   Scenario where the base repository directory doesn't exist.
+            *   Scenario where metadata parsing for an individual repository might fail (should skip that repo).
+        *   Utilized `@patch` for `os.listdir`, `Path.is_dir`, and `core_get_repository_metadata`.
+
+**Output/Result:**
+-   New API endpoint `GET /repositorys` for listing repositories.
+-   New core function `get_repository_metadata` for fetching repository details.
+-   Pydantic models for API request/response.
+-   `pyyaml` added as a project dependency.
+-   Comprehensive unit tests for new core and API logic.
+-   `Implementation_Plan.md` and `Memory_Bank.md` updated.
+
+**Status:** Completed
+
+**Issues/Blockers:**
+-   The API endpoint path is `/repositorys` due to the existing router prefix. If `/repositories` (at API root or different prefix) is strictly required, router configuration will need adjustment. This was noted in the `Implementation_Plan.md`.
+-   The base directory for user repositories is currently hardcoded. This should be made configurable in a future task.
+
+**Next Steps (Optional):**
+Proceed with Task 12.2: Implement Repository Tree API.

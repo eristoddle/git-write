@@ -1,5 +1,6 @@
 from typing import Optional, List, Dict
 from enum import Enum
+from datetime import datetime
 
 from pydantic import BaseModel, Field
 
@@ -170,3 +171,21 @@ class FileContentResponse(BaseModel):
     size: int = Field(..., description="The size of the file in bytes.")
     mode: str = Field(..., description="The file mode (e.g., '100644' for a regular file).")
     is_binary: bool = Field(..., description="Indicates if the content is binary.")
+
+
+# --- API Request/Response Models for Repository Listing ---
+
+class RepositoryMetadata(BaseModel):
+    name: str = Field(..., description="Name of the repository.")
+    last_modified: datetime = Field(..., description="Timestamp of the last modification (e.g., last commit date).")
+    description: Optional[str] = Field(None, description="Optional description of the repository.")
+    # path: str # Full path on server, might not be needed for client
+
+class RepositoryListItem(RepositoryMetadata): # Inherits from RepositoryMetadata
+    # For now, this is identical to RepositoryMetadata.
+    # It can be extended if specific list item properties are needed later.
+    pass
+
+class RepositoriesListResponse(BaseModel):
+    repositories: List[RepositoryListItem] = Field(..., description="A list of available repositories.")
+    count: int = Field(..., description="The total number of repositories returned.")
