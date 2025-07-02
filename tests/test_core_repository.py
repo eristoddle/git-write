@@ -5,7 +5,7 @@ import shutil
 import tempfile
 from pathlib import Path
 import os
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta # Corrected import
 from typing import Tuple, Optional
 from unittest import mock
 import pytest
@@ -1064,9 +1064,9 @@ def test_get_file_content_file_not_in_commit(repo_with_commits_for_file_content:
     repo = pygit2.Repository(str(repo_path))
     commit1_sha = str(repo.revparse_single("HEAD~1").id) # subdir/another.txt doesn't exist here
 
-    result = get_file_content_at_commit(str(repo_path), "subdir/another.txt", commit1_sha)
-    assert result["status"] == "error"
-    assert "File 'subdir/another.txt' not found in commit" in result["message"]
+    with pytest.raises(FileNotFoundInCommitError) as excinfo:
+        get_file_content_at_commit(str(repo_path), "subdir/another.txt", commit1_sha)
+    assert "File 'subdir/another.txt' not found in commit" in str(excinfo.value)
 
 
 def test_get_file_content_file_is_a_directory(repo_with_commits_for_file_content: Path):
@@ -1074,29 +1074,29 @@ def test_get_file_content_file_is_a_directory(repo_with_commits_for_file_content
     repo = pygit2.Repository(str(repo_path))
     commit2_sha = str(repo.revparse_single("HEAD").id) # 'subdir' exists here
 
-    result = get_file_content_at_commit(str(repo_path), "subdir", commit2_sha)
-    assert result["status"] == "error"
-    assert "Path 'subdir' in commit" in result["message"]
-    assert "is not a file (it's a tree)" in result["message"]
+    with pytest.raises(FileNotFoundInCommitError) as excinfo:
+        get_file_content_at_commit(str(repo_path), "subdir", commit2_sha)
+    assert "Path 'subdir' in commit" in str(excinfo.value)
+    assert "is not a file (it's a tree)" in str(excinfo.value)
 
 
 def test_get_file_content_commit_not_found(repo_with_commits_for_file_content: Path):
     repo_path = repo_with_commits_for_file_content
     invalid_sha = "abcdef1234567890abcdef1234567890abcdef12"
 
-    result = get_file_content_at_commit(str(repo_path), "text_file.txt", invalid_sha)
-    assert result["status"] == "error"
-    assert f"Commit with SHA '{invalid_sha}' not found or invalid" in result["message"]
+    with pytest.raises(CommitNotFoundError) as excinfo:
+        get_file_content_at_commit(str(repo_path), "text_file.txt", invalid_sha)
+    assert f"Commit with SHA '{invalid_sha}' not found or invalid" in str(excinfo.value)
 
 
 def test_get_file_content_repo_not_found(tmp_path: Path):
     non_repo_path = tmp_path / "ghost_repo"
     # Do not create or init non_repo_path
 
-    result = get_file_content_at_commit(str(non_repo_path), "file.txt", "any_sha")
-    assert result["status"] == "error"
-    assert "No Git repository found at or above" in result["message"] or \
-           "Error accessing repository at" in result["message"]
+    with pytest.raises(RepositoryNotFoundError) as excinfo:
+        get_file_content_at_commit(str(non_repo_path), "file.txt", "any_sha")
+    assert "No Git repository found at or above" in str(excinfo.value) or \
+           "Error accessing repository at" in str(excinfo.value)
 
 
 def test_get_file_content_non_utf8_text_file(repo_with_commits_for_file_content: Path):
@@ -1182,8 +1182,8 @@ def test_get_repository_metadata_success_with_metadata_file(metadata_repo: Path)
 
     # Check last_modified is from the latest commit
     latest_commit_dt = datetime.fromtimestamp(repo.head.peel(pygit2.Commit).commit_time,
-                                              tz=timezone(datetime.timedelta(minutes=repo.head.peel(pygit2.Commit).commit_time_offset)))
-    assert metadata["last_modified"] == latest_commit_dt
+                                                tz=timezone(timedelta(minutes=repo.head.peel(pygit2.Commit).commit_time_offset))) # Corrected
+    assert metadata["last_modified"].replace(microsecond=0) == latest_commit_dt.replace(microsecond=0)
 
 def test_get_repository_metadata_success_no_metadata_file(tmp_path: Path):
     repo_dir = tmp_path / "no_meta_repo"
@@ -1206,8 +1206,8 @@ def test_get_repository_metadata_success_no_metadata_file(tmp_path: Path):
     assert metadata["name"] == "no_meta_repo"
     assert metadata["description"] is None
     latest_commit_dt = datetime.fromtimestamp(repo.head.peel(pygit2.Commit).commit_time,
-                                              tz=timezone(datetime.timedelta(minutes=repo.head.peel(pygit2.Commit).commit_time_offset)))
-    assert metadata["last_modified"] == latest_commit_dt
+                                                tz=timezone(timedelta(minutes=repo.head.peel(pygit2.Commit).commit_time_offset))) # Corrected
+    assert metadata["last_modified"].replace(microsecond=0) == latest_commit_dt.replace(microsecond=0)
 
 
 def test_get_repository_metadata_empty_repo(tmp_path: Path):
@@ -1240,8 +1240,8 @@ def test_get_repository_metadata_invalid_metadata_file(metadata_repo: Path):
     assert metadata is not None
     assert metadata["description"] is None # Should be None due to parse error
     initial_commit_dt = datetime.fromtimestamp(repo.head.peel(pygit2.Commit).commit_time,
-                                               tz=timezone(datetime.timedelta(minutes=repo.head.peel(pygit2.Commit).commit_time_offset)))
-    assert metadata["last_modified"] == initial_commit_dt # From the initial commit in fixture
+                                                 tz=timezone(timedelta(minutes=repo.head.peel(pygit2.Commit).commit_time_offset))) # Corrected
+    assert metadata["last_modified"].replace(microsecond=0) == initial_commit_dt.replace(microsecond=0) # From the initial commit in fixture
 
 def test_get_repository_metadata_not_a_git_repo(tmp_path: Path):
     not_a_repo_dir = tmp_path / "not_a_repo"

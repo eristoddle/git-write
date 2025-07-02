@@ -3,6 +3,8 @@ import pygit2
 import os
 import time
 from typing import Optional, Dict, List, Any
+from datetime import datetime, timezone, timedelta # For timezone.utc and timedelta
+import yaml # For reading metadata.yml
 
 # Common ignore patterns for .gitignore
 COMMON_GITIGNORE_PATTERNS = [
@@ -902,8 +904,8 @@ def save_and_commit_file(repo_path_str: str, file_path: str, content: str, commi
         return {'status': 'error', 'message': f"An unexpected error occurred: {e}", 'commit_id': None}
 
 
-from datetime import datetime, timezone # For timezone.utc
-import yaml # For reading metadata.yml
+#from datetime import datetime, timezone # For timezone.utc # Already imported at top
+#import yaml # For reading metadata.yml # Already imported at top
 
 def get_repository_metadata(repo_path: Path) -> Optional[Dict[str, Any]]:
     """
@@ -916,57 +918,58 @@ def get_repository_metadata(repo_path: Path) -> Optional[Dict[str, Any]]:
         A dictionary containing metadata (name, last_modified, description)
         or None if it's not a valid Git repository or essential metadata cannot be fetched.
     """
-    try:
-        if not repo_path.is_dir() or not pygit2.discover_repository(str(repo_path)):
-            return None
+    # Step 1: Validate repo_path is a directory
+    if not repo_path.is_dir():
+        return None
 
-        repo = pygit2.Repository(str(repo_path))
+    # Step 2: Discover .git directory
+    repo_discovered_path_str = pygit2.discover_repository(str(repo_path))
+    if not repo_discovered_path_str:
+        return None
+
+    # Step 3: Open the repository
+    try:
+        repo = pygit2.Repository(repo_discovered_path_str)
+    except pygit2.GitError: # Catch only GitError for repository opening
+        return None
+
+    # Step 4: Determine last_modified time
+    last_modified_dt: datetime
+    try:
         if repo.is_empty or repo.head_is_unborn:
-            # For an empty/unborn repo, use directory's mtime if no commits
             last_modified_ts = repo_path.stat().st_mtime
             last_modified_dt = datetime.fromtimestamp(last_modified_ts, tz=timezone.utc)
         else:
-            try:
-                # Get the last commit on the current HEAD
-                last_commit = repo.head.peel(pygit2.Commit)
-                # last_commit.commit_time is Unix timestamp (seconds since epoch, UTC)
-                # last_commit.commit_time_offset is the offset in minutes.
-                commit_offset_timedelta = datetime.timedelta(minutes=last_commit.commit_time_offset)
-                commit_tz = timezone(commit_offset_timedelta)
-                # Create a timezone-aware datetime object
-                last_modified_dt = datetime.fromtimestamp(last_commit.commit_time, tz=commit_tz)
+            last_commit = repo.head.peel(pygit2.Commit)
+            commit_offset_timedelta = timedelta(minutes=last_commit.commit_time_offset) # Use timedelta directly
+            commit_tz = timezone(commit_offset_timedelta)
+            last_modified_dt = datetime.fromtimestamp(last_commit.commit_time, tz=commit_tz)
+    except (pygit2.GitError, KeyError, AttributeError): # More specific exceptions for commit data retrieval
+        # Fallback if peeling head or accessing commit time/offset fails
+        last_modified_ts = repo_path.stat().st_mtime
+        last_modified_dt = datetime.fromtimestamp(last_modified_ts, tz=timezone.utc)
 
-            except (pygit2.GitError, KeyError): # KeyError if HEAD doesn't exist or other issues
-                # Fallback to directory's mtime if commit info fails
-                last_modified_ts = repo_path.stat().st_mtime
-                last_modified_dt = datetime.fromtimestamp(last_modified_ts, tz=timezone.utc)
+    # Step 5: Get repository name and description
+    repo_name = repo_path.name
+    description = None
+    metadata_file = repo_path / "metadata.yml"
 
-        repo_name = repo_path.name
-        description = None
-        metadata_file = repo_path / "metadata.yml"
+    if metadata_file.exists() and metadata_file.is_file():
+        try:
+            with open(metadata_file, 'r', encoding='utf-8') as f:
+                metadata_content = yaml.safe_load(f)
+                if isinstance(metadata_content, dict):
+                    description = metadata_content.get("description")
+        except (yaml.YAMLError, IOError): # Specific exceptions for YAML parsing and file IO
+            pass # description remains None
 
-        if metadata_file.exists() and metadata_file.is_file():
-            try:
-                with open(metadata_file, 'r') as f:
-                    metadata_content = yaml.safe_load(f)
-                    if isinstance(metadata_content, dict):
-                        description = metadata_content.get("description")
-            except (yaml.YAMLError, IOError):
-                # Failed to read or parse YAML, so no description from file
-                pass # description remains None
-
-        return {
-            "name": repo_name,
-            "last_modified": last_modified_dt,
-            "description": description,
-            # "path": str(repo_path.resolve()) # Optional: if needed internally by API layer
-        }
-
-    except pygit2.GitError: # Not a git repository or other git error
-        return None
-    except Exception: # Catch any other unexpected errors
-        # Optionally log the exception here
-        return None
+    return {
+        "name": repo_name,
+        "last_modified": last_modified_dt,
+        "description": description,
+    }
+    # Removed the broad "except Exception" that was catching everything.
+    # Specific errors handled above should return None or allow specific issues to propagate if not caught.
 
 
 def get_file_content_at_commit(repo_path_str: str, file_path: str, commit_sha_str: str) -> Dict[str, Any]:
@@ -986,10 +989,10 @@ def get_file_content_at_commit(repo_path_str: str, file_path: str, commit_sha_st
 
     try:
         try:
-            repo_path = pygit2.discover_repository(repo_path_str)
-            if repo_path is None:
+            repo_path_discovered = pygit2.discover_repository(repo_path_str)
+            if repo_path_discovered is None:
                 raise RepositoryNotFoundError(f"No Git repository found at or above '{repo_path_str}'.")
-            repo = pygit2.Repository(repo_path)
+            repo = pygit2.Repository(repo_path_discovered) # Use discovered path
         except pygit2.GitError as e:
             raise RepositoryNotFoundError(f"Error accessing repository at '{repo_path_str}': {e}")
 
@@ -1000,9 +1003,10 @@ def get_file_content_at_commit(repo_path_str: str, file_path: str, commit_sha_st
         try:
             commit = repo.revparse_single(commit_sha_str)
             if not isinstance(commit, pygit2.Commit): # Ensure it's a commit object
-                commit = repo.get(commit.id) # Try to get the commit object if revparse_single returned a tag or tree
-                if not isinstance(commit, pygit2.Commit):
+                commit_obj_candidate = repo.get(commit.id) # Try to get the commit object if revparse_single returned a tag or tree
+                if not isinstance(commit_obj_candidate, pygit2.Commit):
                      raise CommitNotFoundError(f"Object with SHA '{commit_sha_str}' is not a commit.")
+                commit = commit_obj_candidate # Assign the actual commit object
         except (KeyError, pygit2.GitError, TypeError) as e: # TypeError for invalid SHA format
             raise CommitNotFoundError(f"Commit with SHA '{commit_sha_str}' not found or invalid: {e}")
 
@@ -1014,7 +1018,7 @@ def get_file_content_at_commit(repo_path_str: str, file_path: str, commit_sha_st
              raise GitWriteError(f"Error accessing file '{file_path}' in tree of commit '{commit_sha_str}': {e}")
 
 
-        if tree_entry.type_str != 'blob':
+        if tree_entry.type_str != 'blob': # pygit2 uses 'blob' for files in tree
             raise FileNotFoundInCommitError(f"Path '{file_path}' in commit '{commit_sha_str}' is not a file (it's a {tree_entry.type_str}).")
 
         blob = repo.get(tree_entry.id)
@@ -1060,10 +1064,12 @@ def get_file_content_at_commit(repo_path_str: str, file_path: str, commit_sha_st
         }
 
     except (RepositoryNotFoundError, CommitNotFoundError, FileNotFoundInCommitError, GitWriteError) as e:
-        return {'status': 'error', 'message': str(e)}
+        # Re-raise the specific custom exceptions
+        raise e
     except Exception as e:
         # Log detailed error: logger.error(f"Unexpected error in get_file_content_at_commit: {e}", exc_info=True)
-        return {'status': 'error', 'message': f"An unexpected error occurred: {e}"}
+        # Wrap unexpected errors in a generic GitWriteError or let them propagate if not specific to core logic
+        raise GitWriteError(f"An unexpected error occurred in get_file_content_at_commit: {e}")
 
 
 def save_and_commit_multiple_files(repo_path_str: str, files_to_commit: Dict[str, str], commit_message: str, author_name: Optional[str] = None, author_email: Optional[str] = None) -> Dict[str, Any]:

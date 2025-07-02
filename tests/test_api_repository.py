@@ -498,67 +498,62 @@ def test_api_get_file_content_binary(mock_core_get_content):
 
 @patch('gitwrite_api.routers.repository.core_get_file_content_at_commit')
 def test_api_get_file_content_file_not_found_in_commit(mock_core_get_content):
+    from gitwrite_core.exceptions import FileNotFoundInCommitError
     app.dependency_overrides[actual_repo_auth_dependency] = mock_get_current_active_user
-    mock_core_get_content.return_value = {
-        'status': 'error',
-        'message': "File 'ghost.txt' not found in commit 'a1b2c3d4e5f6'."
-    }
+    error_message = "File 'ghost.txt' not found in commit 'a1b2c3d4e5f6'."
+    mock_core_get_content.side_effect = FileNotFoundInCommitError(error_message)
     response = client.get("/repository/file-content?file_path=ghost.txt&commit_sha=a1b2c3d4e5f6")
     assert response.status_code == HTTPStatus.NOT_FOUND
-    assert "File 'ghost.txt' not found in commit" in response.json()["detail"]
+    assert error_message in response.json()["detail"]
     app.dependency_overrides = {}
 
 
 @patch('gitwrite_api.routers.repository.core_get_file_content_at_commit')
 def test_api_get_file_content_commit_not_found(mock_core_get_content):
+    from gitwrite_core.exceptions import CommitNotFoundError
     app.dependency_overrides[actual_repo_auth_dependency] = mock_get_current_active_user
     invalid_sha = "000000"
-    mock_core_get_content.return_value = {
-        'status': 'error',
-        'message': f"Commit with SHA '{invalid_sha}' not found or invalid."
-    }
+    error_message = f"Commit with SHA '{invalid_sha}' not found or invalid."
+    mock_core_get_content.side_effect = CommitNotFoundError(error_message)
     response = client.get(f"/repository/file-content?file_path=any.txt&commit_sha={invalid_sha}")
     assert response.status_code == HTTPStatus.NOT_FOUND
-    assert f"Commit with SHA '{invalid_sha}' not found or invalid" in response.json()["detail"]
+    assert error_message in response.json()["detail"]
     app.dependency_overrides = {}
 
 
 @patch('gitwrite_api.routers.repository.core_get_file_content_at_commit')
 def test_api_get_file_content_repo_config_error(mock_core_get_content):
+    from gitwrite_core.exceptions import RepositoryNotFoundError
     app.dependency_overrides[actual_repo_auth_dependency] = mock_get_current_active_user
-    mock_core_get_content.return_value = {
-        'status': 'error',
-        'message': "Repository not found at /nonexistent/path."
-    }
+    error_message = "Repository not found at /nonexistent/path."
+    mock_core_get_content.side_effect = RepositoryNotFoundError(error_message)
     response = client.get("/repository/file-content?file_path=any.txt&commit_sha=a1b2c3")
-    assert response.status_code == HTTPStatus.INTERNAL_SERVER_ERROR # 500 due to repo config
-    assert "Repository not found" in response.json()["detail"]
+    assert response.status_code == HTTPStatus.INTERNAL_SERVER_ERROR
+    assert error_message in response.json()["detail"]
     app.dependency_overrides = {}
 
 
 @patch('gitwrite_api.routers.repository.core_get_file_content_at_commit')
 def test_api_get_file_content_path_is_directory(mock_core_get_content):
+    from gitwrite_core.exceptions import FileNotFoundInCommitError
     app.dependency_overrides[actual_repo_auth_dependency] = mock_get_current_active_user
-    mock_core_get_content.return_value = {
-        'status': 'error',
-        'message': "Path 'src_dir' in commit 'a1b2c3' is not a file (it's a tree)."
-    }
+    error_message = "Path 'src_dir' in commit 'a1b2c3' is not a file (it's a tree)."
+    mock_core_get_content.side_effect = FileNotFoundInCommitError(error_message)
     response = client.get("/repository/file-content?file_path=src_dir&commit_sha=a1b2c3")
-    assert response.status_code == HTTPStatus.BAD_REQUEST # 400 because path is not a file
-    assert "is not a file (it's a tree)" in response.json()["detail"]
+    assert response.status_code == HTTPStatus.BAD_REQUEST
+    assert error_message in response.json()["detail"]
     app.dependency_overrides = {}
 
 
 @patch('gitwrite_api.routers.repository.core_get_file_content_at_commit')
 def test_api_get_file_content_generic_core_error(mock_core_get_content):
+    from gitwrite_core.exceptions import GitWriteError
     app.dependency_overrides[actual_repo_auth_dependency] = mock_get_current_active_user
-    mock_core_get_content.return_value = {
-        'status': 'error',
-        'message': "A generic core layer error occurred."
-    }
+    error_message = "A generic core layer error occurred."
+    mock_core_get_content.side_effect = GitWriteError(error_message)
     response = client.get("/repository/file-content?file_path=some.txt&commit_sha=a1b2c3")
     assert response.status_code == HTTPStatus.INTERNAL_SERVER_ERROR
-    assert "A generic core layer error occurred" in response.json()["detail"]
+    assert error_message in response.json()["detail"]
     app.dependency_overrides = {}
 
 # Test with actual core exceptions being raised (if core layer changes to that pattern)
@@ -578,8 +573,8 @@ def test_api_list_repositories_success(mock_is_dir, mock_listdir, mock_get_metad
 
     # Simulate Path.is_dir behavior for items from listdir
     # repo1 and repo2 are dirs, not_a_repo_file.txt is not
-    def is_dir_side_effect(path_arg):
-        if path_arg.name in ["repo1", "repo2"]:
+    def is_dir_side_effect(self): # Using 'self' as per user prompt's direct suggestion
+        if self.name in ["repo1", "repo2"]:
             return True
         return False
     mock_is_dir.side_effect = is_dir_side_effect
