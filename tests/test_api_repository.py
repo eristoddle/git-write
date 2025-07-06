@@ -573,11 +573,14 @@ def test_api_list_repositories_success(mock_is_dir, mock_listdir, mock_get_metad
 
     # Simulate Path.is_dir behavior for items from listdir
     # repo1 and repo2 are dirs, not_a_repo_file.txt is not
-    def is_dir_side_effect(self): # Using 'self' as per user prompt's direct suggestion
-        if self.name in ["repo1", "repo2"]:
-            return True
-        return False
-    mock_is_dir.side_effect = is_dir_side_effect
+    class MockHelper:
+        def is_dir_side_effect(self, path):
+            if path.name in ["repo1", "repo2"]:
+                return True
+            return False
+
+    mock_helper = MockHelper()
+    mock_is_dir.side_effect = mock_helper.is_dir_side_effect
 
     # Mock metadata returned by core_get_repository_metadata
     now = datetime.datetime.now(datetime.timezone.utc)
