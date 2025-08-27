@@ -4,4 +4,5 @@ __pycache__
 *.tmp
 node_modules
 .DS_Store
-dist
+repomix-output.xml
+.venv/
