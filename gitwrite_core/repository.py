@@ -972,6 +972,138 @@ def get_repository_metadata(repo_path: Path) -> Optional[Dict[str, Any]]:
     # Specific errors handled above should return None or allow specific issues to propagate if not caught.
 
 
+def list_repository_tree(repo_path_str: str, ref: str, path: str = "") -> Dict[str, Any]:
+    """Lists files and folders in a repository at a specific reference and path.
+    
+    Args:
+        repo_path_str: String path to the repository.
+        ref: Git reference (branch, tag, or commit SHA).
+        path: Path within the repository (defaults to root).
+        
+    Returns:
+        Dictionary with 'status', 'entries', and metadata.
+    """
+    try:
+        # Discover and open repository
+        try:
+            repo_path = pygit2.discover_repository(repo_path_str)
+            if repo_path is None:
+                return {
+                    'status': 'error',
+                    'message': f"No Git repository found at or above '{repo_path_str}'.",
+                    'entries': []
+                }
+            repo = pygit2.Repository(repo_path)
+        except pygit2.GitError as e:
+            return {
+                'status': 'error', 
+                'message': f"Error opening repository: {e}",
+                'entries': []
+            }
+        
+        # Resolve reference to commit
+        try:
+            commit_obj = repo.revparse_single(ref)
+            if not isinstance(commit_obj, pygit2.Commit):
+                # Handle case where ref points to a tag or other object
+                commit_obj = commit_obj.peel(pygit2.Commit)
+        except (pygit2.GitError, KeyError, TypeError) as e:
+            return {
+                'status': 'error',
+                'message': f"Reference '{ref}' not found or invalid: {e}",
+                'entries': []
+            }
+        
+        # Get the tree at the commit
+        tree = commit_obj.tree
+        
+        # Navigate to the requested path if provided
+        if path and path != "/":
+            # Normalize path (remove leading/trailing slashes)
+            clean_path = path.strip('/')
+            if clean_path:
+                try:
+                    tree_entry = tree[clean_path]
+                    if tree_entry.type_str != 'tree':
+                        return {
+                            'status': 'error',
+                            'message': f"Path '{path}' is not a directory.",
+                            'entries': []
+                        }
+                    tree = repo.get(tree_entry.id)
+                except KeyError:
+                    return {
+                        'status': 'error',
+                        'message': f"Path '{path}' not found in repository at ref '{ref}'.",
+                        'entries': []
+                    }
+                except pygit2.GitError as e:
+                    return {
+                        'status': 'error',
+                        'message': f"Error accessing path '{path}': {e}",
+                        'entries': []
+                    }
+        
+        # List entries in the tree
+        entries = []
+        for entry in tree:
+            entry_path = f"{path.rstrip('/')}/{entry.name}" if path else entry.name
+            entry_path = entry_path.lstrip('/')  # Remove leading slash
+            
+            entry_data = {
+                'name': entry.name,
+                'path': entry_path,
+                'type': 'tree' if entry.type_str == 'tree' else 'blob',
+                'mode': f"{entry.filemode:o}",  # Convert to octal string
+                'oid': str(entry.id)
+            }
+            
+            # Add size for files (blobs)
+            if entry.type_str == 'blob':
+                try:
+                    blob = repo.get(entry.id)
+                    entry_data['size'] = blob.size
+                except pygit2.GitError:
+                    entry_data['size'] = None
+            else:
+                entry_data['size'] = None
+            
+            entries.append(entry_data)
+        
+        # Sort entries: directories first, then files, alphabetically within each group
+        entries.sort(key=lambda x: (x['type'] != 'tree', x['name'].lower()))
+        
+        # Generate breadcrumb if path is provided
+        breadcrumb = []
+        if path:
+            # Add root
+            breadcrumb.append({'name': repo.head.shorthand or 'Repository', 'path': ''})
+            
+            # Add path components
+            path_parts = path.strip('/').split('/') if path.strip('/') else []
+            current_path = ''
+            for part in path_parts:
+                current_path = f"{current_path}/{part}" if current_path else part
+                breadcrumb.append({'name': part, 'path': current_path})
+        
+        return {
+            'status': 'success',
+            'repo_name': Path(repo_path_str).name,
+            'ref': ref,
+            'request_path': path,
+            'entries': entries,
+            'breadcrumb': breadcrumb if breadcrumb else None,
+            'message': f'Successfully listed {len(entries)} entries.'
+        }
+        
+    except Exception as e:
+        return {
+            'status': 'error',
+            'message': f"An unexpected error occurred: {e}",
+            'entries': []
+        }
+
+
 def get_file_content_at_commit(repo_path_str: str, file_path: str, commit_sha_str: str) -> Dict[str, Any]:
     """
     Retrieves the content and metadata of a specific file at a given commit.

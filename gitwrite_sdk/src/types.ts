@@ -193,11 +193,11 @@ export interface RepositoryListItem {
   name: string;
   last_modified: string; // ISO 8601 timestamp
   description?: string | null;
-  default_branch: string;
 }
 
 export interface RepositoriesListResponse {
   repositories: RepositoryListItem[];
+  count: number;
 }
 
 export interface RepositoryTreeEntry {

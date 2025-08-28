@@ -6,3 +6,24 @@ node_modules
 .DS_Store
 repomix-output.xml
 .venv/
+
+# Environment files
+.env
+.env.local
+.env.development
+.env.production
+
+# Deployment data
+data/
+logs/
+ssl/
+backup_*/
+
+# Docker
+.dockerignore
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo

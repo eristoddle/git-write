@@ -43,11 +43,8 @@ const CommitHistoryView: React.FC = () => {
         const client = new GitWriteClient(import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000');
         client.setToken(token);
 
-        // TODO: The SDK's listCommits doesn't directly take repoName.
-        // This implies the API is context-aware or the SDK needs an update
-        // for multi-repo support beyond the placeholder.
-        // For now, assuming the API is set to the target repo contextually.
-        const response = await client.listCommits({ branchName: branchName, maxCount: 100 });
+        // Use the updated SDK method that requires repository name
+        const response = await client.listCommits(repoName, { branchName: branchName, maxCount: 100 });
         if (response.status === 'success' || response.status === 'no_commits') {
           setCommits(response.commits || []);
         } else {

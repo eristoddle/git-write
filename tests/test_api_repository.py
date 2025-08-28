@@ -33,6 +33,7 @@ client = TestClient(app)
 
 # --- Mock Data ---
 MOCK_REPO_PATH = "/tmp/gitwrite_repos_api"
+TEST_REPO_NAME = "test-repo"  # Added for repository-specific endpoints
 
 # Define New Mock Users with Roles
 MOCK_OWNER_USER = User(username="owneruser", email="owner@example.com", roles=[UserRole.OWNER], disabled=False, full_name="Owner User")
@@ -63,12 +64,14 @@ def test_list_branches_success(mock_list_branches):
         "message": "Successfully retrieved local branches."
     }
     app.dependency_overrides[actual_repo_auth_dependency] = mock_get_current_active_user
-    response = client.get("/repository/branches")
+    response = client.get(f"/repository/{TEST_REPO_NAME}/branches")
     assert response.status_code == 200
     data = response.json()
     assert data["branches"] == ["main", "develop"]
     assert data["status"] == "success"
-    mock_list_branches.assert_called_once_with(repo_path_str=MOCK_REPO_PATH)
+    # The mock should be called with the resolved path including the repo name
+    expected_repo_path = f"{MOCK_REPO_PATH}/gitwrite_user_repos/{TEST_REPO_NAME}"
+    mock_list_branches.assert_called_once_with(repo_path_str=expected_repo_path)
     app.dependency_overrides = {}
 
 # --- RBAC Tests for /repository/repositories (Initialize) ---
@@ -141,7 +144,7 @@ def test_api_save_file_rbac_owner_allowed(mock_core_save_file):
     app.dependency_overrides[actual_repo_auth_dependency] = mock_get_current_active_user_with_role(MOCK_OWNER_USER)
     mock_core_save_file.return_value = {'status': 'success', 'message': 'Saved by owner', 'commit_id': 'commit1'}
     payload = SaveFileRequest(file_path="owner.txt", content="c", commit_message="m")
-    response = client.post("/repository/save", json=payload.model_dump())
+    response = client.post(f"/repository/{TEST_REPO_NAME}/save", json=payload.model_dump())
     assert response.status_code == HTTPStatus.OK
     assert response.json()["commit_id"] == "commit1"
     mock_core_save_file.assert_called_once()
@@ -152,7 +155,7 @@ def test_api_save_file_rbac_editor_allowed(mock_core_save_file):
     app.dependency_overrides[actual_repo_auth_dependency] = mock_get_current_active_user_with_role(MOCK_EDITOR_USER)
     mock_core_save_file.return_value = {'status': 'success', 'message': 'Saved by editor', 'commit_id': 'commit2'}
     payload = SaveFileRequest(file_path="editor.txt", content="c", commit_message="m")
-    response = client.post("/repository/save", json=payload.model_dump())
+    response = client.post(f"/repository/{TEST_REPO_NAME}/save", json=payload.model_dump())
     assert response.status_code == HTTPStatus.OK
     assert response.json()["commit_id"] == "commit2"
     mock_core_save_file.assert_called_once()
@@ -163,7 +166,7 @@ def test_api_save_file_rbac_writer_allowed(mock_core_save_file):
     app.dependency_overrides[actual_repo_auth_dependency] = mock_get_current_active_user_with_role(MOCK_WRITER_USER)
     mock_core_save_file.return_value = {'status': 'success', 'message': 'Saved by writer', 'commit_id': 'commit3'}
     payload = SaveFileRequest(file_path="writer.txt", content="c", commit_message="m")
-    response = client.post("/repository/save", json=payload.model_dump())
+    response = client.post(f"/repository/{TEST_REPO_NAME}/save", json=payload.model_dump())
     assert response.status_code == HTTPStatus.OK
     assert response.json()["commit_id"] == "commit3"
     mock_core_save_file.assert_called_once()
@@ -173,7 +176,7 @@ def test_api_save_file_rbac_writer_allowed(mock_core_save_file):
 def test_api_save_file_rbac_beta_reader_denied(mock_core_save_file):
     app.dependency_overrides[actual_repo_auth_dependency] = mock_get_current_active_user_with_role(MOCK_BETA_READER_USER)
     payload = SaveFileRequest(file_path="beta.txt", content="c", commit_message="m")
-    response = client.post("/repository/save", json=payload.model_dump())
+    response = client.post(f"/repository/{TEST_REPO_NAME}/save", json=payload.model_dump())
     assert response.status_code == HTTPStatus.FORBIDDEN
     assert "User does not have the required role(s): owner, editor, writer" in response.json()["detail"]
     mock_core_save_file.assert_not_called()
@@ -183,7 +186,7 @@ def test_api_save_file_rbac_beta_reader_denied(mock_core_save_file):
 def test_api_save_file_rbac_no_roles_denied(mock_core_save_file):
     app.dependency_overrides[actual_repo_auth_dependency] = mock_get_current_active_user_with_role(MOCK_USER_NO_ROLES)
     payload = SaveFileRequest(file_path="no_roles.txt", content="c", commit_message="m")
-    response = client.post("/repository/save", json=payload.model_dump())
+    response = client.post(f"/repository/{TEST_REPO_NAME}/save", json=payload.model_dump())
     assert response.status_code == HTTPStatus.FORBIDDEN
     assert "User has no assigned roles" in response.json()["detail"]
     mock_core_save_file.assert_not_called()
@@ -310,13 +313,15 @@ def test_api_save_file_success_original_style(mock_core_save_file): # Original t
         content="Hello world",
         commit_message="Add test_file.txt"
     )
-    response = client.post("/repository/save", json=payload.model_dump())
+    response = client.post(f"/repository/{TEST_REPO_NAME}/save", json=payload.model_dump())
     assert response.status_code == HTTPStatus.OK
     data = response.json()
     assert data["status"] == "success"
     assert data["commit_id"] == "fakecommit123"
+    # Update the expected repo path to include the repository name
+    expected_repo_path = f"{MOCK_REPO_PATH}/gitwrite_user_repos/{TEST_REPO_NAME}"
     mock_core_save_file.assert_called_once_with(
-        repo_path_str=MOCK_REPO_PATH,
+        repo_path_str=expected_repo_path,
         file_path=payload.file_path,
         content=payload.content,
         commit_message=payload.commit_message,

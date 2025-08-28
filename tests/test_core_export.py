@@ -7,7 +7,7 @@ import pathlib
 import time
 from unittest import mock
 
-from gitwrite_core.export import export_to_epub
+from gitwrite_core.export import export_to_epub, export_to_pdf, export_to_docx
 from gitwrite_core.exceptions import (
     PandocError,
     RepositoryNotFoundError,
@@ -198,6 +198,113 @@ def test_export_to_epub_all_files_empty_error(temp_git_repo_path, mock_pypandoc_
     output_epub = temp_git_repo_path / "output_all_empty.epub"
     with pytest.raises(GitWriteError, match="No content found to export: All specified files are empty or contain only whitespace."):
         export_to_epub(str(temp_git_repo_path), "HEAD", ["e1.md", "e2.md"], str(output_epub))
+
+
+# ============================================================================
+# PDF Export Tests
+# ============================================================================
+
+def test_export_to_pdf_success(temp_git_repo_path, mock_pypandoc_path_found, mock_pypandoc_convert_text):
+    files_content = {"file1.md": "# Chapter 1\nHello", "file2.md": "# Chapter 2\nWorld"}
+    init_test_repo_corrected(temp_git_repo_path, files_content, "Add markdown files")
+    output_pdf = temp_git_repo_path / "output.pdf"
+    file_list = ["file1.md", "file2.md"]
+    result = export_to_pdf(str(temp_git_repo_path), "HEAD", file_list, str(output_pdf))
+    assert result["status"] == "success"
+    assert "PDF successfully generated" in result["message"]
+    expected_combined_content = "# Chapter 1\nHello\n\n---\n\n# Chapter 2\nWorld"
+    mock_pypandoc_convert_text.assert_called_once_with(
+        source=expected_combined_content, to='pdf', format='md',
+        outputfile=str(output_pdf.resolve()), extra_args=['--standalone', '--pdf-engine=pdflatex']
+    )
+    mock_pypandoc_path_found.assert_called_once()
+
+def test_export_to_pdf_custom_engine(temp_git_repo_path, mock_pypandoc_path_found, mock_pypandoc_convert_text):
+    files_content = {"file1.md": "# Chapter 1\nHello"}
+    init_test_repo_corrected(temp_git_repo_path, files_content, "Add markdown files")
+    output_pdf = temp_git_repo_path / "output.pdf"
+    file_list = ["file1.md"]
+    result = export_to_pdf(str(temp_git_repo_path), "HEAD", file_list, str(output_pdf), 
+                          extra_args=['--standalone', '--pdf-engine=xelatex'])
+    assert result["status"] == "success"
+    mock_pypandoc_convert_text.assert_called_once_with(
+        source="# Chapter 1\nHello", to='pdf', format='md',
+        outputfile=str(output_pdf.resolve()), extra_args=['--standalone', '--pdf-engine=xelatex']
+    )
+
+def test_export_to_pdf_pandoc_not_found(temp_git_repo_path, monkeypatch):
+    monkeypatch.setattr(pypandoc, "get_pandoc_path", mock.Mock(side_effect=OSError("Pandoc not found simulation")))
+    init_test_repo_corrected(temp_git_repo_path, {"file1.md": "content"}, "Initial")
+    output_pdf = temp_git_repo_path / "output.pdf"
+    with pytest.raises(PandocError, match="Pandoc not found. Please ensure pandoc is installed"):
+        export_to_pdf(str(temp_git_repo_path), "HEAD", ["file1.md"], str(output_pdf))
+
+def test_export_to_pdf_empty_file_list(temp_git_repo_path, mock_pypandoc_path_found):
+    init_test_repo_corrected(temp_git_repo_path, {"file1.md": "content"}, "Initial")
+    output_pdf = temp_git_repo_path / "output.pdf"
+    with pytest.raises(GitWriteError, match="File list cannot be empty for PDF export"):
+        export_to_pdf(str(temp_git_repo_path), "HEAD", [], str(output_pdf))
+
+def test_export_to_pdf_file_not_found(temp_git_repo_path, mock_pypandoc_path_found):
+    repo = init_test_repo_corrected(temp_git_repo_path, {"file1.md": "content"}, "Initial")
+    output_pdf = temp_git_repo_path / "output.pdf"
+    commit_short_id = repo.head.peel(pygit2.Commit).short_id
+    with pytest.raises(FileNotFoundInCommitError, match=f"File 'missing.md' not found in commit '{commit_short_id}'"):
+        export_to_pdf(str(temp_git_repo_path), "HEAD", ["missing.md"], str(output_pdf))
+
+def test_export_to_pdf_pandoc_latex_error(temp_git_repo_path, mock_pypandoc_path_found, mock_pypandoc_convert_text):
+    mock_pypandoc_convert_text.side_effect = RuntimeError("pandoc document conversion failed pdflatex not found")
+    init_test_repo_corrected(temp_git_repo_path, {"file1.md": "content"}, "Initial")
+    output_pdf = temp_git_repo_path / "output.pdf"
+    with pytest.raises(PandocError, match="PDF generation failed. Ensure that Pandoc and a LaTeX engine"):
+        export_to_pdf(str(temp_git_repo_path), "HEAD", ["file1.md"], str(output_pdf))
+
+
+# ============================================================================
+# DOCX Export Tests
+# ============================================================================
+
+def test_export_to_docx_success(temp_git_repo_path, mock_pypandoc_path_found, mock_pypandoc_convert_text):
+    files_content = {"file1.md": "# Chapter 1\nHello", "file2.md": "# Chapter 2\nWorld"}
+    init_test_repo_corrected(temp_git_repo_path, files_content, "Add markdown files")
+    output_docx = temp_git_repo_path / "output.docx"
+    file_list = ["file1.md", "file2.md"]
+    result = export_to_docx(str(temp_git_repo_path), "HEAD", file_list, str(output_docx))
+    assert result["status"] == "success"
+    assert "DOCX successfully generated" in result["message"]
+    expected_combined_content = "# Chapter 1\nHello\n\n---\n\n# Chapter 2\nWorld"
+    mock_pypandoc_convert_text.assert_called_once_with(
+        source=expected_combined_content, to='docx', format='md',
+        outputfile=str(output_docx.resolve()), extra_args=['--standalone']
+    )
+    mock_pypandoc_path_found.assert_called_once()
+
+def test_export_to_docx_pandoc_not_found(temp_git_repo_path, monkeypatch):
+    monkeypatch.setattr(pypandoc, "get_pandoc_path", mock.Mock(side_effect=OSError("Pandoc not found simulation")))
+    init_test_repo_corrected(temp_git_repo_path, {"file1.md": "content"}, "Initial")
+    output_docx = temp_git_repo_path / "output.docx"
+    with pytest.raises(PandocError, match="Pandoc not found. Please ensure pandoc is installed"):
+        export_to_docx(str(temp_git_repo_path), "HEAD", ["file1.md"], str(output_docx))
+
+def test_export_to_docx_empty_file_list(temp_git_repo_path, mock_pypandoc_path_found):
+    init_test_repo_corrected(temp_git_repo_path, {"file1.md": "content"}, "Initial")
+    output_docx = temp_git_repo_path / "output.docx"
+    with pytest.raises(GitWriteError, match="File list cannot be empty for DOCX export"):
+        export_to_docx(str(temp_git_repo_path), "HEAD", [], str(output_docx))
+
+def test_export_to_docx_file_not_found(temp_git_repo_path, mock_pypandoc_path_found):
+    repo = init_test_repo_corrected(temp_git_repo_path, {"file1.md": "content"}, "Initial")
+    output_docx = temp_git_repo_path / "output.docx"
+    commit_short_id = repo.head.peel(pygit2.Commit).short_id
+    with pytest.raises(FileNotFoundInCommitError, match=f"File 'missing.md' not found in commit '{commit_short_id}'"):
+        export_to_docx(str(temp_git_repo_path), "HEAD", ["missing.md"], str(output_docx))
+
+def test_export_to_docx_pandoc_conversion_error(temp_git_repo_path, mock_pypandoc_path_found, mock_pypandoc_convert_text):
+    mock_pypandoc_convert_text.side_effect = RuntimeError("Pandoc DOCX conversion failed badly")
+    init_test_repo_corrected(temp_git_repo_path, {"file1.md": "content"}, "Initial")
+    output_docx = temp_git_repo_path / "output.docx"
+    with pytest.raises(PandocError, match="Pandoc DOCX conversion failed: Pandoc DOCX conversion failed badly"):
+        export_to_docx(str(temp_git_repo_path), "HEAD", ["file1.md"], str(output_docx))
 
 def test_export_to_epub_commit_ish_is_blob_oid_error(temp_git_repo_path, mock_pypandoc_path_found):
     repo = init_test_repo_corrected(temp_git_repo_path, {"file1.md": "content"}, "Initial")

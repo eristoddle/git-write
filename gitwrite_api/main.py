@@ -39,6 +39,59 @@ app.include_router(annotations.router)
 async def root():
     return {"message": "Welcome to GitWrite API - Health Check OK"}
 
+@app.get("/health")
+async def health_check():
+    """Detailed health check endpoint for monitoring and deployment."""
+    import time
+    import os
+    from pathlib import Path
+    
+    # Check system resources and dependencies
+    health_status = {
+        "status": "healthy",
+        "timestamp": time.time(),
+        "version": "0.1.0",
+        "environment": os.getenv("GITWRITE_ENV", "development"),
+        "checks": {
+            "api": "ok",
+            "storage": "ok",
+            "dependencies": "ok"
+        }
+    }
+    
+    try:
+        # Check if storage directories are accessible
+        repo_path = os.getenv("GITWRITE_REPO_PATH", "/app/data/repositories")
+        export_path = os.getenv("GITWRITE_EXPORT_PATH", "/app/data/exports")
+        
+        if not Path(repo_path).exists():
+            health_status["checks"]["storage"] = "warning - repo path not found"
+        if not Path(export_path).exists():
+            health_status["checks"]["storage"] = "warning - export path not found"
+            
+        # Check critical dependencies
+        try:
+            import pygit2
+            import pypandoc
+            pypandoc.get_pandoc_path()  # This will raise if pandoc is not found
+        except ImportError as e:
+            health_status["checks"]["dependencies"] = f"error - missing dependency: {e}"
+            health_status["status"] = "degraded"
+        except OSError:
+            health_status["checks"]["dependencies"] = "warning - pandoc not found"
+            health_status["status"] = "degraded"
+            
+    except Exception as e:
+        health_status["status"] = "unhealthy"
+        health_status["error"] = str(e)
+    
+    # Return appropriate HTTP status code
+    from fastapi import HTTPException
+    if health_status["status"] == "unhealthy":
+        raise HTTPException(status_code=503, detail=health_status)
+    
+    return health_status
+
 # Example of a protected endpoint (optional, for quick testing later if desired)
 # from fastapi import Depends
 # from .security import get_current_active_user

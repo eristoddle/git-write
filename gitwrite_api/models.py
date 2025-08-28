@@ -109,6 +109,34 @@ class EPUBExportResponse(BaseModel):
     # export_job_id: Optional[str] = Field(None, description="An ID for tracking an asynchronous export job, if applicable.")
 
 
+# Models for PDF Export API Endpoints
+
+class PDFExportRequest(BaseModel):
+    commit_ish: str = Field(default="HEAD", description="The commit-ish (e.g., commit hash, branch name, tag) to export from. Defaults to 'HEAD'.")
+    file_list: List[str] = Field(..., min_items=1, description="A list of paths to markdown files (relative to repo root) to include in the PDF.")
+    output_filename: Optional[str] = Field(default="export.pdf", min_length=1, pattern=r"^[a-zA-Z0-9_.-]+\.pdf$", description="Desired filename for the PDF (e.g., 'my-document.pdf'). Must end with '.pdf'. Defaults to 'export.pdf'.")
+    # Additional PDF-specific options can be added here
+    pdf_engine: Optional[str] = Field(default="pdflatex", description="PDF engine to use (e.g., 'pdflatex', 'xelatex', 'lualatex'). Defaults to 'pdflatex'.")
+
+class PDFExportResponse(BaseModel):
+    status: str = Field(..., description="Outcome of the PDF export operation (e.g., 'success', 'error').")
+    message: str = Field(..., description="Detailed message about the export outcome.")
+    server_file_path: Optional[str] = Field(None, description="Server-side path to the generated PDF file, present on success.")
+
+
+# Models for DOCX Export API Endpoints
+
+class DOCXExportRequest(BaseModel):
+    commit_ish: str = Field(default="HEAD", description="The commit-ish (e.g., commit hash, branch name, tag) to export from. Defaults to 'HEAD'.")
+    file_list: List[str] = Field(..., min_items=1, description="A list of paths to markdown files (relative to repo root) to include in the DOCX.")
+    output_filename: Optional[str] = Field(default="export.docx", min_length=1, pattern=r"^[a-zA-Z0-9_.-]+\.docx$", description="Desired filename for the DOCX (e.g., 'my-document.docx'). Must end with '.docx'. Defaults to 'export.docx'.")
+
+class DOCXExportResponse(BaseModel):
+    status: str = Field(..., description="Outcome of the DOCX export operation (e.g., 'success', 'error').")
+    message: str = Field(..., description="Detailed message about the export outcome.")
+    server_file_path: Optional[str] = Field(None, description="Server-side path to the generated DOCX file, present on success.")
+
+
 # Models for Annotation Handling
 
 class AnnotationStatus(str, Enum):
@@ -189,3 +217,25 @@ class RepositoryListItem(RepositoryMetadata): # Inherits from RepositoryMetadata
 class RepositoriesListResponse(BaseModel):
     repositories: List[RepositoryListItem] = Field(..., description="A list of available repositories.")
     count: int = Field(..., description="The total number of repositories returned.")
+
+
+# --- API Request/Response Models for Repository Tree Browsing ---
+
+class RepositoryTreeEntry(BaseModel):
+    name: str = Field(..., description="Name of the file or folder.")
+    path: str = Field(..., description="Full path from repository root.")
+    type: str = Field(..., description="Type of entry: 'blob' for files, 'tree' for folders.")
+    size: Optional[int] = Field(None, description="Size in bytes for files (blobs), null for folders.")
+    mode: str = Field(..., description="Git file mode (e.g., '100644' for regular file, '40000' for directory).")
+    oid: str = Field(..., description="Git object ID (SHA) of the entry.")
+
+class RepositoryTreeBreadcrumbItem(BaseModel):
+    name: str = Field(..., description="Display name of the breadcrumb item.")
+    path: str = Field(..., description="Path component for navigation.")
+
+class RepositoryTreeResponse(BaseModel):
+    repo_name: str = Field(..., description="Name of the repository.")
+    ref: str = Field(..., description="The reference (branch, tag, or commit SHA) being browsed.")
+    request_path: str = Field(..., description="The path within the repository that was requested.")
+    entries: List[RepositoryTreeEntry] = Field(..., description="List of files and folders at the requested path.")
+    breadcrumb: Optional[List[RepositoryTreeBreadcrumbItem]] = Field(None, description="Breadcrumb navigation for the current path.")

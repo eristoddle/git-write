@@ -40,18 +40,44 @@ from gitwrite_core.exceptions import (
     FileNotFoundInCommitError # Added for EPUB export
 )
 from gitwrite_core.versioning import get_commit_history, get_diff, revert_commit, save_changes, get_branch_review_commits, cherry_pick_commit # Added get_branch_review_commits and cherry_pick_commit
-from gitwrite_core.export import export_to_epub # Added for EPUB export
+from gitwrite_core.export import export_to_epub
+from gitwrite_core.export import export_to_pdf, export_to_docx # Added for EPUB export
 from rich.table import Table # Ensure Table is imported for switch
 
 @click.group()
-def cli():
-    """GitWrite: A CLI tool for writer-friendly Git repositories."""
-    pass
+@click.pass_context
+def cli(ctx):
+    """GitWrite: Version control for writers.
+    
+    GitWrite makes version control accessible to writers with intuitive commands.
+    Think of it as "track changes" but much more powerful.
+    
+    Common workflows:
+      gitwrite init "MyNovel"     # Start a new writing project
+      gitwrite save "Chapter 1"   # Save your progress
+      gitwrite explore ideas       # Try different approaches
+      gitwrite switch main         # Return to your main work
+      gitwrite history             # See your writing journey
+    
+    Get help for any command: gitwrite COMMAND --help
+    """
+    if ctx.obj is None:
+        ctx.obj = {}
 
 @cli.command()
 @click.argument("project_name", required=False)
 def init(project_name):
-    """Initializes a new GitWrite project or adds GitWrite structure to an existing Git repository."""
+    """Start a new writing project or set up version control in current folder.
+    
+    Examples:
+      gitwrite init "MyNovel"      # Create a new project folder
+      gitwrite init                 # Set up current folder for writing
+    
+    This creates:
+    - A writing-friendly folder structure (drafts/, notes/)
+    - Version control to track your changes
+    - Metadata file for project information
+    """
     # Determine the base path (current working directory)
     # The core function expects path_str to be the CWD from where CLI is called.
     base_path_str = str(Path.cwd())
@@ -78,10 +104,23 @@ def init(project_name):
     "include_paths",
     type=click.Path(exists=False),
     multiple=True,
-    help="Specify a file or directory to include in the save. Can be used multiple times. If not provided, all changes are saved.",
+    help="Include specific files/folders. Use multiple times for multiple files.",
 )
 def save(message, include_paths):
-    """Stages changes and creates a commit with the given message. Supports selective staging with --include."""
+    """Save your writing progress with a descriptive message.
+    
+    This is like "Save As" but creates a snapshot you can return to later.
+    
+    Examples:
+      gitwrite save "Finished Chapter 3"           # Save all changes
+      gitwrite save "Draft notes" -i notes/        # Save only notes folder
+      gitwrite save "Character development" -i characters.md -i plot.md
+    
+    Tips:
+      - Use clear, descriptive messages
+      - Save frequently to track your progress
+      - Each save creates a checkpoint in your writing journey
+    """
     try:
         repo_path_str = str(Path.cwd()) # Core function handles discovery from this path
 
@@ -132,9 +171,19 @@ def save(message, include_paths):
 
 # ... (rest of the file remains unchanged) ...
 @cli.command()
-@click.option("-n", "--number", "count", type=int, default=None, help="Number of commits to show.")
+@click.option("-n", "--number", "count", type=int, default=None, help="Number of saves to show (default: all).")
 def history(count):
-    """Shows the commit history of the project."""
+    """View your writing journey - all the saves you've made.
+    
+    Examples:
+      gitwrite history              # Show all your progress
+      gitwrite history -n 10        # Show last 10 saves
+    
+    This shows:
+      - When you saved each version
+      - What you were working on (your save messages)
+      - Who made the changes (useful for collaboration)
+    """
     try:
         # Discover repository path first
         repo_path_str = pygit2.discover_repository(str(Path.cwd()))
@@ -186,9 +235,219 @@ def history(count):
         click.echo(f"An unexpected error occurred during history: {e}", err=True)
 
 @cli.command()
+def status():
+    """Show what's happening in your writing project right now.
+    
+    This tells you:
+      - What version/exploration you're currently working on
+      - What files have been changed since your last save
+      - Whether you have unsaved work
+      - Helpful next steps
+    
+    Think of this as your writing dashboard.
+    """
+    try:
+        from rich.console import Console
+        from rich.panel import Panel
+        from rich.text import Text
+        import pygit2
+        
+        console = Console()
+        
+        # Discover repository
+        repo_path_str = pygit2.discover_repository(str(Path.cwd()))
+        if repo_path_str is None:
+            console.print("❌ Not in a GitWrite project. Use 'gitwrite init' to start.", style="red")
+            return
+            
+        repo = pygit2.Repository(repo_path_str)
+        
+        # Current branch/exploration
+        current_branch = "main" if repo.head_is_unborn else repo.head.shorthand
+        branch_display = "📝 Main work" if current_branch == "main" else f"🔍 Exploring: {current_branch}"
+        
+        # Check for changes
+        status_flags = repo.status()
+        
+        changed_files = []
+        new_files = []
+        
+        for file_path, flags in status_flags.items():
+            if flags & (pygit2.GIT_STATUS_WT_MODIFIED | pygit2.GIT_STATUS_INDEX_MODIFIED):
+                changed_files.append(file_path)
+            elif flags & (pygit2.GIT_STATUS_WT_NEW | pygit2.GIT_STATUS_INDEX_NEW):
+                new_files.append(file_path)
+        
+        # Create status display
+        status_text = Text()
+        status_text.append(branch_display + "\n\n", style="bold cyan")
+        
+        if not changed_files and not new_files:
+            status_text.append("✅ All work saved!\n", style="green")
+            status_text.append("Ready to continue writing.", style="dim")
+        else:
+            if new_files:
+                status_text.append(f"📄 New files: {len(new_files)}\n", style="yellow")
+                for f in new_files[:3]:  # Show first 3
+                    status_text.append(f"   + {f}\n", style="green")
+                if len(new_files) > 3:
+                    status_text.append(f"   ... and {len(new_files) - 3} more\n", style="dim")
+                status_text.append("\n")
+                    
+            if changed_files:
+                status_text.append(f"✏️  Changed files: {len(changed_files)}\n", style="yellow")
+                for f in changed_files[:3]:  # Show first 3
+                    status_text.append(f"   ~ {f}\n", style="yellow")
+                if len(changed_files) > 3:
+                    status_text.append(f"   ... and {len(changed_files) - 3} more\n", style="dim")
+                status_text.append("\n")
+            
+            status_text.append("💡 Next step: ", style="bold")
+            status_text.append("gitwrite save \"Your message here\"", style="cyan")
+        
+        # Get last save info if available
+        try:
+            if not repo.head_is_unborn:
+                last_commit = repo.head.peel()
+                last_save_msg = last_commit.message.strip().split('\n')[0]
+                status_text.append(f"\n\n📚 Last save: {last_save_msg}", style="dim")
+        except:
+            pass
+            
+        console.print(Panel(status_text, title="📊 Writing Project Status", expand=False))
+        
+    except ImportError:
+        click.echo("Error: Rich library required for status display.")
+    except Exception as e:
+        click.echo(f"Error checking status: {e}", err=True)
+
+@cli.command("help")
+@click.argument("topic", required=False)
+def help_command(topic):
+    """Get help with GitWrite workflows and concepts.
+    
+    Examples:
+      gitwrite help                    # General help and workflows
+      gitwrite help getting-started    # New user guide
+      gitwrite help collaboration      # Working with others
+      gitwrite help concepts           # Understanding key concepts
+    """
+    from rich.console import Console
+    from rich.panel import Panel
+    from rich.text import Text
+    from rich.columns import Columns
+    
+    console = Console()
+    
+    if topic is None:
+        # General help
+        help_text = Text()
+        help_text.append("📚 GitWrite: Version Control for Writers\n\n", style="bold blue")
+        help_text.append("Common Workflows:\n", style="bold")
+        help_text.append("🚀 Getting Started:\n", style="green")
+        help_text.append("  gitwrite init \"MyProject\"     # Start new project\n")
+        help_text.append("  # Write content in your favorite editor\n")
+        help_text.append("  gitwrite save \"First chapter\"  # Save progress\n\n")
+        
+        help_text.append("🔍 Daily Writing:\n", style="green")
+        help_text.append("  gitwrite status                 # Check what's changed\n")
+        help_text.append("  gitwrite save \"Chapter updates\" # Save your work\n")
+        help_text.append("  gitwrite history                # See your progress\n\n")
+        
+        help_text.append("🎨 Trying New Ideas:\n", style="green")
+        help_text.append("  gitwrite explore alternate-plot # Try something new\n")
+        help_text.append("  # Make changes safely\n")
+        help_text.append("  gitwrite save \"Experiment\"      # Save the experiment\n")
+        help_text.append("  gitwrite switch main            # Return to main work\n\n")
+        
+        help_text.append("🔄 Comparing Versions:\n", style="green")
+        help_text.append("  gitwrite compare                # See recent changes\n")
+        help_text.append("  gitwrite compare main alternate-plot # Compare versions\n\n")
+        
+        help_text.append("For specific help: gitwrite help [topic]\n", style="dim")
+        help_text.append("Topics: getting-started, collaboration, concepts", style="dim")
+        
+        console.print(Panel(help_text, title="🎨 GitWrite Help", expand=False))
+        
+    elif topic == "getting-started":
+        help_text = Text()
+        help_text.append("🚀 Getting Started with GitWrite\n\n", style="bold blue")
+        help_text.append("1. Start a New Project:\n", style="bold")
+        help_text.append("   gitwrite init \"MyNovel\"\n")
+        help_text.append("   cd MyNovel\n\n")
+        help_text.append("2. Understand the Structure:\n", style="bold")
+        help_text.append("   drafts/    → Your main writing\n")
+        help_text.append("   notes/     → Research and planning\n")
+        help_text.append("   .gitignore → Files to ignore\n\n")
+        help_text.append("3. Write and Save:\n", style="bold")
+        help_text.append("   # Use any text editor to write\n")
+        help_text.append("   gitwrite save \"First chapter draft\"\n\n")
+        help_text.append("4. Check Your Progress:\n", style="bold")
+        help_text.append("   gitwrite status    # What's changed?\n")
+        help_text.append("   gitwrite history   # Your writing journey\n")
+        
+        console.print(Panel(help_text, title="📚 New Writer Guide", expand=False))
+        
+    elif topic == "collaboration":
+        help_text = Text()
+        help_text.append("🤝 Collaboration with GitWrite\n\n", style="bold blue")
+        help_text.append("Working with Co-authors:\n", style="bold")
+        help_text.append("  gitwrite sync                   # Get latest changes\n")
+        help_text.append("  # Make your changes\n")
+        help_text.append("  gitwrite save \"My contribution\" # Save your work\n")
+        help_text.append("  gitwrite sync                   # Share with others\n\n")
+        help_text.append("Review Process:\n", style="bold")
+        help_text.append("  gitwrite review editor-feedback # See editor's changes\n")
+        help_text.append("  gitwrite cherry-pick <commit>   # Apply specific changes\n\n")
+        help_text.append("Handling Conflicts:\n", style="bold")
+        help_text.append("  When sync shows conflicts:\n")
+        help_text.append("  1. Open the conflicted files\n")
+        help_text.append("  2. Choose which version to keep\n")
+        help_text.append("  3. gitwrite save \"Resolved conflicts\"\n")
+        
+        console.print(Panel(help_text, title="📝 Collaboration Guide", expand=False))
+        
+    elif topic == "concepts":
+        concepts = [
+            ("Save", "Like \"Save As\" but creates a checkpoint you can return to"),
+            ("Explore", "Try new ideas safely without affecting your main work"),
+            ("Switch", "Move between different versions of your work"),
+            ("History", "See all the saves you've made over time"),
+            ("Compare", "See what changed between two versions"),
+            ("Sync", "Share changes with collaborators or backup online"),
+        ]
+        
+        concept_panels = []
+        for name, desc in concepts:
+            panel = Panel(desc, title=f"💡 {name}", width=25)
+            concept_panels.append(panel)
+        
+        console.print("\n📚 Key GitWrite Concepts\n", style="bold blue")
+        console.print(Columns(concept_panels[:3]))
+        console.print(Columns(concept_panels[3:]))
+        
+    else:
+        console.print(f"\n❌ Unknown help topic: {topic}", style="red")
+        console.print("Available topics: getting-started, collaboration, concepts", style="dim")
+
+@cli.command()
 @click.argument("branch_name")
 def explore(branch_name):
-    """Creates and switches to a new exploration (branch)."""
+    """Start exploring new ideas without affecting your main work.
+    
+    Examples:
+      gitwrite explore alternate-ending    # Try a different ending
+      gitwrite explore character-backstory # Develop character ideas
+      gitwrite explore experimental-style  # Try a new writing style
+    
+    What this does:
+      - Creates a safe space to experiment
+      - Your main work stays untouched
+      - You can always return to your main work
+      - Later, you can merge good ideas back
+    
+    Use 'gitwrite switch main' to return to your main work.
+    """
     try:
         current_path_str = str(Path.cwd())
         result = create_and_switch_branch(current_path_str, branch_name)
@@ -211,7 +470,19 @@ def explore(branch_name):
 @cli.command()
 @click.argument("branch_name", required=False)
 def switch(branch_name):
-    """Switches to an existing exploration (branch) or lists all explorations."""
+    """Switch between different versions of your work or see all available versions.
+    
+    Examples:
+      gitwrite switch                    # See all your work versions
+      gitwrite switch main               # Return to main work
+      gitwrite switch alternate-ending   # Switch to explore alternate ending
+    
+    Common workflow:
+      1. 'gitwrite switch' to see what versions you have
+      2. 'gitwrite switch [name]' to move to a specific version
+      3. Work on that version, save progress
+      4. 'gitwrite switch main' to return to main work
+    """
     try:
         current_path_str = str(Path.cwd())
 
@@ -266,7 +537,33 @@ def switch(branch_name):
 @cli.command("merge")
 @click.argument("branch_name")
 def merge_command(branch_name):
-    """Merges the specified exploration (branch) into the current one."""
+    """Combine an exploration or collaboration branch with your current work.
+    
+    Examples:
+      gitwrite merge alternate-ending    # Bring in your experimental work
+      gitwrite merge co-author-edits     # Merge collaborator's changes
+      gitwrite merge feature-additions   # Combine new features
+    
+    What this does:
+      - Takes all changes from another branch
+      - Combines them with your current work
+      - Creates a new save that includes both sets of changes
+    
+    Common workflow:
+      1. gitwrite switch main            # Go to your main work
+      2. gitwrite merge alternate-ending # Bring in the good parts
+      3. gitwrite save "Merged new ending"
+    
+    If there are conflicts:
+      - GitWrite will tell you which files have conflicting changes
+      - Open those files and choose which version to keep
+      - Use 'gitwrite save "Resolved conflicts"' when done
+    
+    Great for:
+      - Bringing successful experiments into main work
+      - Incorporating feedback from collaborators
+      - Combining different writing approaches
+    """
     try:
         current_path_str = str(Path.cwd())
         result = merge_branch_into_current(current_path_str, branch_name)
@@ -305,10 +602,33 @@ def merge_command(branch_name):
         click.echo(f"An unexpected error occurred during merge: {e}", err=True)
 
 @cli.command()
-@click.argument("ref1_str", metavar="REF1", required=False, default=None)
-@click.argument("ref2_str", metavar="REF2", required=False, default=None)
+@click.argument("ref1_str", metavar="VERSION1", required=False, default=None)
+@click.argument("ref2_str", metavar="VERSION2", required=False, default=None)
 def compare(ref1_str, ref2_str):
-    """Compares two references (commits, branches, tags) or shows changes in working directory."""
+    """See what changed between different versions of your work.
+    
+    Examples:
+      gitwrite compare                        # See recent changes
+      gitwrite compare main alternate-ending  # Compare two versions
+      gitwrite compare HEAD~2 HEAD           # Compare with 2 saves ago
+      gitwrite compare v1.0 v2.0             # Compare tagged versions
+    
+    This shows:
+      - Lines that were added (in green)
+      - Lines that were removed (in red)  
+      - Lines that changed (highlighted differences)
+    
+    Great for:
+      - Reviewing what you changed in a writing session
+      - Comparing different approaches to the same scene
+      - Seeing how your work evolved over time
+      - Understanding what changed between versions
+    
+    The comparison uses writer-friendly highlighting to show:
+      - Word-level changes within lines
+      - File-by-file differences
+      - Clear before/after view
+    """
     from rich.console import Console
     from rich.text import Text
     import difflib # difflib is still needed for word-level diff
@@ -498,7 +818,34 @@ def process_hunk_lines_for_word_diff(hunk_lines: list, console: Console):
 @click.option("--no-push", "no_push_flag", is_flag=True, default=False, help="Do not push changes to the remote.")
 @click.pass_context
 def sync(ctx, remote_name, branch_name_opt, no_push_flag):
-    """Fetches changes from a remote, integrates them, and pushes local changes."""
+    """Share your work with collaborators and get their latest changes.
+    
+    Examples:
+      gitwrite sync                    # Share your work and get updates
+      gitwrite sync --no-push         # Get updates but don't share yours yet
+      gitwrite sync --branch main     # Sync a specific branch
+    
+    What this does:
+      1. Downloads the latest changes from your collaborators
+      2. Combines them with your local work
+      3. Uploads your changes for others to see
+    
+    Collaboration workflow:
+      1. gitwrite sync                 # Get latest before starting
+      2. Write and make changes
+      3. gitwrite save "My changes"    # Save your work
+      4. gitwrite sync                 # Share with team
+    
+    If there are conflicts:
+      - GitWrite will show which files have conflicting changes
+      - Open those files and choose which version to keep
+      - Use 'gitwrite save "Resolved conflicts"' when done
+    
+    Great for:
+      - Working with co-authors
+      - Backing up your work to cloud services
+      - Keeping multiple computers in sync
+    """
     try:
         repo_path_str = pygit2.discover_repository(str(Path.cwd()))
         if repo_path_str is None:
@@ -598,8 +945,31 @@ def sync(ctx, remote_name, branch_name_opt, no_push_flag):
 @click.argument("commit_ish")
 @click.pass_context
 def revert(ctx, commit_ish):
-    """Reverts a specified commit.
-
+    """Undo a specific change by creating a new save that cancels it out.
+    
+    Examples:
+      gitwrite revert abc123           # Undo that specific change
+      gitwrite revert HEAD~1           # Undo the last save
+      gitwrite revert main~3           # Undo a change from 3 saves ago
+    
+    What this does:
+      - Creates a new save that undoes the specified change
+      - Doesn't delete the original - just cancels it out
+      - Safe way to fix mistakes without losing history
+    
+    Important notes:
+      - This creates a NEW save that undoes the change
+      - The original change stays in your history
+      - Your working directory must be clean (no unsaved changes)
+    
+    When to use:
+      - You made a change that introduced a bug
+      - You want to undo something without losing other work
+      - You need to "cancel out" a specific save
+    
+    Alternative: If you want to go back to an earlier version entirely,
+    use 'gitwrite switch <tag-or-commit>' instead.
+    
     <commit_ish> is the commit reference (e.g., commit hash, branch name, HEAD) to revert.
     If the revert results in conflicts, the operation is aborted, and the working directory
     is kept clean.
@@ -670,7 +1040,16 @@ def revert(ctx, commit_ish):
 
 @cli.group()
 def tag():
-    """Manages tags."""
+    """Create bookmarks for important versions of your work.
+    
+    Tags are like bookmarks that mark special moments in your writing:
+    - "first-draft" when you complete your initial draft
+    - "v1.0" for your first published version
+    - "beta-reader-version" for the version you sent to readers
+    
+    Unlike branches, tags don't change - they permanently mark
+    that specific version of your work.
+    """
     pass
 
 
@@ -681,8 +1060,25 @@ def tag():
 @click.option("--force", is_flag=True, help="Overwrite an existing tag.")
 @click.option("-c", "--commit", "commit_ish", default="HEAD", help="Commit to tag. Defaults to HEAD.") # Added commit option
 def add(ctx, name, message, force, commit_ish): # Function signature updated
-    """Creates a new tag.
-
+    """Create a bookmark for an important version of your work.
+    
+    Examples:
+      gitwrite tag add "first-draft"                    # Simple bookmark
+      gitwrite tag add "v1.0" -m "First published version"  # With description
+      gitwrite tag add "beta" --commit abc123             # Tag specific version
+      gitwrite tag add "final" --force                   # Replace existing tag
+    
+    What this does:
+      - Creates a permanent marker for this version
+      - Like putting a bookmark in a physical book
+      - You can always return to this exact version later
+    
+    Great for marking:
+      - first-draft, second-draft, final-draft
+      - v1.0, v2.0 (version numbers)
+      - submitted-version, published-version
+      - before-major-changes, after-editor-feedback
+    
     If -m/--message is provided, an annotated tag is created.
     Otherwise, a lightweight tag is created.
     The tag points to COMMIT_ISH (commit reference), which defaults to HEAD.
@@ -725,7 +1121,22 @@ def add(ctx, name, message, force, commit_ish): # Function signature updated
 @tag.command("list") # original name was tag_list, but Click uses function name, so it becomes 'list'
 @click.pass_context # To potentially access repo_path if needed, though list_tags handles it
 def list_cmd(ctx): # Renamed to avoid conflict if we had a variable named list
-    """Lists all tags in the repository."""
+    """See all your bookmarked versions.
+    
+    This shows all the tags (bookmarks) you've created for your project.
+    
+    You'll see:
+      - Tag names (like "first-draft", "v1.0")
+      - What version each tag points to
+      - Messages you added to annotated tags
+    
+    Use this to:
+      - Remember what versions you've marked as important
+      - Find version numbers for references
+      - See your project's milestone history
+    
+    To return to a tagged version: gitwrite switch <tag-name>
+    """
     # The list_tags function from core is intended to be used by the CLI's list command.
     # It needs to be imported.
     from gitwrite_core.tagging import list_tags as core_list_tags # This line is correct as per instructions
@@ -797,9 +1208,25 @@ def ignore():
 
 @cli.command()
 @click.argument("branch_name")
-@click.option("-n", "--number", "count", type=int, default=None, help="Number of commits to show.")
+@click.option("-n", "--number", "count", type=int, default=None, help="Number of changes to show (default: all).")
 def review(branch_name, count):
-    """Shows commits on another branch that are not in the current HEAD."""
+    """Review changes from a collaborator or exploration branch.
+    
+    Examples:
+      gitwrite review editor-feedback    # See what your editor changed
+      gitwrite review alternate-ending   # Review your experimental branch
+      gitwrite review co-author -n 5     # See last 5 changes from co-author
+    
+    This shows:
+      - Changes that exist in the other version but not in your current work
+      - Perfect for reviewing feedback or experimental branches
+      - Use 'gitwrite cherry-pick <commit>' to apply specific changes
+    
+    Collaboration workflow:
+      1. gitwrite review editor-feedback
+      2. gitwrite cherry-pick <good-change>
+      3. gitwrite save \"Applied editor suggestions\"
+    """
     try:
         repo_path_str = str(Path.cwd()) # Core function handles discovery from this path
         commits = get_branch_review_commits(repo_path_str, branch_name, limit=count)
@@ -844,7 +1271,27 @@ def review(branch_name, count):
 @click.argument("commit_id")
 @click.option("--mainline", type=int, default=None, help="Parent number (1-based) to consider as the mainline, for merge commits.")
 def cherry_pick_cmd(commit_id, mainline):
-    """Applies the changes introduced by a specific commit to the current branch."""
+    """Apply a specific change from another version to your current work.
+    
+    Examples:
+      gitwrite cherry-pick abc123          # Apply that specific change
+      gitwrite cherry-pick main~2          # Apply a change from 2 saves ago
+      gitwrite review alternate-ending     # First, see what changes are available
+      gitwrite cherry-pick def456          # Then apply a specific good change
+    
+    What this does:
+      - Takes a specific change (save/commit) from anywhere in your project
+      - Applies just that change to your current work
+      - Creates a new save with that change
+    
+    Great for:
+      - Applying a bug fix from one version to another
+      - Moving a good idea from an experiment to your main work
+      - Selectively applying changes without merging everything
+      - Incorporating feedback from collaborators piece by piece
+    
+    Tip: Use 'gitwrite review <branch>' first to see available changes.
+    """
     try:
         repo_path_str = str(Path.cwd())
         result = cherry_pick_commit(repo_path_str, commit_id, mainline=mainline)
@@ -877,7 +1324,26 @@ def cherry_pick_cmd(commit_id, mainline):
 @ignore.command("add")
 @click.argument("pattern")
 def ignore_add(pattern):
-    """Adds a pattern to the .gitignore file."""
+    """Tell GitWrite to ignore specific files or patterns.
+    
+    Examples:
+      gitwrite ignore add "*.tmp"          # Ignore all temporary files
+      gitwrite ignore add "notes/private/" # Ignore private notes folder
+      gitwrite ignore add ".DS_Store"      # Ignore system files (Mac)
+      gitwrite ignore add "*.backup"       # Ignore backup files
+    
+    Common patterns:
+      *.tmp, *.temp    → Temporary files
+      .DS_Store        → Mac system files
+      Thumbs.db        → Windows thumbnail files
+      notes/private/   → Private folders
+      *.bak, *.backup  → Backup files
+    
+    What this does:
+      - Adds the pattern to your .gitignore file
+      - Future saves won't include matching files
+      - Keeps your project clean and focused
+    """
     repo_path_str = str(Path.cwd()) # .gitignore is typically in CWD for this command
 
     result = add_pattern_to_gitignore(repo_path_str, pattern)
@@ -893,7 +1359,20 @@ def ignore_add(pattern):
 
 @ignore.command(name="list")
 def list_patterns():
-    """Lists all patterns in the .gitignore file."""
+    """See what files GitWrite is currently ignoring.
+    
+    This shows all the patterns in your .gitignore file.
+    
+    Use this to:
+      - Check what's being ignored
+      - Understand why certain files aren't being saved
+      - Review your ignore patterns
+    
+    If you want to stop ignoring something:
+      1. Note the pattern from this list
+      2. Edit your .gitignore file to remove it
+      3. Use 'gitwrite save' to start tracking those files
+    """
     repo_path_str = str(Path.cwd()) # .gitignore is typically in CWD
 
     result = list_gitignore_patterns(repo_path_str)
@@ -915,7 +1394,12 @@ def list_patterns():
 
 @cli.group()
 def export():
-    """Exports repository content to various formats."""
+    """Create finished documents from your writing project.
+    
+    Transform your writing into professional formats for sharing,
+    publishing, or archiving. Choose from multiple output formats
+    depending on your needs.
+    """
     pass
 
 @export.command("epub")
@@ -925,11 +1409,29 @@ def export():
 @click.argument("files", nargs=-1, type=click.Path(exists=False, dir_okay=False), required=True) # Using exists=False as files are from repo, not local FS necessarily
 @click.pass_context
 def export_epub(ctx, output_path_str: str, commit_ish: str, repo_path: str, files: tuple[str, ...]):
-    """
-    Exports specified markdown files from the repository to an EPUB file.
-
+    """Create an EPUB e-book from your markdown files.
+    
+    Examples:
+      gitwrite export epub -o MyNovel.epub . chapter1.md chapter2.md
+      gitwrite export epub -o MyBook.epub --commit final . drafts/*.md
+    
+    What this creates:
+      - Professional EPUB file readable on most e-readers
+      - Properly formatted with chapters and navigation
+      - Compatible with Kindle, Apple Books, Adobe Digital Editions
+    
+    Requirements:
+      - Pandoc must be installed on your system
+      - Files should be in Markdown format
+      - Files are combined in the order you specify
+    
+    Perfect for:
+      - Creating e-books from your writing
+      - Sharing long-form content with readers
+      - Professional manuscript submission
+      - Self-publishing preparation
+    
     FILES arguments are paths to markdown files relative to the repository root.
-    e.g., gitwrite export epub -o mynovel.epub chapter1.md chapter2.md
     """
     if not files:
         click.echo("Error: At least one markdown file must be specified for export.", err=True)
@@ -981,6 +1483,196 @@ def export_epub(ctx, output_path_str: str, commit_ish: str, repo_path: str, file
         ctx.exit(1)
     except Exception as e: # Fallback for truly unexpected errors
         click.echo(f"An unexpected error occurred during EPUB export: {e}", err=True)
+        ctx.exit(1)
+
+
+@export.command("pdf")
+@click.option("-o", "--output-path", "output_path_str", type=click.Path(dir_okay=False, writable=True), required=True, help="Path to save the PDF file (e.g., my-document.pdf).")
+@click.option("-c", "--commit", "commit_ish", default="HEAD", help="Commit-ish (commit, branch, tag) to export from. Defaults to HEAD.")
+@click.option("--pdf-engine", default="pdflatex", help="PDF engine to use (pdflatex, xelatex, lualatex). Defaults to pdflatex.")
+@click.argument("repo_path", type=click.Path(exists=True, file_okay=False, dir_okay=True, readable=True))
+@click.argument("files", nargs=-1, type=click.Path(exists=False, dir_okay=False), required=True)
+@click.pass_context
+def export_pdf(ctx, output_path_str: str, commit_ish: str, pdf_engine: str, repo_path: str, files: tuple[str, ...]):
+    """Create a professional PDF document from your markdown files.
+    
+    Examples:
+      gitwrite export pdf -o MyNovel.pdf . chapter1.md chapter2.md
+      gitwrite export pdf -o MyBook.pdf --pdf-engine xelatex . drafts/*.md
+      gitwrite export pdf -o Report.pdf --commit final . report.md
+    
+    What this creates:
+      - Professional PDF document with proper formatting
+      - Print-ready output suitable for physical publishing
+      - Configurable PDF engine for different typography needs
+    
+    Requirements:
+      - Pandoc must be installed on your system
+      - LaTeX distribution (e.g., TeX Live, MiKTeX) for PDF generation
+      - Files should be in Markdown format
+      - Files are combined in the order you specify
+    
+    PDF Engines:
+      - pdflatex: Standard LaTeX engine (default)
+      - xelatex: Better Unicode and font support
+      - lualatex: Most modern LaTeX engine
+    
+    Perfect for:
+      - Print manuscripts for traditional publishing
+      - Professional reports and documentation
+      - Academic papers and theses
+      - High-quality archival copies
+    
+    FILES arguments are paths to markdown files relative to the repository root.
+    """
+    if not files:
+        click.echo("Error: At least one markdown file must be specified for export.", err=True)
+        ctx.exit(1)
+        return
+
+    file_list = list(files)
+    
+    try:
+        # Ensure output directory exists if path includes directories
+        output_path_obj = Path(output_path_str)
+        output_path_obj.parent.mkdir(parents=True, exist_ok=True)
+
+        from gitwrite_core.export import export_to_pdf
+        
+        # Set up PDF engine options
+        pandoc_options = {}
+        if pdf_engine:
+            pandoc_options['extra_args'] = ['--standalone', f'--pdf-engine={pdf_engine}']
+        
+        result = export_to_pdf(
+            repo_path_str=repo_path,
+            commit_ish_str=commit_ish,
+            file_list=file_list,
+            output_pdf_path_str=output_path_str,
+            **pandoc_options
+        )
+        
+        if result["status"] == "success":
+            click.echo(click.style(result["message"], fg="green"))
+        else:
+            click.echo(f"PDF export failed: {result.get('message', 'Unknown core error')}", err=True)
+            ctx.exit(1)
+
+    except RepositoryNotFoundError as e:
+        click.echo(f"Error: Not a Git repository (or any of the parent directories): {e}", err=True)
+        ctx.exit(1)
+    except CommitNotFoundError as e:
+        click.echo(f"Error: Commit '{commit_ish}' not found: {e}", err=True)
+        ctx.exit(1)
+    except FileNotFoundInCommitError as e:
+        click.echo(f"Error: File not found in commit '{commit_ish}': {e}", err=True)
+        ctx.exit(1)
+    except PandocError as e:
+        click.echo(f"Error during PDF generation: {e}", err=True)
+        if "Pandoc not found" in str(e):
+            click.echo("Hint: Please ensure Pandoc is installed and accessible in your system's PATH.", err=True)
+        elif "pdflatex not found" in str(e) or "LaTeX" in str(e):
+            click.echo(f"Hint: Please ensure a LaTeX distribution is installed for the '{pdf_engine}' engine.", err=True)
+        ctx.exit(1)
+    except GitWriteError as e:
+        click.echo(f"Error during export: {e}", err=True)
+        ctx.exit(1)
+    except OSError as e:
+        click.echo(f"Error creating output directory for '{output_path_str}': {e}", err=True)
+        ctx.exit(1)
+    except Exception as e:
+        click.echo(f"An unexpected error occurred during PDF export: {e}", err=True)
+        ctx.exit(1)
+
+
+@export.command("docx")
+@click.option("-o", "--output-path", "output_path_str", type=click.Path(dir_okay=False, writable=True), required=True, help="Path to save the DOCX file (e.g., my-document.docx).")
+@click.option("-c", "--commit", "commit_ish", default="HEAD", help="Commit-ish (commit, branch, tag) to export from. Defaults to HEAD.")
+@click.argument("repo_path", type=click.Path(exists=True, file_okay=False, dir_okay=True, readable=True))
+@click.argument("files", nargs=-1, type=click.Path(exists=False, dir_okay=False), required=True)
+@click.pass_context
+def export_docx(ctx, output_path_str: str, commit_ish: str, repo_path: str, files: tuple[str, ...]):
+    """Create a Microsoft Word document from your markdown files.
+    
+    Examples:
+      gitwrite export docx -o MyNovel.docx . chapter1.md chapter2.md
+      gitwrite export docx -o MyBook.docx --commit final . drafts/*.md
+      gitwrite export docx -o Manuscript.docx . novel/*.md
+    
+    What this creates:
+      - Microsoft Word (.docx) document with proper formatting
+      - Compatible with Word, Google Docs, LibreOffice, and other editors
+      - Editable format perfect for collaborative editing
+      - Preserves structure, headings, and basic formatting
+    
+    Requirements:
+      - Pandoc must be installed on your system
+      - Files should be in Markdown format
+      - Files are combined in the order you specify
+    
+    Perfect for:
+      - Sharing drafts with editors who prefer Word
+      - Collaborative editing in traditional office environments
+      - Manuscripts for publishers who require Word format
+      - Converting from Markdown to mainstream word processing
+    
+    The resulting DOCX file will:
+      - Maintain your chapter structure and headings
+      - Preserve formatting like bold, italic, and lists
+      - Be immediately editable in Microsoft Word
+      - Include proper page breaks between sections
+    
+    FILES arguments are paths to markdown files relative to the repository root.
+    """
+    if not files:
+        click.echo("Error: At least one markdown file must be specified for export.", err=True)
+        ctx.exit(1)
+        return
+
+    file_list = list(files)
+    
+    try:
+        # Ensure output directory exists if path includes directories
+        output_path_obj = Path(output_path_str)
+        output_path_obj.parent.mkdir(parents=True, exist_ok=True)
+
+        from gitwrite_core.export import export_to_docx
+        
+        result = export_to_docx(
+            repo_path_str=repo_path,
+            commit_ish_str=commit_ish,
+            file_list=file_list,
+            output_docx_path_str=output_path_str
+        )
+        
+        if result["status"] == "success":
+            click.echo(click.style(result["message"], fg="green"))
+        else:
+            click.echo(f"DOCX export failed: {result.get('message', 'Unknown core error')}", err=True)
+            ctx.exit(1)
+
+    except RepositoryNotFoundError as e:
+        click.echo(f"Error: Not a Git repository (or any of the parent directories): {e}", err=True)
+        ctx.exit(1)
+    except CommitNotFoundError as e:
+        click.echo(f"Error: Commit '{commit_ish}' not found: {e}", err=True)
+        ctx.exit(1)
+    except FileNotFoundInCommitError as e:
+        click.echo(f"Error: File not found in commit '{commit_ish}': {e}", err=True)
+        ctx.exit(1)
+    except PandocError as e:
+        click.echo(f"Error during DOCX generation: {e}", err=True)
+        if "Pandoc not found" in str(e):
+            click.echo("Hint: Please ensure Pandoc is installed and accessible in your system's PATH.", err=True)
+        ctx.exit(1)
+    except GitWriteError as e:
+        click.echo(f"Error during export: {e}", err=True)
+        ctx.exit(1)
+    except OSError as e:
+        click.echo(f"Error creating output directory for '{output_path_str}': {e}", err=True)
+        ctx.exit(1)
+    except Exception as e:
+        click.echo(f"An unexpected error occurred during DOCX export: {e}", err=True)
         ctx.exit(1)
 
 

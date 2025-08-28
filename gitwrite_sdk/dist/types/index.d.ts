@@ -169,10 +169,10 @@ interface RepositoryListItem {
     name: string;
     last_modified: string;
     description?: string | null;
-    default_branch: string;
 }
 interface RepositoriesListResponse {
     repositories: RepositoryListItem[];
+    count: number;
 }
 interface RepositoryTreeEntry {
     name: string;
@@ -579,9 +579,10 @@ declare class GitWriteClient {
     delete<T = any, R = AxiosResponse<T>, D = any>(url: string, config?: AxiosRequestConfig<D>): Promise<R>;
     /**
      * Lists all local branches in the repository.
-     * Corresponds to API endpoint: GET /repository/branches
+     * Corresponds to API endpoint: GET /repository/{repo_name}/branches
+     * @param repoName The name of the repository.
      */
-    listBranches(): Promise<RepositoryBranchesResponse>;
+    listBranches(repoName: string): Promise<RepositoryBranchesResponse>;
     /**
      * Lists all tags in the repository.
      * Corresponds to API endpoint: GET /repository/tags
@@ -589,21 +590,23 @@ declare class GitWriteClient {
     listTags(): Promise<RepositoryTagsResponse>;
     /**
      * Lists commits for a given branch, or the current branch if branch_name is not provided.
-     * Corresponds to API endpoint: GET /repository/commits
+     * Corresponds to API endpoint: GET /repository/{repo_name}/commits
+     * @param repoName The name of the repository.
      * @param params Optional parameters: branchName, maxCount.
      */
-    listCommits(params?: ListCommitsParams): Promise<RepositoryCommitsResponse>;
+    listCommits(repoName: string, params?: ListCommitsParams): Promise<RepositoryCommitsResponse>;
     /**
      * Saves a file to the repository and commits the change.
-     * Corresponds to API endpoint: POST /repository/save
+     * Corresponds to API endpoint: POST /repository/{repo_name}/save
+     * @param repoName The name of the repository.
      * @param filePath The relative path of the file in the repository.
      * @param content The content to be saved to the file.
      * @param commitMessage The commit message for the save operation.
      */
-    save(filePath: string, content: string, commitMessage: string): Promise<SaveFileResponseData>;
+    save(repoName: string, filePath: string, content: string, commitMessage: string): Promise<SaveFileResponseData>;
     /**
      * Lists all available repositories (projects).
-     * Corresponds to conceptual API endpoint: GET /repositories
+     * Corresponds to API endpoint: GET /repositorys
      */
     listRepositories(): Promise<RepositoriesListResponse>;
     /**
@@ -631,22 +634,25 @@ declare class GitWriteClient {
     initializeRepository(payload?: RepositoryCreateRequest): Promise<RepositoryCreateResponse>;
     /**
      * Creates a new branch from the current HEAD and switches to it.
-     * Corresponds to API endpoint: POST /repository/branches
+     * Corresponds to API endpoint: POST /repository/{repo_name}/branches
+     * @param repoName The name of the repository.
      * @param payload Contains the name of the branch to create.
      */
-    createBranch(payload: BranchCreateRequest): Promise<BranchResponse>;
+    createBranch(repoName: string, payload: BranchCreateRequest): Promise<BranchResponse>;
     /**
      * Switches to an existing local branch.
-     * Corresponds to API endpoint: PUT /repository/branch
+     * Corresponds to API endpoint: PUT /repository/{repo_name}/branch
+     * @param repoName The name of the repository.
      * @param payload Contains the name of the branch to switch to.
      */
-    switchBranch(payload: BranchSwitchRequest): Promise<BranchResponse>;
+    switchBranch(repoName: string, payload: BranchSwitchRequest): Promise<BranchResponse>;
     /**
      * Merges a specified source branch into the current branch.
-     * Corresponds to API endpoint: POST /repository/merges
+     * Corresponds to API endpoint: POST /repository/{repo_name}/merges
+     * @param repoName The name of the repository.
      * @param payload Contains the name of the source branch to merge.
      */
-    mergeBranch(payload: MergeBranchRequest): Promise<MergeBranchResponse>;
+    mergeBranch(repoName: string, payload: MergeBranchRequest): Promise<MergeBranchResponse>;
     /**
      * Compares two references in the repository and returns the diff.
      * Corresponds to API endpoint: GET /repository/compare

@@ -39,7 +39,7 @@ const BranchManagementPage: React.FC = () => {
       // or leave it as a UI challenge. A dedicated API endpoint /repository/branch (GET) would be ideal.
       // Alternatively, the `RepositoryStatus.tsx` component might have logic to derive this.
       // For this initial setup, currentBranch will remain a concept.
-      const response = await client.listBranches(); // This client method might need repoName if API changes
+      const response = await client.listBranches(repoName); // Updated to pass repoName
       if (response.status === 'success' || response.status === 'empty_repo') { // empty_repo can have branches if initialized then all deleted
         setBranches(response.branches || []);
         // Heuristic: try to find main or master, or first branch as current if list is not empty
@@ -89,7 +89,7 @@ const BranchManagementPage: React.FC = () => {
     setIsCreating(true);
     setError(null);
     try {
-      const response = await client.createBranch({ branch_name: newBranchName.trim() });
+      const response = await client.createBranch(repoName, { branch_name: newBranchName.trim() });
       toast.success("Branch Created", {
         description: `Branch '${response.branch_name}' created successfully. Head: ${response.head_commit_oid?.substring(0,7)}`,
       });
@@ -114,7 +114,7 @@ const BranchManagementPage: React.FC = () => {
     setIsSwitching(true);
     setError(null);
     try {
-      const response = await client.switchBranch({ branch_name: branchToSwitch });
+      const response = await client.switchBranch(repoName, { branch_name: branchToSwitch });
       toast.success("Branch Switched", {
         description: `Switched to branch '${response.branch_name}'. ${response.message}`,
       });
@@ -136,7 +136,7 @@ const BranchManagementPage: React.FC = () => {
     setIsMerging(true);
     setError(null);
     try {
-      const response = await client.mergeBranch({ source_branch: selectedBranchToMerge });
+      const response = await client.mergeBranch(repoName, { source_branch: selectedBranchToMerge });
       const toastDescription = response.message;
 
       if (response.status === 'conflict') {

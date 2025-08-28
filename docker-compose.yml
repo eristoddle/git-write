@@ -1,0 +1,126 @@
+version: '3.8'
+
+services:
+  # GitWrite API Service
+  gitwrite-api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "${API_PORT:-8000}:8000"
+    environment:
+      - PYTHONPATH=/app
+      - GITWRITE_ENV=${GITWRITE_ENV:-development}
+      - GITWRITE_SECRET_KEY=${GITWRITE_SECRET_KEY:-dev-secret-key-change-in-production}
+      - GITWRITE_API_HOST=${GITWRITE_API_HOST:-0.0.0.0}
+      - GITWRITE_API_PORT=${GITWRITE_API_PORT:-8000}
+      - GITWRITE_REPO_PATH=${GITWRITE_REPO_PATH:-/app/data/repositories}
+      - GITWRITE_EXPORT_PATH=${GITWRITE_EXPORT_PATH:-/app/data/exports}
+      - GITWRITE_LOG_LEVEL=${GITWRITE_LOG_LEVEL:-info}
+    volumes:
+      - gitwrite_data:/app/data
+      - ./logs:/app/logs
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    networks:
+      - gitwrite_network
+
+  # Frontend Web Application (for production)
+  gitwrite-web:
+    build:
+      context: ./gitwrite-web
+      dockerfile: Dockerfile.prod
+      args:
+        - VITE_API_URL=${VITE_API_URL:-http://localhost:8000}
+    ports:
+      - "${WEB_PORT:-3000}:80"
+    depends_on:
+      - gitwrite-api
+    restart: unless-stopped
+    networks:
+      - gitwrite_network
+
+  # Development Frontend (for development only)
+  gitwrite-web-dev:
+    build:
+      context: ./gitwrite-web
+      dockerfile: Dockerfile.dev
+    ports:
+      - "${WEB_DEV_PORT:-3001}:5173"
+    environment:
+      - VITE_API_URL=${VITE_API_URL:-http://localhost:8000}
+    volumes:
+      - ./gitwrite-web:/app
+      - /app/node_modules
+    depends_on:
+      - gitwrite-api
+    networks:
+      - gitwrite_network
+    profiles:
+      - development
+
+  # Redis for session storage and caching (optional, for production scaling)
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    volumes:
+      - redis_data:/data
+    restart: unless-stopped
+    command: redis-server --appendonly yes
+    networks:
+      - gitwrite_network
+    profiles:
+      - production
+
+  # PostgreSQL database (optional, for user management and metadata)
+  postgres:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-gitwrite}
+      POSTGRES_USER: ${POSTGRES_USER:-gitwrite}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-gitwrite_password}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    restart: unless-stopped
+    networks:
+      - gitwrite_network
+    profiles:
+      - production
+
+  # Nginx reverse proxy (for production)
+  nginx:
+    image: nginx:alpine
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./ssl:/etc/nginx/ssl:ro
+    depends_on:
+      - gitwrite-api
+      - gitwrite-web
+    restart: unless-stopped
+    networks:
+      - gitwrite_network
+    profiles:
+      - production
+
+volumes:
+  gitwrite_data:
+    driver: local
+  redis_data:
+    driver: local
+  postgres_data:
+    driver: local
+
+networks:
+  gitwrite_network:
+    driver: bridge

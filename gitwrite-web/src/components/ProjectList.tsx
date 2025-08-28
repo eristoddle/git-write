@@ -31,20 +31,9 @@ const ProjectList: React.FC = () => {
           return;
         }
 
-        // MOCK DATA - Replace with actual API call when available
-        // const response: RepositoriesListResponse = await client.listRepositories();
-        // setProjects(response.repositories);
-
-        // Simulating API call with mock data
-        await new Promise(resolve => setTimeout(resolve, 1000)); // Simulate network delay
-        const mockResponse: RepositoriesListResponse = {
-          repositories: [
-            { name: 'MyFirstNovel', last_modified: new Date().toISOString(), description: 'A tale of adventure.', default_branch: 'main' },
-            { name: 'TechReport_Q4', last_modified: new Date(Date.now() - 86400000).toISOString(), description: 'Quarterly technology report.', default_branch: 'master' },
-            { name: 'PoetryCollection', last_modified: new Date(Date.now() - 172800000).toISOString(), description: null, default_branch: 'main' },
-          ]
-        };
-        setProjects(mockResponse.repositories);
+        // Replace mock data with actual API call
+        const response: RepositoriesListResponse = await client.listRepositories();
+        setProjects(response.repositories);
 
       } catch (err) {
         console.error("Failed to fetch projects:", err);
@@ -113,7 +102,6 @@ const ProjectList: React.FC = () => {
               <TableHead>Name</TableHead>
               <TableHead>Description</TableHead>
               <TableHead>Last Modified</TableHead>
-              <TableHead>Default Branch</TableHead>
               <TableHead className="text-right">Actions</TableHead>
             </TableRow>
           </TableHeader>
@@ -123,7 +111,6 @@ const ProjectList: React.FC = () => {
                 <TableCell className="font-medium">{project.name}</TableCell>
                 <TableCell>{project.description || 'N/A'}</TableCell>
                 <TableCell>{new Date(project.last_modified).toLocaleDateString()}</TableCell>
-                <TableCell>{project.default_branch}</TableCell>
                 <TableCell className="text-right">
                   <button
                     onClick={(e) => { e.stopPropagation(); handleProjectClick(project.name);}}

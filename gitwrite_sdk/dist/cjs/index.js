@@ -88,12 +88,13 @@ class GitWriteClient {
     // Repository Methods
     /**
      * Lists all local branches in the repository.
-     * Corresponds to API endpoint: GET /repository/branches
+     * Corresponds to API endpoint: GET /repository/{repo_name}/branches
+     * @param repoName The name of the repository.
      */
-    async listBranches() {
+    async listBranches(repoName) {
         // The actual response object from Axios is AxiosResponse<RepositoryBranchesResponse>
         // We are interested in the `data` part of it.
-        const response = await this.get('/repository/branches');
+        const response = await this.get(`/repository/${repoName}/branches`);
         return response.data;
     }
     /**
@@ -106,10 +107,11 @@ class GitWriteClient {
     }
     /**
      * Lists commits for a given branch, or the current branch if branch_name is not provided.
-     * Corresponds to API endpoint: GET /repository/commits
+     * Corresponds to API endpoint: GET /repository/{repo_name}/commits
+     * @param repoName The name of the repository.
      * @param params Optional parameters: branchName, maxCount.
      */
-    async listCommits(params) {
+    async listCommits(repoName, params) {
         const queryParams = {};
         if (params?.branchName) {
             queryParams['branch_name'] = params.branchName;
@@ -117,34 +119,35 @@ class GitWriteClient {
         if (params?.maxCount !== undefined) {
             queryParams['max_count'] = params.maxCount;
         }
-        const response = await this.get('/repository/commits', {
+        const response = await this.get(`/repository/${repoName}/commits`, {
             params: queryParams,
         });
         return response.data;
     }
     /**
      * Saves a file to the repository and commits the change.
-     * Corresponds to API endpoint: POST /repository/save
+     * Corresponds to API endpoint: POST /repository/{repo_name}/save
+     * @param repoName The name of the repository.
      * @param filePath The relative path of the file in the repository.
      * @param content The content to be saved to the file.
      * @param commitMessage The commit message for the save operation.
      */
-    async save(filePath, content, commitMessage) {
+    async save(repoName, filePath, content, commitMessage) {
         const payload = {
             file_path: filePath,
             content: content,
             commit_message: commitMessage,
         };
-        const response = await this.post('/repository/save', payload);
+        const response = await this.post(`/repository/${repoName}/save`, payload);
         return response.data;
     }
     // --- Methods for Project Dashboard and Repository Browser (Task 11.3) ---
     /**
      * Lists all available repositories (projects).
-     * Corresponds to conceptual API endpoint: GET /repositories
+     * Corresponds to API endpoint: GET /repositorys
      */
     async listRepositories() {
-        const response = await this.get('/repositories');
+        const response = await this.get('/repositorys');
         return response.data;
     }
     /**
@@ -222,29 +225,32 @@ class GitWriteClient {
     }
     /**
      * Creates a new branch from the current HEAD and switches to it.
-     * Corresponds to API endpoint: POST /repository/branches
+     * Corresponds to API endpoint: POST /repository/{repo_name}/branches
+     * @param repoName The name of the repository.
      * @param payload Contains the name of the branch to create.
      */
-    async createBranch(payload) {
-        const response = await this.post('/repository/branches', payload);
+    async createBranch(repoName, payload) {
+        const response = await this.post(`/repository/${repoName}/branches`, payload);
         return response.data;
     }
     /**
      * Switches to an existing local branch.
-     * Corresponds to API endpoint: PUT /repository/branch
+     * Corresponds to API endpoint: PUT /repository/{repo_name}/branch
+     * @param repoName The name of the repository.
      * @param payload Contains the name of the branch to switch to.
      */
-    async switchBranch(payload) {
-        const response = await this.put('/repository/branch', payload);
+    async switchBranch(repoName, payload) {
+        const response = await this.put(`/repository/${repoName}/branch`, payload);
         return response.data;
     }
     /**
      * Merges a specified source branch into the current branch.
-     * Corresponds to API endpoint: POST /repository/merges
+     * Corresponds to API endpoint: POST /repository/{repo_name}/merges
+     * @param repoName The name of the repository.
      * @param payload Contains the name of the source branch to merge.
      */
-    async mergeBranch(payload) {
-        const response = await this.post('/repository/merges', payload);
+    async mergeBranch(repoName, payload) {
+        const response = await this.post(`/repository/${repoName}/merges`, payload);
         return response.data;
     }
     /**

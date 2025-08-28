@@ -50,7 +50,7 @@ const RepositoryBrowser: React.FC = () => {
       if (token) client.setToken(token);
       else { navigate('/login'); return; }
 
-      const commitsResponse = await client.listCommits({ branchName: branchForHistoryAndStatus, maxCount: 1 });
+      const commitsResponse = await client.listCommits(repoName, { branchName: branchForHistoryAndStatus, maxCount: 1 });
       if (commitsResponse.status === 'success' && commitsResponse.commits.length > 0) {
         setHeadCommitSha(commitsResponse.commits[0].sha);
       } else if (commitsResponse.status !== 'no_commits') {
@@ -74,7 +74,7 @@ const RepositoryBrowser: React.FC = () => {
       if (token) client.setToken(token);
       else { navigate('/login'); return; }
 
-      const response: RepositoryBranchesResponse = await client.listBranches();
+      const response: RepositoryBranchesResponse = await client.listBranches(repoName);
       if (response.status === 'success') {
         setAllBranches(response.branches);
       } else {
@@ -101,48 +101,9 @@ const RepositoryBrowser: React.FC = () => {
         return;
       }
 
-      // MOCK DATA - Replace with actual API call
-      // const response = await client.listRepositoryTree(repoName, currentRef, pathToList);
-      // setTreeData(response);
-
-      // Simulating API call
-      await new Promise(resolve => setTimeout(resolve, 700));
-      const mockEntries: RepositoryTreeEntry[] = (pathToList === '' || pathToList === '/')
-        ? [
-            { name: 'README.md', path: 'README.md', type: 'blob', size: 1024, mode: '100644', oid: 'abc1' },
-            { name: 'src', path: 'src', type: 'tree', mode: '040000', oid: 'def2' },
-            { name: 'docs', path: 'docs', type: 'tree', mode: '040000', oid: 'ghi3' },
-          ]
-        : pathToList === 'src'
-        ? [
-            { name: 'index.js', path: 'src/index.js', type: 'blob', size: 2048, mode: '100644', oid: 'jkl4' },
-            { name: 'components', path: 'src/components', type: 'tree', mode: '040000', oid: 'mno5' },
-          ]
-        : pathToList === 'src/components'
-        ? [
-            { name: 'Button.tsx', path: 'src/components/Button.tsx', type: 'blob', size: 1500, mode: '100644', oid: 'pqr6' },
-          ]
-        : pathToList === 'docs'
-        ? [
-            { name: 'getting-started.md', path: 'docs/getting-started.md', type: 'blob', size: 3000, mode: '100644', oid: 'stu7' },
-          ]
-        : [];
-
-      const mockBreadcrumb: RepositoryTreeBreadcrumbItem[] = [{ name: repoName, path: '' }];
-      if (pathToList) {
-        pathToList.split('/').forEach((part, index, arr) => {
-            mockBreadcrumb.push({ name: part, path: arr.slice(0, index + 1).join('/') });
-        });
-      }
-
-      const mockResponse: RepositoryTreeResponse = {
-        repo_name: repoName,
-        ref: currentRef,
-        request_path: pathToList,
-        entries: mockEntries,
-        breadcrumb: mockBreadcrumb,
-      };
-      setTreeData(mockResponse);
+      // Replace mock data with actual API call
+      const response = await client.listRepositoryTree(repoName, currentRef, pathToList);
+      setTreeData(response);
 
     } catch (err) {
       console.error(`Failed to fetch tree for ${repoName}/${currentRef}/${pathToList}:`, err);

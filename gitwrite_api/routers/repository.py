@@ -15,7 +15,8 @@ from gitwrite_core.repository import (
     add_pattern_to_gitignore as core_add_pattern_to_gitignore,
     initialize_repository as core_initialize_repository,
     get_file_content_at_commit as core_get_file_content_at_commit,
-    get_repository_metadata as core_get_repository_metadata
+    get_repository_metadata as core_get_repository_metadata,
+    list_repository_tree as core_list_repository_tree
 )
 from gitwrite_core.versioning import (
     get_branch_review_commits as core_get_branch_review_commits,
@@ -55,7 +56,7 @@ from gitwrite_core.exceptions import TagAlreadyExistsError as CoreTagAlreadyExis
 import uuid
 import os
 from pathlib import Path
-from ..models import RepositoryCreateRequest, RepositoriesListResponse, RepositoryListItem
+from ..models import RepositoryCreateRequest, RepositoriesListResponse, RepositoryListItem, RepositoryTreeResponse
 
 # Models for Branch Review API
 from ..models import BranchReviewResponse, BranchReviewCommit
@@ -65,6 +66,9 @@ from ..models import CherryPickRequest, CherryPickResponse
 
 # Models for EPUB Export API
 from ..models import EPUBExportRequest, EPUBExportResponse
+
+# Models for PDF and DOCX Export APIs
+from ..models import PDFExportRequest, PDFExportResponse, DOCXExportRequest, DOCXExportResponse
 
 
 router = APIRouter(
@@ -215,9 +219,13 @@ def handle_core_response(response: Dict[str, Any], success_status: str = "succes
     else:
         raise HTTPException(status_code=400, detail=response.get("message", "Bad request or invalid operation."))
 
-@router.get("/branches", response_model=BranchListResponse)
-async def api_list_branches(current_user: User = Depends(get_current_active_user)):
-    repo_path = PLACEHOLDER_REPO_PATH
+@router.get("/{repo_name}/branches", response_model=BranchListResponse)
+async def api_list_branches(
+    repo_name: str,
+    current_user: User = Depends(get_current_active_user)
+):
+    # Resolve repo_name to the actual repository path
+    repo_path = str(Path(PLACEHOLDER_REPO_PATH) / "gitwrite_user_repos" / repo_name)
     result = list_branches(repo_path_str=repo_path)
     return handle_core_response(result)
 
@@ -227,13 +235,15 @@ async def api_list_tags(current_user: User = Depends(get_current_active_user)):
     result = list_tags(repo_path_str=repo_path)
     return handle_core_response(result)
 
-@router.get("/commits", response_model=CommitListResponse)
+@router.get("/{repo_name}/commits", response_model=CommitListResponse)
 async def api_list_commits(
+    repo_name: str,
     branch_name: Optional[str] = Query(None, description="Name of the branch to list commits from. Defaults to current HEAD."),
     max_count: Optional[int] = Query(None, description="Maximum number of commits to return.", gt=0),
     current_user: User = Depends(get_current_active_user)
 ):
-    repo_path = PLACEHOLDER_REPO_PATH
+    # Resolve repo_name to the actual repository path
+    repo_path = str(Path(PLACEHOLDER_REPO_PATH) / "gitwrite_user_repos" / repo_name)
     result = list_commits(
         repo_path_str=repo_path,
         branch_name=branch_name,
@@ -241,12 +251,14 @@ async def api_list_commits(
     )
     return handle_core_response(result)
 
-@router.post("/save", response_model=SaveFileResponse)
+@router.post("/{repo_name}/save", response_model=SaveFileResponse)
 async def api_save_file(
+    repo_name: str,
     save_request: SaveFileRequest = Body(...),
     current_user: User = Depends(require_role([UserRole.OWNER, UserRole.EDITOR, UserRole.WRITER]))
 ):
-    repo_path = PLACEHOLDER_REPO_PATH
+    # Resolve repo_name to the actual repository path
+    repo_path = str(Path(PLACEHOLDER_REPO_PATH) / "gitwrite_user_repos" / repo_name)
     user_email = current_user.email if hasattr(current_user, 'email') else "defaultuser@example.com"
     user_name = current_user.username if hasattr(current_user, 'username') else "Default User"
     result = save_and_commit_file(
@@ -276,12 +288,14 @@ async def api_save_file(
             detail=result.get('message', "An error occurred while saving the file.")
         )
 
-@router.post("/branches", response_model=BranchResponse, status_code=201)
+@router.post("/{repo_name}/branches", response_model=BranchResponse, status_code=201)
 async def api_create_branch(
+    repo_name: str,
     request_data: BranchCreateRequest,
     current_user: User = Depends(get_current_active_user)
 ):
-    repo_path = PLACEHOLDER_REPO_PATH
+    # Resolve repo_name to the actual repository path
+    repo_path = str(Path(PLACEHOLDER_REPO_PATH) / "gitwrite_user_repos" / repo_name)
     try:
         result = create_and_switch_branch(
             repo_path_str=repo_path,
@@ -304,12 +318,14 @@ async def api_create_branch(
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"An unexpected error occurred: {str(e)}")
 
-@router.put("/branch", response_model=BranchResponse)
+@router.put("/{repo_name}/branch", response_model=BranchResponse)
 async def api_switch_branch(
+    repo_name: str,
     request_data: BranchSwitchRequest,
     current_user: User = Depends(get_current_active_user)
 ):
-    repo_path = PLACEHOLDER_REPO_PATH
+    # Resolve repo_name to the actual repository path
+    repo_path = str(Path(PLACEHOLDER_REPO_PATH) / "gitwrite_user_repos" / repo_name)
     try:
         result = switch_to_branch(
             repo_path_str=repo_path,
@@ -343,12 +359,14 @@ async def api_switch_branch(
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"An unexpected error occurred: {str(e)}")
 
-@router.post("/merges", response_model=MergeBranchResponse)
+@router.post("/{repo_name}/merges", response_model=MergeBranchResponse)
 async def api_merge_branch(
+    repo_name: str,
     request_data: MergeBranchRequest,
     current_user: User = Depends(get_current_active_user)
 ):
-    repo_path = PLACEHOLDER_REPO_PATH
+    # Resolve repo_name to the actual repository path
+    repo_path = str(Path(PLACEHOLDER_REPO_PATH) / "gitwrite_user_repos" / repo_name)
     try:
         result = merge_branch_into_current(
             repo_path_str=repo_path,
@@ -720,6 +738,118 @@ async def api_export_to_epub(
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"An unexpected server error occurred during EPUB export: {str(e)}")
 
+@router.post("/export/pdf", response_model=PDFExportResponse)
+async def api_export_to_pdf(
+    request_data: PDFExportRequest,
+    current_user: User = Depends(require_role([UserRole.OWNER, UserRole.EDITOR, UserRole.WRITER, UserRole.BETA_READER]))
+):
+    repo_path_str = PLACEHOLDER_REPO_PATH
+    export_base_dir = Path(PLACEHOLDER_REPO_PATH) / "exports"
+    try:
+        export_base_dir.mkdir(parents=True, exist_ok=True)
+    except OSError as e:
+        raise HTTPException(status_code=500, detail=f"Could not create base export directory: {str(e)}")
+    job_id = str(uuid.uuid4())
+    job_export_dir = export_base_dir / job_id
+    try:
+        job_export_dir.mkdir(exist_ok=True)
+    except OSError as e:
+        raise HTTPException(status_code=500, detail=f"Could not create unique export job directory: {str(e)}")
+    actual_output_filename = request_data.output_filename if request_data.output_filename else "export.pdf"
+    output_pdf_server_path = job_export_dir / actual_output_filename
+    from gitwrite_core.export import export_to_pdf
+    from gitwrite_core.exceptions import PandocError, FileNotFoundInCommitError
+    try:
+        # Prepare PDF-specific options
+        pandoc_options = {}
+        if request_data.pdf_engine:
+            pandoc_options['extra_args'] = ['--standalone', f'--pdf-engine={request_data.pdf_engine}']
+        
+        result = export_to_pdf(
+            repo_path_str=repo_path_str,
+            commit_ish_str=request_data.commit_ish,
+            file_list=request_data.file_list,
+            output_pdf_path_str=str(output_pdf_server_path.resolve()),
+            **pandoc_options
+        )
+        if result["status"] == "success":
+            return PDFExportResponse(
+                status="success",
+                message=result["message"],
+                server_file_path=str(output_pdf_server_path.resolve())
+            )
+        else:
+            raise HTTPException(status_code=500, detail=result.get("message", "PDF export failed due to an unknown core error."))
+    except CoreRepositoryNotFoundError as e:
+        raise HTTPException(status_code=500, detail=f"Repository not found or configuration error: {str(e)}")
+    except CoreCommitNotFoundError as e:
+        raise HTTPException(status_code=404, detail=f"Commit not found: {str(e)}")
+    except FileNotFoundInCommitError as e:
+        raise HTTPException(status_code=404, detail=f"File not found in commit: {str(e)}")
+    except PandocError as e:
+        if "Pandoc not found" in str(e):
+            raise HTTPException(status_code=503, detail=f"PDF generation service unavailable: Pandoc not found. {str(e)}")
+        elif "pdflatex not found" in str(e) or "LaTeX" in str(e):
+            raise HTTPException(status_code=503, detail=f"PDF generation service unavailable: LaTeX engine not found. {str(e)}")
+        else:
+            raise HTTPException(status_code=400, detail=f"PDF conversion failed: {str(e)}")
+    except CoreGitWriteError as e:
+        raise HTTPException(status_code=400, detail=f"PDF export failed due to a GitWrite core error: {str(e)}")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"An unexpected server error occurred during PDF export: {str(e)}")
+
+@router.post("/export/docx", response_model=DOCXExportResponse)
+async def api_export_to_docx(
+    request_data: DOCXExportRequest,
+    current_user: User = Depends(require_role([UserRole.OWNER, UserRole.EDITOR, UserRole.WRITER, UserRole.BETA_READER]))
+):
+    repo_path_str = PLACEHOLDER_REPO_PATH
+    export_base_dir = Path(PLACEHOLDER_REPO_PATH) / "exports"
+    try:
+        export_base_dir.mkdir(parents=True, exist_ok=True)
+    except OSError as e:
+        raise HTTPException(status_code=500, detail=f"Could not create base export directory: {str(e)}")
+    job_id = str(uuid.uuid4())
+    job_export_dir = export_base_dir / job_id
+    try:
+        job_export_dir.mkdir(exist_ok=True)
+    except OSError as e:
+        raise HTTPException(status_code=500, detail=f"Could not create unique export job directory: {str(e)}")
+    actual_output_filename = request_data.output_filename if request_data.output_filename else "export.docx"
+    output_docx_server_path = job_export_dir / actual_output_filename
+    from gitwrite_core.export import export_to_docx
+    from gitwrite_core.exceptions import PandocError, FileNotFoundInCommitError
+    try:
+        result = export_to_docx(
+            repo_path_str=repo_path_str,
+            commit_ish_str=request_data.commit_ish,
+            file_list=request_data.file_list,
+            output_docx_path_str=str(output_docx_server_path.resolve())
+        )
+        if result["status"] == "success":
+            return DOCXExportResponse(
+                status="success",
+                message=result["message"],
+                server_file_path=str(output_docx_server_path.resolve())
+            )
+        else:
+            raise HTTPException(status_code=500, detail=result.get("message", "DOCX export failed due to an unknown core error."))
+    except CoreRepositoryNotFoundError as e:
+        raise HTTPException(status_code=500, detail=f"Repository not found or configuration error: {str(e)}")
+    except CoreCommitNotFoundError as e:
+        raise HTTPException(status_code=404, detail=f"Commit not found: {str(e)}")
+    except FileNotFoundInCommitError as e:
+        raise HTTPException(status_code=404, detail=f"File not found in commit: {str(e)}")
+    except PandocError as e:
+        if "Pandoc not found" in str(e):
+            raise HTTPException(status_code=503, detail=f"DOCX generation service unavailable: Pandoc not found. {str(e)}")
+        else:
+            raise HTTPException(status_code=400, detail=f"DOCX conversion failed: {str(e)}")
+    except CoreGitWriteError as e:
+        raise HTTPException(status_code=400, detail=f"DOCX export failed due to a GitWrite core error: {str(e)}")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"An unexpected server error occurred during DOCX export: {str(e)}")
+
 @router.get("/review/{branch_name}", response_model=BranchReviewResponse)
 async def api_review_branch_commits(
     branch_name: str,
@@ -870,3 +1000,50 @@ async def api_add_ignore_pattern(
             raise HTTPException(status_code=500, detail="Unknown error from core ignore add operation.")
     except CoreRepositoryNotFoundError:
         raise HTTPException(status_code=500, detail="Repository configuration error.")
+
+
+@router.get("/{repo_name}/tree/{ref:path}", response_model=RepositoryTreeResponse)
+async def api_list_repository_tree(
+    repo_name: str,
+    ref: str,
+    path: str = Query("", description="Path within the repository (optional, defaults to root)"),
+    current_user: User = Depends(get_current_active_user)
+):
+    """
+    Lists files and folders in a repository at a specific reference and path.
+    
+    Args:
+        repo_name: Name of the repository
+        ref: Git reference (branch, tag, or commit SHA)
+        path: Optional path within the repository
+    """
+    # Resolve repo_name to the actual repository path
+    repo_path = str(Path(PLACEHOLDER_REPO_PATH) / "gitwrite_user_repos" / repo_name)
+    
+    try:
+        result = core_list_repository_tree(
+            repo_path_str=repo_path,
+            ref=ref,
+            path=path
+        )
+        
+        if result['status'] == 'success':
+            return RepositoryTreeResponse(
+                repo_name=result['repo_name'],
+                ref=result['ref'],
+                request_path=result['request_path'],
+                entries=result['entries'],
+                breadcrumb=result.get('breadcrumb')
+            )
+        elif result['status'] == 'error':
+            if "not found" in result['message'].lower():
+                raise HTTPException(status_code=404, detail=result['message'])
+            else:
+                raise HTTPException(status_code=400, detail=result['message'])
+        else:
+            raise HTTPException(status_code=500, detail=f"Unexpected response status: {result['status']}")
+            
+    except CoreRepositoryNotFoundError as e:
+        raise HTTPException(status_code=500, detail=f"Repository configuration error: {str(e)}")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"An unexpected error occurred: {str(e)}")
