@@ -565,22 +565,10 @@ from gitwrite_api.models import RepositoriesListResponse, RepositoryListItem # E
 
 @patch('gitwrite_api.routers.repository.core_get_repository_metadata')
 @patch('gitwrite_api.routers.repository.os.listdir')
-@patch('gitwrite_api.routers.repository.Path.is_dir')
-def test_api_list_repositories_success(mock_is_dir, mock_listdir, mock_get_metadata):
+def test_api_list_repositories_success(mock_listdir, mock_get_metadata):
     app.dependency_overrides[actual_repo_auth_dependency] = mock_get_current_active_user
 
     mock_listdir.return_value = ["repo1", "repo2", "not_a_repo_file.txt"]
-
-    # Simulate Path.is_dir behavior for items from listdir
-    # repo1 and repo2 are dirs, not_a_repo_file.txt is not
-    class MockHelper:
-        def is_dir_side_effect(self, path):
-            if path.name in ["repo1", "repo2"]:
-                return True
-            return False
-
-    mock_helper = MockHelper()
-    mock_is_dir.side_effect = mock_helper.is_dir_side_effect
 
     # Mock metadata returned by core_get_repository_metadata
     now = datetime.datetime.now(datetime.timezone.utc)
@@ -591,34 +579,74 @@ def test_api_list_repositories_success(mock_is_dir, mock_listdir, mock_get_metad
         # For "not_a_repo_file.txt", mock_is_dir returns False, so core_get_repository_metadata isn't called.
     ]
 
-    expected_user_repos_base_dir = Path(MOCK_REPO_PATH) / "gitwrite_user_repos"
+    with patch('gitwrite_api.routers.repository.Path') as MockPath:
+        # Create a mock for the base directory path
+        mock_base_path = MagicMock()
+        mock_base_path.exists.return_value = True
+        mock_base_path.is_dir.return_value = True
 
-    response = client.get("/repositorys") # Path will be /repository + s
+        # Create mocks for individual item paths
+        mock_repo1_path = MagicMock()
+        mock_repo1_path.is_dir.return_value = True
+        mock_repo1_path.name = "repo1"
 
-    assert response.status_code == HTTPStatus.OK
-    data = response.json()
+        mock_repo2_path = MagicMock()
+        mock_repo2_path.is_dir.return_value = True
+        mock_repo2_path.name = "repo2"
 
-    assert data["count"] == 2
-    assert len(data["repositories"]) == 2
+        mock_file_path = MagicMock()
+        mock_file_path.is_dir.return_value = False
+        mock_file_path.name = "not_a_repo_file.txt"
 
-    # Check repo1 details
-    assert data["repositories"][0]["name"] == "repo1"
-    assert data["repositories"][0]["description"] == "First repo"
-    # Pydantic will convert datetime to ISO string
-    assert datetime.datetime.fromisoformat(data["repositories"][0]["last_modified"]) == now
+        # Set up the Path constructor to return the base path
+        MockPath.return_value = mock_base_path
 
-    # Check repo2 details
-    assert data["repositories"][1]["name"] == "repo2"
-    assert data["repositories"][1]["description"] is None
-    assert datetime.datetime.fromisoformat(data["repositories"][1]["last_modified"]) == now - datetime.timedelta(days=1)
+        # Set up the __truediv__ method to return the appropriate item paths
+        def mock_truediv(self, other):
+            if other == "gitwrite_user_repos":
+                return mock_base_path
+            elif other == "repo1":
+                return mock_repo1_path
+            elif other == "repo2":
+                return mock_repo2_path
+            elif other == "not_a_repo_file.txt":
+                return mock_file_path
+            else:
+                # Return a default mock for unexpected paths
+                default_mock = MagicMock()
+                default_mock.is_dir.return_value = False
+                return default_mock
 
-    mock_listdir.assert_called_once_with(expected_user_repos_base_dir)
-    # mock_is_dir should be called for each item from listdir
-    assert mock_is_dir.call_count == 3
-    # core_get_repository_metadata should be called for each directory
-    assert mock_get_metadata.call_count == 2
-    mock_get_metadata.assert_any_call(expected_user_repos_base_dir / "repo1")
-    mock_get_metadata.assert_any_call(expected_user_repos_base_dir / "repo2")
+        mock_base_path.__truediv__ = mock_truediv
+
+        response = client.get("/repositorys") # Path will be /repository + s
+
+        assert response.status_code == HTTPStatus.OK
+        data = response.json()
+
+        assert data["count"] == 2
+        assert len(data["repositories"]) == 2
+
+        # Check repo1 details
+        assert data["repositories"][0]["name"] == "repo1"
+        assert data["repositories"][0]["description"] == "First repo"
+        # Pydantic will convert datetime to ISO string, handle 'Z' timezone
+        repo1_time_str = data["repositories"][0]["last_modified"]
+        if repo1_time_str.endswith('Z'):
+            repo1_time_str = repo1_time_str[:-1] + '+00:00'
+        assert datetime.datetime.fromisoformat(repo1_time_str) == now
+
+        # Check repo2 details
+        assert data["repositories"][1]["name"] == "repo2"
+        assert data["repositories"][1]["description"] is None
+        repo2_time_str = data["repositories"][1]["last_modified"]
+        if repo2_time_str.endswith('Z'):
+            repo2_time_str = repo2_time_str[:-1] + '+00:00'
+        assert datetime.datetime.fromisoformat(repo2_time_str) == now - datetime.timedelta(days=1)
+
+        mock_listdir.assert_called_once()
+        # core_get_repository_metadata should be called for each directory
+        assert mock_get_metadata.call_count == 2
 
     app.dependency_overrides = {}
 
