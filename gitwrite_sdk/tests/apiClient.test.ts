@@ -363,7 +363,7 @@ describe('GitWriteClient', () => {
 
         expect(mockRequest).toHaveBeenCalledWith({
           method: 'POST',
-          url: '/repository/save',
+          url: `/repository/${testRepoName}/save`,
           data: mockRequestPayload,
         });
         expect(result).toEqual(mockResponseData);
@@ -376,7 +376,7 @@ describe('GitWriteClient', () => {
         await expect(client.save(testRepoName, filePath, content, commitMessage)).rejects.toThrow('API Error for save');
         expect(mockRequest).toHaveBeenCalledWith({
           method: 'POST',
-          url: '/repository/save',
+          url: `/repository/${testRepoName}/save`,
           data: mockRequestPayload,
         });
       });
@@ -604,7 +604,7 @@ describe('GitWriteClient', () => {
 
       expect(mockRequest).toHaveBeenCalledWith({
         method: 'POST',
-        url: '/repository/branches',
+        url: `/repository/${testRepoName}/branches`,
         data: payload,
       });
       expect(result).toEqual(mockResponse);
@@ -638,7 +638,7 @@ describe('GitWriteClient', () => {
 
       expect(mockRequest).toHaveBeenCalledWith({
         method: 'PUT',
-        url: '/repository/branch',
+        url: `/repository/${testRepoName}/branch`,
         data: payload,
       });
       expect(result).toEqual(mockResponse);
@@ -671,7 +671,7 @@ describe('GitWriteClient', () => {
 
       expect(mockRequest).toHaveBeenCalledWith({
         method: 'POST',
-        url: '/repository/merges',
+        url: `/repository/${testRepoName}/merges`,
         data: payload,
       });
       expect(result).toEqual(mockResponse);
