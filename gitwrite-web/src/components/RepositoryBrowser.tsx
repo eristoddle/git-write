@@ -153,7 +153,7 @@ const RepositoryBrowser: React.FC = () => {
   const navigateUp = () => {
     if (!currentPath) return; // Already at root of the current branch view
     const parentPath = currentPath.substring(0, currentPath.lastIndexOf('/'));
-    const targetPath = parentPath ? `${currentBranch}/${parentPath}` : currentBranch;
+    const targetPath = parentPath ? `${currentRef}/${parentPath}` : currentRef;
     navigate(`/repository/${repoName}/tree/${targetPath}`);
   };
 

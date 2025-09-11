@@ -301,7 +301,7 @@ const BranchManagementPage: React.FC = () => {
                  }
               </SelectContent>
             </Select>
-            <Button onClick={handleSwitchBranch} disabled={isSwitching || !selectedBranchToSwitch || selectedBranchToSwitch === currentBranch || branches.length === 0}>
+            <Button onClick={() => handleSwitchBranch()} disabled={isSwitching || !selectedBranchToSwitch || selectedBranchToSwitch === currentBranch || branches.length === 0}>
               {isSwitching ? 'Switching...' : 'Switch to Selected'}
             </Button>
           </CardContent>

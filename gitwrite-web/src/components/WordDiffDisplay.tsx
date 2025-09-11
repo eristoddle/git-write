@@ -1,4 +1,5 @@
 import React from 'react';
+import type { JSX } from 'react';
 import { type StructuredDiffFile, type WordDiffHunk, type WordDiffLine, type WordDiffSegment } from 'gitwrite-sdk';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
