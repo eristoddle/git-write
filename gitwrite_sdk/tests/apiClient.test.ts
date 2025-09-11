@@ -31,6 +31,7 @@ const mockRequest = jest.fn(); // Added for the generic request method
 
 describe('GitWriteClient', () => {
   const baseURL = 'http://localhost:8000/api/v1';
+  const testRepoName = 'test-repo'; // Test repository name
   let client: GitWriteClient;
   let clientAxiosInstance: any; // To store the instance used by the client for easier access in tests
 
@@ -228,11 +229,11 @@ describe('GitWriteClient', () => {
         // The client.get method uses clientAxiosInstance.request
         mockRequest.mockResolvedValueOnce({ data: mockResponseData });
 
-        const result = await client.listBranches();
+        const result = await client.listBranches(testRepoName);
 
         expect(mockRequest).toHaveBeenCalledWith({
           method: 'GET',
-          url: '/repository/branches',
+          url: `/repository/${testRepoName}/branches`,
         });
         expect(result).toEqual(mockResponseData);
       });
@@ -240,7 +241,7 @@ describe('GitWriteClient', () => {
       it('should throw if API call fails for listBranches', async () => {
         const error = new Error('API Error for listBranches');
         mockRequest.mockRejectedValueOnce(error);
-        await expect(client.listBranches()).rejects.toThrow('API Error for listBranches');
+        await expect(client.listBranches(testRepoName)).rejects.toThrow('API Error for listBranches');
       });
     });
 
@@ -289,10 +290,10 @@ describe('GitWriteClient', () => {
 
       it('should call GET /repository/commits without params and return data', async () => {
         mockRequest.mockResolvedValueOnce({ data: mockResponseData });
-        const result = await client.listCommits();
+        const result = await client.listCommits(testRepoName);
         expect(mockRequest).toHaveBeenCalledWith({
           method: 'GET',
-          url: '/repository/commits',
+          url: `/repository/${testRepoName}/commits`,
           params: {}, // Expect empty params when none provided
         });
         expect(result).toEqual(mockResponseData);
@@ -301,10 +302,10 @@ describe('GitWriteClient', () => {
       it('should call GET /repository/commits with branchName param', async () => {
         const params: ListCommitsParams = { branchName: 'develop' };
         mockRequest.mockResolvedValueOnce({ data: mockResponseData });
-        await client.listCommits(params);
+        await client.listCommits(testRepoName, params);
         expect(mockRequest).toHaveBeenCalledWith({
           method: 'GET',
-          url: '/repository/commits',
+          url: `/repository/${testRepoName}/commits`,
           params: { branch_name: 'develop' },
         });
       });
@@ -312,10 +313,10 @@ describe('GitWriteClient', () => {
       it('should call GET /repository/commits with maxCount param', async () => {
         const params: ListCommitsParams = { maxCount: 10 };
         mockRequest.mockResolvedValueOnce({ data: mockResponseData });
-        await client.listCommits(params);
+        await client.listCommits(testRepoName, params);
         expect(mockRequest).toHaveBeenCalledWith({
           method: 'GET',
-          url: '/repository/commits',
+          url: `/repository/${testRepoName}/commits`,
           params: { max_count: 10 },
         });
       });
@@ -323,10 +324,10 @@ describe('GitWriteClient', () => {
       it('should call GET /repository/commits with all params', async () => {
         const params: ListCommitsParams = { branchName: 'feature/test', maxCount: 5 };
         mockRequest.mockResolvedValueOnce({ data: mockResponseData });
-        await client.listCommits(params);
+        await client.listCommits(testRepoName, params);
         expect(mockRequest).toHaveBeenCalledWith({
           method: 'GET',
-          url: '/repository/commits',
+          url: `/repository/${testRepoName}/commits`,
           params: { branch_name: 'feature/test', max_count: 5 },
         });
       });
@@ -334,7 +335,7 @@ describe('GitWriteClient', () => {
       it('should throw if API call fails for listCommits', async () => {
         const error = new Error('API Error for listCommits');
         mockRequest.mockRejectedValueOnce(error);
-        await expect(client.listCommits()).rejects.toThrow('API Error for listCommits');
+        await expect(client.listCommits(testRepoName)).rejects.toThrow('API Error for listCommits');
       });
     });
 
@@ -358,7 +359,7 @@ describe('GitWriteClient', () => {
         // The client.post method uses clientAxiosInstance.request
         mockRequest.mockResolvedValueOnce({ data: mockResponseData });
 
-        const result = await client.save(filePath, content, commitMessage);
+        const result = await client.save(testRepoName, filePath, content, commitMessage);
 
         expect(mockRequest).toHaveBeenCalledWith({
           method: 'POST',
@@ -372,7 +373,7 @@ describe('GitWriteClient', () => {
         const error = new Error('API Error for save');
         mockRequest.mockRejectedValueOnce(error);
 
-        await expect(client.save(filePath, content, commitMessage)).rejects.toThrow('API Error for save');
+        await expect(client.save(testRepoName, filePath, content, commitMessage)).rejects.toThrow('API Error for save');
         expect(mockRequest).toHaveBeenCalledWith({
           method: 'POST',
           url: '/repository/save',
@@ -599,7 +600,7 @@ describe('GitWriteClient', () => {
       };
       mockRequest.mockResolvedValueOnce({ data: mockResponse });
 
-      const result = await client.createBranch(payload);
+      const result = await client.createBranch(testRepoName, payload);
 
       expect(mockRequest).toHaveBeenCalledWith({
         method: 'POST',
@@ -612,7 +613,7 @@ describe('GitWriteClient', () => {
     it('should throw an error if API call fails', async () => {
       const error = new Error('API Error');
       mockRequest.mockRejectedValueOnce(error);
-      await expect(client.createBranch({ branch_name: 'fail-branch' })).rejects.toThrow('API Error');
+      await expect(client.createBranch(testRepoName, { branch_name: 'fail-branch' })).rejects.toThrow('API Error');
     });
   });
 
@@ -633,7 +634,7 @@ describe('GitWriteClient', () => {
       };
       mockRequest.mockResolvedValueOnce({ data: mockResponse });
 
-      const result = await client.switchBranch(payload);
+      const result = await client.switchBranch(testRepoName, payload);
 
       expect(mockRequest).toHaveBeenCalledWith({
         method: 'PUT',
@@ -646,7 +647,7 @@ describe('GitWriteClient', () => {
     it('should throw an error if API call fails', async () => {
       const error = new Error('API Error');
       mockRequest.mockRejectedValueOnce(error);
-      await expect(client.switchBranch({ branch_name: 'fail-branch' })).rejects.toThrow('API Error');
+      await expect(client.switchBranch(testRepoName, { branch_name: 'fail-branch' })).rejects.toThrow('API Error');
     });
   });
 
@@ -666,7 +667,7 @@ describe('GitWriteClient', () => {
       };
       mockRequest.mockResolvedValueOnce({ data: mockResponse });
 
-      const result = await client.mergeBranch(payload);
+      const result = await client.mergeBranch(testRepoName, payload);
 
       expect(mockRequest).toHaveBeenCalledWith({
         method: 'POST',
@@ -679,7 +680,7 @@ describe('GitWriteClient', () => {
     it('should throw an error if API call fails', async () => {
       const error = new Error('API Error');
       mockRequest.mockRejectedValueOnce(error);
-      await expect(client.mergeBranch({ source_branch: 'fail-branch' })).rejects.toThrow('API Error');
+      await expect(client.mergeBranch(testRepoName, { source_branch: 'fail-branch' })).rejects.toThrow('API Error');
     });
   });
 
