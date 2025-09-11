@@ -36,6 +36,10 @@ import type {
   UpdateAnnotationStatusResponse,
   CreateAnnotationRequest,
   CreateAnnotationResponse,
+  // Missing exports for gitwrite-web
+  BranchReviewCommit,
+  CherryPickResponse,
+  CompareRefsResponse,
 } from './types';
 
 // These are the types we need to ensure are exported for runtime checks or direct use by JS consumers
@@ -83,6 +87,10 @@ export type {
   UpdateAnnotationStatusResponse,
   CreateAnnotationRequest,
   CreateAnnotationResponse,
+  // Missing exports for gitwrite-web
+  BranchReviewCommit,
+  CherryPickResponse,
+  CompareRefsResponse,
 };
 
 export {
