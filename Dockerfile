@@ -32,12 +32,13 @@ WORKDIR /app
 # Copy the poetry lock file and pyproject.toml file to leverage Docker cache
 COPY poetry.lock pyproject.toml /app/
 
-# Install poetry and project dependencies
+# Install poetry and project dependencies only (not the current project)
 # --no-interaction and --no-ansi are good for CI/CD environments
 # virtualenvs.create false installs packages into the system site-packages, which is standard for Docker
+# --no-root skips installing the current project since source code isn't copied yet
 RUN pip install --no-cache-dir poetry \
     && poetry config virtualenvs.create false \
-    && poetry install --only=main --no-interaction --no-ansi
+    && poetry install --only=main --no-root --no-interaction --no-ansi
 
 # Copy the application code into the container
 COPY gitwrite_core/ /app/gitwrite_core/
