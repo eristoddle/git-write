@@ -33,8 +33,8 @@ services:
   # Frontend Web Application (for production)
   gitwrite-web:
     build:
-      context: ./gitwrite-web
-      dockerfile: Dockerfile.prod
+      context: .
+      dockerfile: gitwrite-web/Dockerfile.prod
       args:
         - VITE_API_URL=${VITE_API_URL:-http://localhost:8000}
     ports:

@@ -4,14 +4,22 @@ FROM node:18-alpine AS builder
 # Set working directory
 WORKDIR /app
 
-# Copy package files
-COPY package*.json ./
+# First, build the SDK
+WORKDIR /app/gitwrite_sdk
+COPY gitwrite_sdk/package*.json ./
+RUN npm ci
+COPY gitwrite_sdk/ ./
+RUN npm run build
+
+# Now build the web app
+WORKDIR /app/gitwrite-web
+COPY gitwrite-web/package*.json ./
 
 # Install dependencies (including dev dependencies for build)
 RUN npm ci
 
 # Copy source code
-COPY . .
+COPY gitwrite-web/ .
 
 # Build the application
 ARG VITE_API_URL
@@ -22,10 +30,10 @@ RUN npm run build
 FROM nginx:alpine
 
 # Copy custom nginx configuration
-COPY nginx.conf /etc/nginx/conf.d/default.conf
+COPY gitwrite-web/nginx.conf /etc/nginx/conf.d/default.conf
 
 # Copy built application from builder stage
-COPY --from=builder /app/dist /usr/share/nginx/html
+COPY --from=builder /app/gitwrite-web/dist /usr/share/nginx/html
 
 # Add health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
