@@ -44,19 +44,21 @@ services:
     restart: unless-stopped
     networks:
       - gitwrite_network
+    profiles:
+      - production
 
   # Development Frontend (for development only)
   gitwrite-web-dev:
     build:
-      context: ./gitwrite-web
-      dockerfile: Dockerfile.dev
+      context: .
+      dockerfile: gitwrite-web/Dockerfile.dev
     ports:
       - "${WEB_DEV_PORT:-3001}:5173"
     environment:
       - VITE_API_URL=${VITE_API_URL:-http://localhost:8000}
     volumes:
-      - ./gitwrite-web:/app
-      - /app/node_modules
+      - ./gitwrite-web:/app/gitwrite-web
+      - /app/gitwrite-web/node_modules
     depends_on:
       - gitwrite-api
     networks:

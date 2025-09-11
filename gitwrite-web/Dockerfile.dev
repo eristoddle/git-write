@@ -4,14 +4,22 @@ FROM node:20-alpine
 # Set working directory
 WORKDIR /app
 
-# Copy package files
-COPY package*.json ./
+# First, build the SDK (required dependency)
+WORKDIR /app/gitwrite_sdk
+COPY gitwrite_sdk/package*.json ./
+RUN npm ci
+COPY gitwrite_sdk/ ./
+RUN npm run build
+
+# Now set up the web app
+WORKDIR /app/gitwrite-web
+COPY gitwrite-web/package*.json ./
 
 # Install all dependencies (including dev dependencies)
 RUN npm ci
 
-# Copy source code
-COPY . .
+# Copy source code (this will be overridden by volume mount in development)
+COPY gitwrite-web/ ./
 
 # Expose the development server port
 EXPOSE 5173
