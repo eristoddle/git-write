@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(docker-compose:*)",
+      "Bash(docker compose:*)",
+      "Bash(npm test)",
+      "Bash(npx tsc:*)",
+      "Bash(npx typescript:*)",
+      "Bash(act:*)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}
