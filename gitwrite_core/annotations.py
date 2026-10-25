@@ -13,6 +13,7 @@ from typing import Any, Dict, List, Optional
 import pygit2
 import yaml
 
+from .anchors import apply_anchor
 from .exceptions import AnnotationError, RepositoryOperationError
 from .models import Annotation, AnnotationStatus
 
@@ -87,8 +88,12 @@ def _split_message(message: str) -> Optional[str]:
 
 
 def _annotation_data(annotation: Annotation) -> Dict[str, Any]:
-    """The fields that are stored in the commit's YAML body (not the ids)."""
-    return {
+    """The fields that are stored in the commit's YAML body (not the ids).
+
+    The D15 anchor fields are written only when set, so annotations without them stay byte-identical
+    to the original format.
+    """
+    data: Dict[str, Any] = {
         "file_path": annotation.file_path,
         "highlighted_text": annotation.highlighted_text,
         "start_line": annotation.start_line,
@@ -97,6 +102,33 @@ def _annotation_data(annotation: Annotation) -> Dict[str, Any]:
         "author": annotation.author,
         "status": annotation.status.value,
     }
+    if annotation.prefix is not None:
+        data["prefix"] = annotation.prefix
+    if annotation.suffix is not None:
+        data["suffix"] = annotation.suffix
+    if annotation.offset is not None:
+        data["offset"] = annotation.offset
+    return data
+
+
+def _optional_str(value: Any) -> Optional[str]:
+    return value if isinstance(value, str) else None
+
+
+def _optional_int(value: Any) -> Optional[int]:
+    return value if isinstance(value, int) and not isinstance(value, bool) and value >= 0 else None
+
+
+def _file_text_at_head(repo: pygit2.Repository, file_path: str) -> Optional[str]:
+    """The text of ``file_path`` in the HEAD commit, or None if it is missing or not UTF-8 text."""
+    if repo.head_is_unborn:
+        return None
+    try:
+        entry = repo.head.peel(pygit2.Commit).tree[file_path]
+        blob = repo.get(entry.id)
+        return blob.data.decode("utf-8") if isinstance(blob, pygit2.Blob) else None
+    except (KeyError, UnicodeDecodeError, pygit2.GitError):
+        return None
 
 
 def _dump_yaml(data: Dict[str, Any], what: str) -> str:
@@ -133,6 +165,10 @@ def _build_annotation(data: Dict[str, Any], annotation_id: str, commit_id: str,
         author=data["author"],
         status=status,
         original_annotation_id=original_id,
+        # Anchors are optional; a malformed value is ignored rather than dropping the annotation.
+        prefix=_optional_str(data.get("prefix")),
+        suffix=_optional_str(data.get("suffix")),
+        offset=_optional_int(data.get("offset")),
     )
 
 
@@ -147,6 +183,8 @@ def create_annotation_commit(repo_path: str, feedback_branch: str, annotation_da
         repo_path: The path to the Git repository.
         feedback_branch: The name of the branch to commit the annotation to.
         annotation_data: The annotation to record. Its ``id`` and ``commit_id`` are set on return.
+            If it has no anchor (D15), one is computed from the file's text in HEAD when the
+            highlighted text is found there.
 
     Returns:
         The SHA of the newly created annotation commit.
@@ -157,6 +195,13 @@ def create_annotation_commit(repo_path: str, feedback_branch: str, annotation_da
     """
     repo = _open_repo(repo_path)
     _validate_branch_name(feedback_branch)
+
+    # Anchor the highlight to the text it was made on (the HEAD version of the file), unless the
+    # caller already supplied an anchor (for example from an unsaved editor buffer).
+    if annotation_data.prefix is None and annotation_data.suffix is None and annotation_data.offset is None:
+        file_text = _file_text_at_head(repo, annotation_data.file_path)
+        if file_text is not None:
+            apply_anchor(annotation_data, file_text)
 
     yaml_content = _dump_yaml(_annotation_data(annotation_data), "annotation data")
     subject = f"Annotation: {annotation_data.file_path} (Lines {annotation_data.start_line}-{annotation_data.end_line})"

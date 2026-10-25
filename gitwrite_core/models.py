@@ -30,6 +30,11 @@ class Annotation:
     status: AnnotationStatus = AnnotationStatus.NEW
     commit_id: Optional[str] = None
     original_annotation_id: Optional[str] = None
+    # D15 anchors (optional): text around the highlight and where it started, so the passage can be
+    # found again after the file changes. See gitwrite_core/anchors.py.
+    prefix: Optional[str] = None
+    suffix: Optional[str] = None
+    offset: Optional[int] = None
 
     def __post_init__(self) -> None:
         if self.start_line < 0 or self.end_line < 0:
