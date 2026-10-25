@@ -1,4 +1,5 @@
 import type { PluginApi } from '@veneer/api'
+import { registerFeedback } from './annotations'
 import { registerCompare } from './compare'
 import { registerExplorations } from './explorations'
 import { registerHistory } from './history'
@@ -19,7 +20,8 @@ export async function start(api: PluginApi, options: Options = {}): Promise<void
   registerCompare(api, history)
   registerTags(api, { afterTag: history.refresh, now: options.now })
   const explorations = registerExplorations(api, { beginSave: () => beginSave() })
-  await Promise.all([history.refresh(), explorations.refresh()])
+  const feedback = registerFeedback(api)
+  await Promise.all([history.refresh(), explorations.refresh(), feedback.reload()])
 }
 
 /**

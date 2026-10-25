@@ -33,6 +33,10 @@
       {
         "id": "gitwrite:name-version",
         "title": "Name a Version"
+      },
+      {
+        "id": "gitwrite:show-feedback",
+        "title": "Show Feedback"
       }
     ],
     "surfaces": [
@@ -106,6 +110,34 @@
         "title": "Name a Version",
         "icon": "tag",
         "side": "modal"
+      },
+      {
+        "id": "gitwrite:feedback",
+        "title": "Feedback",
+        "icon": "message-square",
+        "side": "right",
+        "rowActions": [
+          {
+            "id": "gitwrite:accept-feedback",
+            "title": "Accept",
+            "input": "confirm",
+            "appliesTo": [
+              "file"
+            ],
+            "prompt": "Mark this comment as accepted?",
+            "verb": "accept"
+          },
+          {
+            "id": "gitwrite:reject-feedback",
+            "title": "Reject",
+            "input": "confirm",
+            "appliesTo": [
+              "file"
+            ],
+            "prompt": "Mark this comment as rejected?",
+            "verb": "reject"
+          }
+        ]
       }
     ],
     "settings": [

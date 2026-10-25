@@ -45,7 +45,7 @@ const feedbackCommit = async (parent, subject, body) => {
   return git.writeCommit({
     fs, dir,
     commit: {
-      message: `${subject}\n\n${YAML.stringify(body)}`,
+      message: `${subject}\n\n${YAML.stringify(body, { version: '1.1' })}`,
       tree: commit.tree,
       parent: [parent],
       author: { ...author, timestamp: Math.floor(Date.now() / 1000), timezoneOffset: 0 },

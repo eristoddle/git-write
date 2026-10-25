@@ -73,10 +73,14 @@ Rules for readers:
   emoji or other astral character could be present.
 - The YAML is a plain block mapping, written with the equivalent of PyYAML's
   `yaml.dump(data, sort_keys=False, allow_unicode=True)` and read with `safe_load`. Use a real YAML
-  library on the TypeScript side; strings that look like numbers, booleans or contain `: ` need the
-  quoting the library applies. In particular a `prefix` or `suffix` that contains a line break is
-  written as a quoted scalar with the line break folded into a blank line (see the example below);
-  a YAML parser reads it back to the exact original text.
+  library on the TypeScript side.
+- **Use YAML 1.1 rules, PyYAML's, not 1.2.** The two disagree about which strings need quotes. A 1.2
+  writer (the `yaml` package's default) writes a comment of `yes`, `no`, `on`, `off`, `1_000`, `1:30` or
+  `2026-10-25` bare, and PyYAML reads it back as a boolean, a number or a date, silently changing the
+  comment. With the `yaml` package pass `{ version: '1.1' }` both ways. `tests/test_plugin_status_commit.py`
+  checks this with the plugin's own code. A line break inside a `prefix` or `suffix` is written as a
+  quoted scalar with the break folded into a blank line (see the example below); a parser reads it back
+  to the exact original text.
 
 ## Status changes
 
