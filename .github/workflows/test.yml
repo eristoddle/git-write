@@ -47,3 +47,31 @@ jobs:
           # A missing node or interop/node_modules is a failure here, not a skip.
           GITWRITE_REQUIRE_INTEROP: "1"
         run: uv run pytest --cov=gitwrite_core --cov=gitwrite_cli tests/
+
+  plugin:
+    name: plugin (veneer-plugin)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: veneer-plugin
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: veneer-plugin/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Test (Vitest on the fake host)
+        run: npm test
+
+      - name: Build
+        run: npm run build

@@ -15,26 +15,62 @@
 
 ---
 
-# ⏭ NEXT ACTIVE TASK
+# ⏭ NEXT ACTIVE TASK — Queue 3: plugin steps 1–3
 
-_None. Queue 2 is done and waiting on its PR. Promote Queue 3 (below) when that PR merges, and fill in its TBD._
+Branch `queue/3-plugin-core` per the standing rules (this session uses `ccr-fab01977-3fk6x6`). Decisions D7, D9, D12. Spec: Veneer's `docs/handoff/gitwrite-plugin-brief.md` steps 1–3 and `docs/handoff/README.md` (both in the `veneer` / `veneer-api` repos).
+
+## Goal
+
+A `veneer-plugin/` that lets a writer save a version, browse and restore versions, and compare them with Accept/Reject, on `api.history`, tested on the fake host.
+
+## Why (pointer)
+
+PLAN.md D7, D8, D9, D12. Plugin layout per the Veneer handoff README and its example plugins (`book_forge`'s copy is on Stephan's machine, not in the cloud session).
+
+### ▶ Run state (the agent keeps this current on every stop)
+**Queue 3 complete (2026-10-25).** All 4 pieces done, none blocked; one commit per piece (`queue 3.1` … `queue 3.4`). Worked on the designated branch `ccr-fab01977-3fk6x6` (restarted from `main` after the queue 2 PR merged).
+Checks at finish: in `veneer-plugin/`, `npm run typecheck`, `npm test` (74 tests on the fake host, also run under three time zones) and `npm run build` pass, and pass from a clean checkout with `npm ci` on Node 22 / npm 10.9 (what CI uses). Python: 379 passed, 1 skipped; `ruff` clean.
+**Not verified in the running Veneer app** (only on the API's fake host): how the modal save form, the wide Compare panel, the icons (`history`, `git-compare`, `save`) and the confirm-on-row Restore actually look and behave. The API's own docs describe them; nobody has loaded this plugin into Veneer yet.
+PR not opened yet: waiting for the user's go-ahead.
+
+## Contribution IDs (decided at promotion, 2026-10-25; Stephan approved these names)
+
+Plugin id `gitwrite`; contributions are `gitwrite:<lowercase-hyphen>`; titles use writer words.
+
+| Kind | ID | Title / notes |
+|---|---|---|
+| command | `gitwrite:save-version` | Save a Version |
+| command | `gitwrite:show-history` | Show Version History |
+| command | `gitwrite:compare-versions` | Compare Two Versions |
+| command | `gitwrite:compare-with-page` | Compare a Version with This Page |
+| surface | `gitwrite:history` | Versions; icon `history`; side right; row action `gitwrite:restore-version` ("Restore as New Version", confirm) |
+| surface | `gitwrite:compare` | Compare; icon `git-compare`; side right, wide; shows a version read-only and diffs |
+| surface | `gitwrite:save` | Save a Version; icon `save`; side modal; a form asking what changed (added by the planner: the API has no other way to ask for a message) |
+
+## Design — numbered pieces (status: `[ ]` not started · `[x]` done · `[!]` blocked)
+
+- [x] **1.** Scaffold `veneer-plugin/` from the Veneer handoff README and its example plugins: `manifest.json` (id `gitwrite`, `apiVersion` `^0.40.0`, `main` `main.js`, the contributions above), `package.json` (scripts `build` / `typecheck` / `test`; `@veneer/api` from `github:eristoddle/veneer-api#v0.40.0`), `.npmrc` with `allow-git=all`, `tsconfig.json`, `.gitignore` with `main.js`, `README.md`. Add a CI job for typecheck, test and build.
+- [x] **2.** Save a Version: command opens the `gitwrite:save` form; submitting calls `api.history.save` (starting history first when the project has none), tells the writer in plain words what happened (including "nothing changed" and "no history for a loose file"), and refreshes the history list.
+- [x] **3.** History surface (newest first: message, author, time), read-only view of a version of the open page, and Restore (puts the old text on the open page with `api.editor.edit`, then saves it as a new version; history is never rewritten).
+- [x] **4.** Compare: two versions, or a version and the open page, into a `diff` view; for version-vs-page, Accept/Reject per change via `onDiffAction` and `api.editor.edit` (one undo step each).
+
+Each command and surface gets a test on `createFakeHost`; every `src/*.ts` has a matching `*.test.ts`.
+
+Inputs from queue 2: Veneer's `history.init()` is the only thing that adds `.veneer/cache/` to `.gitignore`, and it skips existing repos, so the plugin should make sure that line is present before the first save in a repo GitWrite made. Never assume the default branch is `main` (a GitWrite-made repo may be on `master`). Hide the `feedback` branch from the exploration list (switching to it would swap in a stale snapshot of the files).
+
+## Out of scope (do NOT do)
+
+- Explorations, tags, merge, annotations, sync (queue 4); release (queue 5).
+- Working around a missing API with a hack: write down what was missing (the Veneer handoff asks for this) in the PR.
+- Any change to the Python code.
+
+## Report back
+
+What was built and tested per brief item, anything the API lacked, decisions made, and the PR URL.
 
 ---
 
 ## ⏩ Queued (drafts: promote to active when the previous queue's PR merges, and fill in anything marked TBD)
-
-### Queue 3: plugin steps 1–3
-
-Branch `queue/3-plugin-core`. Decisions D7, D9, D12. Spec: Veneer's `docs/handoff/gitwrite-plugin-brief.md` steps 1–3 and `docs/handoff/README.md`. Pieces:
-
-1. Scaffold `veneer-plugin/` by copying book_forge's setup: `manifest.json` (id `gitwrite`, `apiVersion` `^0.40.0`, `main` `main.js`), `package.json` (scripts `build` / `typecheck` / `test`; dependency `@veneer/api` from `github:eristoddle/veneer-api#v0.40.0`), `.npmrc` with `allow-git=all`, `tsconfig.json`, `.gitignore` with `main.js`, and `README.md`. Add a CI job for typecheck, test and build.
-2. Save a Version.
-3. History surface, read-only view of a version, and Restore (saves the old text as a new version).
-4. Compare: two versions, or a version and the open page, into a `diff` view, with accept/reject via `onDiffAction` and `api.editor.edit`.
-
-Each command and surface gets a test on `createFakeHost`. TBD at promotion: the exact command and surface IDs and names.
-
-Inputs from queue 2: Veneer's `history.init()` is the only thing that adds `.veneer/cache/` to `.gitignore`, and it skips existing repos, so the plugin should make sure that line is present before the first save in a repo GitWrite made. Never assume the default branch is `main` (a GitWrite-made repo may be on `master`). Hide the `feedback` branch from the exploration list (switching to it would swap in a stale snapshot of the files).
 
 ### Queue 4: plugin steps 4–6
 
