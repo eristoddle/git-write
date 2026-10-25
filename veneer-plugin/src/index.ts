@@ -1,4 +1,5 @@
 import type { PluginApi } from '@veneer/api'
+import { registerCompare } from './compare'
 import { registerHistory } from './history'
 import { registerSave } from './save'
 
@@ -13,6 +14,7 @@ export async function start(api: PluginApi, options: Options = {}): Promise<void
   let beginSave: () => Promise<void> = async () => {}
   const history = registerHistory(api, { beginSave: () => beginSave(), now: options.now })
   beginSave = registerSave(api, history.refresh).begin
+  registerCompare(api, history)
   await history.refresh()
 }
 

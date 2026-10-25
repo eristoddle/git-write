@@ -67,6 +67,20 @@ describe('the version list', () => {
     ])
   })
 
+  it('says when the list is cut short at the latest 100 versions, and not before', async () => {
+    const fake = await open()
+    await fake.api.history.init()
+    for (let i = 1; i <= 99; i++) await saveVersion(fake, `Version ${i}`, `Text ${i}`, 1)
+    await fake.refreshSurface(HISTORY_SURFACE)
+    expect(list(fake).items).toHaveLength(99)
+    expect(list(fake).note).toBeUndefined()
+
+    await saveVersion(fake, 'Version 100', 'Text 100', 1)
+    await fake.refreshSurface(HISTORY_SURFACE)
+    expect(list(fake).items).toHaveLength(100)
+    expect(list(fake).note).toBe('Showing the latest 100 versions.')
+  })
+
   it('opens from the command and from the palette, freshly read each time', async () => {
     const fake = await open()
     await saveVersion(fake, 'Chapter one', 'Text.', 1)

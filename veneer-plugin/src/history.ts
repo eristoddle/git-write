@@ -11,6 +11,8 @@ export const SAVE_ACTION = 'gitwrite:save-version'
 
 const NO_VERSIONS = 'No versions yet. Save a version to start keeping this project’s history.'
 const OPEN_A_PAGE = 'Open a page first, then choose a version to look at.'
+/** `api.history.log` lists this many unless asked for more; a full list says so rather than looking complete. */
+const LOG_PAGE = 100
 
 export interface HistoryOptions {
   /** Opens the "what changed?" form, for the empty list's button. */
@@ -19,11 +21,23 @@ export interface HistoryOptions {
   now?: () => Date
 }
 
+/** A one-time question put to the list: "choose a version", answered by the writer opening a row. */
+export interface Picking {
+  /** The line above the list that says what to choose. */
+  note: string
+  onPick(commit: HistoryCommit): Promise<void> | void
+}
+
 export interface HistoryFeature {
   /** Re-reads the versions and hands the list to the kernel. */
   refresh(): Promise<void>
   /** The versions as last listed, newest first. */
   versions(): readonly HistoryCommit[]
+  /** Shows the list with `question.note` above it; the next version opened answers it instead of being viewed. */
+  ask(question: Picking): Promise<void>
+  /** The text of `page` in `commit`, or null after telling the writer why not. */
+  textAt(commit: HistoryCommit, page: string): Promise<string | null>
+  now(): Date
 }
 
 /** The page the writer has open, or why there is none. */
@@ -46,6 +60,11 @@ function explainShowError(err: unknown, page: string): string {
 export function registerHistory(api: PluginApi, options: HistoryOptions): HistoryFeature {
   const now = (): Date => options.now?.() ?? new Date()
   let versions: HistoryCommit[] = []
+  let question: Picking | null = null
+
+  /** What the writer is asked to do, else a warning that the list stops at the latest versions. */
+  const shownNote = (): string | undefined =>
+    question?.note ?? (versions.length >= LOG_PAGE ? `Showing the latest ${LOG_PAGE} versions.` : undefined)
 
   async function listView(): Promise<ItemsView> {
     const empty = (text: string, withSave = false): ItemsView => ({
@@ -66,6 +85,7 @@ export function registerHistory(api: PluginApi, options: HistoryOptions): Histor
     if (versions.length === 0) return empty(NO_VERSIONS, true)
     return {
       kind: 'list',
+      ...(shownNote() === undefined ? {} : { note: shownNote() }),
       items: versions.map((commit) => ({
         id: commit.id,
         label: versionTitle(commit),
@@ -93,6 +113,13 @@ export function registerHistory(api: PluginApi, options: HistoryOptions): Histor
   async function openVersion(id: string): Promise<void> {
     const commit = versions.find((v) => v.id === id)
     if (commit === undefined) return refresh()
+    if (question !== null) {
+      // The question is answered once; the answer may ask the next one.
+      const asked = question
+      question = null
+      await asked.onPick(commit)
+      return refresh()
+    }
     const page = openPage(api)
     if (page === null) {
       api.notify({ message: OPEN_A_PAGE })
@@ -148,6 +175,7 @@ export function registerHistory(api: PluginApi, options: HistoryOptions): Histor
   }
 
   api.commands.handle(SHOW_HISTORY_COMMAND, async () => {
+    question = null // Opening the history plainly drops any "choose a version" in progress.
     await refresh()
     api.surfaces.show(HISTORY_SURFACE)
   })
@@ -162,9 +190,19 @@ export function registerHistory(api: PluginApi, options: HistoryOptions): Histor
     return undefined
   })
   // A version made anywhere (this plugin, another plugin, Veneer itself) changes the list.
-  for (const name of ['history:saved', 'history:switched', 'project:switched'] as const) {
+  for (const name of ['history:saved', 'history:switched'] as const) {
     api.events.on(name, refresh)
   }
+  api.events.on('project:switched', () => {
+    question = null // A question about one project's versions means nothing in another.
+    return refresh()
+  })
 
-  return { refresh, versions: () => versions }
+  async function ask(next: Picking): Promise<void> {
+    question = next
+    await refresh()
+    api.surfaces.show(HISTORY_SURFACE)
+  }
+
+  return { refresh, versions: () => versions, ask, textAt: pageAt, now }
 }
