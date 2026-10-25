@@ -795,24 +795,21 @@ def save_and_commit_file(repo_path_str: str, file_path: str, content: str, commi
     """
     try:
         repo_path = Path(repo_path_str)
-        absolute_file_path = repo_path / file_path
 
-        # Ensure file_path is treated as relative and does not try to escape the repo
-        # Resolve paths to compare them reliably
+        # Resolve symlinks and ".." first, then require the result to sit strictly inside the repo
+        # and outside .git. Nothing is written before this passes. A prefix test (startswith) is not
+        # enough: "/tmp/repo-evil" starts with "/tmp/repo".
         resolved_repo_path = repo_path.resolve()
-        resolved_file_path = absolute_file_path.resolve()
-
-        if not resolved_file_path.is_relative_to(resolved_repo_path):
-            # Check if the resolved file path starts with the resolved repo path,
-            # This is a more robust check for containment.
-            if not str(resolved_file_path).startswith(str(resolved_repo_path)):
-                 return {'status': 'error', 'message': 'File path is outside the repository.', 'commit_id': None}
-            # If it starts with, but is_relative_to is False, it might be the same path.
-            # Allow if it's the same (e.g. repo_path is a file itself, though unlikely for a repo root)
-            # However, typical usage is file_path is a file *within* repo_path directory.
-            # The check `str(resolved_file_path).startswith(str(resolved_repo_path))` handles most cases.
-            # A direct equality check for resolved paths can be added if files can be repos.
-            # For now, if `is_relative_to` fails, we double check with startswith.
+        resolved_file_path = (repo_path / file_path).resolve()
+        try:
+            relative_to_repo = resolved_file_path.relative_to(resolved_repo_path)
+        except ValueError:
+            return {'status': 'error', 'message': 'File path is outside the repository.', 'commit_id': None}
+        if relative_to_repo == Path('.'):
+            return {'status': 'error', 'message': 'File path must name a file inside the repository.', 'commit_id': None}
+        if any(part.lower() == '.git' for part in relative_to_repo.parts):
+            return {'status': 'error', 'message': 'File path must not point inside the .git directory.', 'commit_id': None}
+        absolute_file_path = resolved_file_path
 
         # Create parent directories if they don't exist
         try:
