@@ -688,7 +688,9 @@ def get_branch_review_commits(repo_path_str: str, branch_name_to_review: str, li
     try:
         # Walk commits on branch_to_review, hide commits reachable from current HEAD
         # GIT_SORT_TOPOLOGICAL | GIT_SORT_REVERSE gives oldest first among the selection
-        walker = repo.walk(branch_oid, pygit2.GIT_SORT_TOPOLOGICAL | pygit2.GIT_SORT_REVERSE, hide=head_commit_oid)
+        # (Repository.walk has no `hide=` argument; hiding is done on the walker.)
+        walker = repo.walk(branch_oid, pygit2.GIT_SORT_TOPOLOGICAL | pygit2.GIT_SORT_REVERSE)
+        walker.hide(head_commit_oid)
         for commit_obj in walker:
             author_tz = timezone(timedelta(minutes=commit_obj.author.offset))
             commits_data.append({
