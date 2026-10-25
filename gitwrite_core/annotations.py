@@ -10,7 +10,7 @@ from pathlib import Path
 # For now, we'll conceptualize with direct CLI calls or a helper.
 # from git import Repo, GitCommandError # Example if GitPython is available
 
-from gitwrite_api.models import Annotation, AnnotationStatus
+from .models import Annotation, AnnotationStatus
 import subprocess
 from .exceptions import AnnotationError, RepositoryOperationError
 

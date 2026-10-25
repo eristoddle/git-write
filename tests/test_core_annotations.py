@@ -5,7 +5,7 @@ import shutil
 from pathlib import Path
 import yaml
 
-from gitwrite_api.models import Annotation, AnnotationStatus
+from gitwrite_core.models import Annotation, AnnotationStatus
 from gitwrite_core.annotations import (
     create_annotation_commit,
     list_annotations,
@@ -507,7 +507,7 @@ print("Initial test structure for test_core_annotations.py created.")
 
 # Placeholder for actual test execution and debugging
 # To run these tests (assuming pytest is set up and PYTHONPATH includes the project root):
-# Ensure gitwrite_core and gitwrite_api are importable.
+# Ensure gitwrite_core is importable.
 # `pytest tests/test_core_annotations.py`
 
 # Note: Shortened ht, sl, el, c, a for some test data for brevity in test setup.
