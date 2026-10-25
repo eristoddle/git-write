@@ -1,258 +1,125 @@
-from unittest.mock import patch, MagicMock
-from pathlib import Path
+"""`gitwrite export epub` against real repositories and the real pandoc."""
 
+import shutil
+import zipfile
+
+import pygit2
 import pytest
-from click.testing import CliRunner # Changed from typer.testing
 
-from gitwrite_cli.main import cli as app # app is the click.Group instance
-from gitwrite_core.exceptions import RepositoryNotFoundError, CommitNotFoundError, FileNotFoundInCommitError, PandocError
+from gitwrite_cli.main import cli
+from tests.helpers import init_repo
 
-runner = CliRunner()
+SIG = pygit2.Signature("Tester", "tester@example.com", 946684800, 0)
 
-def test_export_epub_success():
-    # Removed patch for "gitwrite_cli.main.Path"
-    with runner.isolated_filesystem() as temp_dir:
-        Path("test_repo").mkdir() # Create dummy repo_path for Click's Path(exists=True) check
-        with patch("gitwrite_cli.main.export_to_epub") as mock_export_core:
-
-            # Simulate the core function returning a success dictionary
-            mock_export_core.return_value = {"status": "success", "message": "Exported EPUB to output/my_export.epub"}
-
-            result = runner.invoke(
-                app,
-                [
-                    "export",
-                    "epub",
-                    "test_repo", # This will now be found by Click in the temp_dir
-                    "file1.md",
-                    "file2.md",
-                    "-o",
-                    "output/my_export.epub", # Output path can be relative to temp_dir
-                    "--commit",
-                    "test_commit"
-                ],
-            )
-            # print(f"Output for test_export_epub_success: {result.output}") # For debugging
-            # print(f"Exit code for test_export_epub_success: {result.exit_code}") # For debugging
-            # if result.exception:
-            #    print(f"Exception for test_export_epub_success: {result.exception}")
+needs_pandoc = pytest.mark.skipif(shutil.which("pandoc") is None, reason="pandoc is not installed")
 
 
-            assert result.exit_code == 0
-        assert "Exported EPUB to output/my_export.epub" in result.stdout
-
-        # mock_path_constructor.assert_called_once_with("output/my_export.epub") # Removed as per instructions
-        mock_export_core.assert_called_once_with(
-            repo_path_str="test_repo",
-            file_list=["file1.md", "file2.md"], # Core function expects a list
-            output_epub_path_str="output/my_export.epub", # Use the correct keyword and string value
-            commit_ish_str="test_commit" # Correct keyword from core function
-        )
-
-def test_export_epub_success_default_commit_id():
-    # Removed patch for "gitwrite_cli.main.Path"
-    with runner.isolated_filesystem() as temp_dir:
-        Path("test_repo").mkdir() # Create dummy repo_path for Click's Path(exists=True) check
-        with patch("gitwrite_cli.main.export_to_epub") as mock_export_core:
-
-            # Simulate the core function returning a success dictionary
-            mock_export_core.return_value = {"status": "success", "message": "Exported EPUB to output/my_export.epub"}
-
-            result = runner.invoke(
-                app,
-                [
-                    "export",
-                    "epub",
-                    "test_repo", # This will now be found by Click in the temp_dir
-                    "file1.md",
-                    "-o",
-                    "output/my_export.epub", # Output path can be relative to temp_dir
-                    # --commit is omitted, should default to "HEAD" or similar in core
-                ],
-            )
-            # print(f"Output for test_export_epub_success_default_commit_id: {result.output}") # For debugging
-            # print(f"Exit code for test_export_epub_success_default_commit_id: {result.exit_code}") # For debugging
-            # if result.exception:
-            #    print(f"Exception for test_export_epub_success_default_commit_id: {result.exception}")
+@pytest.fixture
+def book(tmp_path):
+    """A repo with two chapters saved in one commit; returns (path, commit id)."""
+    path = tmp_path / "book"
+    repo = init_repo(path)
+    (path / "ch1.md").write_text("# Chapter One\n\nIt was a dark night.\n")
+    (path / "ch2.md").write_text("# Chapter Two\n\nMorning came.\n")
+    repo.index.add_all()
+    repo.index.write()
+    oid = repo.create_commit("HEAD", SIG, SIG, "two chapters", repo.index.write_tree(), [])
+    return path, oid
 
 
-            assert result.exit_code == 0
-        assert "Exported EPUB to output/my_export.epub" in result.stdout
-
-        # mock_path_constructor.assert_called_once_with("output/my_export.epub") # Removed as per instructions
-        mock_export_core.assert_called_once_with(
-            repo_path_str="test_repo",
-            file_list=["file1.md"], # Core function expects a list
-            output_epub_path_str="output/my_export.epub", # Use the correct keyword and string value
-            commit_ish_str="HEAD" # CLI passes "HEAD" by default to core if not specified
-        )
+def _epub_text(epub_path) -> str:
+    with zipfile.ZipFile(epub_path) as z:
+        assert z.read("mimetype") == b"application/epub+zip"
+        return " ".join(z.read(n).decode("utf-8", "replace") for n in z.namelist() if n.endswith(".xhtml"))
 
 
-def test_export_epub_missing_output_path():
-    with runner.isolated_filesystem() as temp_dir:
-        Path("test_repo").mkdir()
-        result = runner.invoke(
-            app,
-            [
-                "export",
-                "epub",
-                "test_repo",
-                "file1.md",
-                # -o is missing
-            ],
-        )
-        assert result.exit_code != 0 # Typer's default exit code for missing option is 2
-    assert "Error: Missing option '-o' / '--output-path'." in result.output # Adjusted to match Click's actual error
+@needs_pandoc
+def test_export_epub_writes_a_valid_epub_in_file_order(runner, book, tmp_path):
+    path, _ = book
+    out = tmp_path / "out" / "book.epub"
 
-def test_export_epub_missing_files():
-    with runner.isolated_filesystem() as temp_dir:
-        Path("test_repo").mkdir()
-        result = runner.invoke(
-            app,
-            [
-                "export",
-                "epub",
-                "test_repo",
-                # FILES are missing
-                "-o",
-                "output/my_export.epub",
-            ],
-        )
-        assert result.exit_code != 0 # Typer's default exit code for missing argument is 2
-    assert "Error: Missing argument 'FILES...'." in result.output # Adjusted to match Click's actual error (with ellipsis)
+    result = runner.invoke(cli, ["export", "epub", str(path), "ch2.md", "ch1.md", "-o", str(out)])
 
-def test_export_epub_repository_not_found():
-    # This test now checks Click's error for a non-existent repo_path,
-    # because `type=click.Path(exists=True)` will catch it first.
-    # The mock for export_to_epub is not strictly needed if Click errors out first,
-    # but we keep it to show intent if Click's validation were different.
-    with runner.isolated_filesystem() as temp_dir: # To ensure "non_existent_repo" truly doesn't exist
-        # Don't create "non_existent_repo" here
-        with patch("gitwrite_cli.main.export_to_epub", side_effect=RepositoryNotFoundError("Repo not found")) as mock_export_core:
-            result = runner.invoke(
-                app,
-                [
-                    "export",
-                    "epub",
-                    "non_existent_repo",
-                    "file1.md",
-                    "-o",
-                    "output.epub"
-                ],
-            )
-            assert result.exit_code == 2 # Click's exit code for invalid param
-            assert "Invalid value for 'REPO_PATH': Directory 'non_existent_repo' does not exist." in result.output
-            mock_export_core.assert_not_called() # Core function shouldn't be called if Click validation fails
+    assert result.exit_code == 0, result.output
+    text = _epub_text(out)
+    assert text.index("Morning came") < text.index("dark night")
 
-def test_export_epub_commit_not_found():
-    # Removed patch for "gitwrite_cli.main.Path"
-    with runner.isolated_filesystem() as temp_dir:
-        Path("test_repo").mkdir()
-        with patch("gitwrite_cli.main.export_to_epub", side_effect=CommitNotFoundError("Commit SHA not found")) as mock_export_core:
-            result = runner.invoke(
-                app,
-                [
-                    "export",
-                    "epub",
-                    "test_repo",
-                    "file1.md",
-                    "-o",
-                    "output.epub",
-                    "--commit",
-                    "invalid_sha"
-                ],
-            )
-            assert result.exit_code == 1
-            assert "Error: Commit 'invalid_sha' not found: Commit SHA not found" in result.output # Updated expected message
-            mock_export_core.assert_called_once()
 
-def test_export_epub_file_not_found_in_commit():
-    # Removed patch for "gitwrite_cli.main.Path"
-    with runner.isolated_filesystem() as temp_dir:
-        Path("test_repo").mkdir()
-        with patch("gitwrite_cli.main.export_to_epub", side_effect=FileNotFoundInCommitError("file.md not in commit")) as mock_export_core:
-            result = runner.invoke(
-                app,
-                [
-                    "export",
-                    "epub",
-                    "test_repo",
-                    "non_existent_file.md",
-                    "-o",
-                    "output.epub"
-                    # commit_ish defaults to HEAD
-                ],
-            )
-            assert result.exit_code == 1
-            # The CLI prepends "File not found in commit '{commit_ish}':"
-            assert "Error: File not found in commit 'HEAD': file.md not in commit" in result.output
-            mock_export_core.assert_called_once()
+@needs_pandoc
+def test_export_epub_uses_the_committed_text_not_the_working_copy(runner, book, tmp_path):
+    path, oid = book
+    (path / "ch1.md").write_text("# Chapter One\n\nUNSAVED EDIT\n")
+    out = tmp_path / "book.epub"
 
-def test_export_epub_pandoc_not_found_error():
-    # Removed patch for "gitwrite_cli.main.Path"
-    with runner.isolated_filesystem() as temp_dir:
-        Path("test_repo").mkdir()
-        with patch("gitwrite_cli.main.export_to_epub", side_effect=PandocError("Pandoc not found. Please ensure Pandoc is installed and in your PATH.")) as mock_export_core:
-            result = runner.invoke(
-                app,
-                [
-                    "export",
-                    "epub",
-                    "test_repo",
-                    "file1.md",
-                    "-o",
-                    "output.epub"
-                ],
-            )
-            assert result.exit_code == 1
-            # The CLI prepends "Error during EPUB generation: " and adds a hint
-            assert "Error during EPUB generation: Pandoc not found. Please ensure Pandoc is installed and in your PATH." in result.output
-            assert "Hint: Please ensure Pandoc is installed and accessible in your system's PATH." in result.output
-            mock_export_core.assert_called_once()
+    result = runner.invoke(cli, ["export", "epub", str(path), "ch1.md", "-o", str(out), "--commit", str(oid)])
 
-def test_export_epub_pandoc_conversion_error():
-    # Removed patch for "gitwrite_cli.main.Path"
-    with runner.isolated_filesystem() as temp_dir:
-        Path("test_repo").mkdir()
-        with patch("gitwrite_cli.main.export_to_epub", side_effect=PandocError("Pandoc conversion failed with error")) as mock_export_core:
-            result = runner.invoke(
-                app,
-                [
-                    "export",
-                    "epub",
-                    "test_repo",
-                    "file1.md",
-                    "-o",
-                    "output.epub"
-                ],
-            )
-            assert result.exit_code == 1
-            # The CLI prepends "Error during EPUB generation: "
-            assert "Error during EPUB generation: Pandoc conversion failed with error" in result.output
-            mock_export_core.assert_called_once()
+    assert result.exit_code == 0, result.output
+    text = _epub_text(out)
+    assert "dark night" in text
+    assert "UNSAVED EDIT" not in text
 
-def test_export_epub_generic_exception():
-    with runner.isolated_filesystem() as temp_dir:
-        Path("test_repo").mkdir()
-        with patch("gitwrite_cli.main.export_to_epub", side_effect=Exception("A generic unexpected error")) as mock_export_core, \
-             patch("gitwrite_cli.main.Path"): # Path mock might not be needed anymore
-            result = runner.invoke(
-                app,
-                [
-                    "export",
-                    "epub",
-                    "test_repo",
-                    "file1.md",
-                    "-o",
-                    "output.epub"
-                ],
-            )
-            assert result.exit_code == 1
-            assert "An unexpected error occurred during EPUB export: A generic unexpected error" in result.output
-        mock_export_core.assert_called_once()
 
-def test_cli_basic_invocation(runner: CliRunner): # Added runner type hint
-    """Checks if the basic CLI group can be invoked without error."""
-    result = runner.invoke(app, ['--help'])
+@needs_pandoc  # core checks for pandoc before it resolves the commit
+def test_export_epub_unknown_commit(runner, book, tmp_path):
+    path, _ = book
+    out = tmp_path / "book.epub"
+
+    result = runner.invoke(cli, ["export", "epub", str(path), "ch1.md", "-o", str(out), "-c", "no-such-ref"])
+
+    assert result.exit_code == 1
+    assert "Error: Commit 'no-such-ref' not found" in result.output
+    assert not out.exists()
+
+
+@needs_pandoc
+def test_export_epub_file_not_in_commit(runner, book, tmp_path):
+    path, _ = book
+    out = tmp_path / "book.epub"
+
+    result = runner.invoke(cli, ["export", "epub", str(path), "missing.md", "-o", str(out)])
+
+    assert result.exit_code == 1
+    assert "File not found in commit 'HEAD'" in result.output
+    assert not out.exists()
+
+
+def test_export_epub_without_pandoc_fails_with_a_pandoc_error(runner, book, tmp_path, monkeypatch):
+    path, _ = book
+    monkeypatch.setenv("PATH", str(tmp_path / "empty-bin"))
+
+    result = runner.invoke(cli, ["export", "epub", str(path), "ch1.md", "-o", str(tmp_path / "b.epub")])
+
+    assert result.exit_code == 1
+    assert "Error during EPUB generation" in result.output
+    assert "pandoc" in result.output.lower()
+
+
+def test_export_epub_repo_path_must_exist(runner, tmp_path):
+    result = runner.invoke(cli, ["export", "epub", str(tmp_path / "nope"), "f.md", "-o", str(tmp_path / "b.epub")])
+
+    assert result.exit_code == 2
+    assert "Invalid value for 'REPO_PATH'" in result.output
+
+
+def test_export_epub_requires_output_path(runner, book):
+    path, _ = book
+
+    result = runner.invoke(cli, ["export", "epub", str(path), "ch1.md"])
+
+    assert result.exit_code != 0
+    assert "Missing option '-o' / '--output-path'" in result.output
+
+
+def test_export_epub_requires_files(runner, book, tmp_path):
+    path, _ = book
+
+    result = runner.invoke(cli, ["export", "epub", str(path), "-o", str(tmp_path / "b.epub")])
+
+    assert result.exit_code != 0
+    assert "Missing argument 'FILES...'" in result.output
+
+
+def test_cli_help(runner):
+    result = runner.invoke(cli, ["--help"])
     assert result.exit_code == 0
     assert "Usage: cli [OPTIONS] COMMAND [ARGS]..." in result.stdout

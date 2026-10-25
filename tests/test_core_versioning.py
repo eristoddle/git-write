@@ -1,5 +1,4 @@
 import unittest
-import unittest.mock as mock
 import pygit2
 from tests.helpers import init_repo
 import shutil
@@ -7,7 +6,6 @@ import tempfile
 from pathlib import Path
 import os
 import pytest
-from unittest.mock import MagicMock
 import pprint # Added for debugging
 
 from gitwrite_core.versioning import revert_commit, save_changes, get_word_level_diff

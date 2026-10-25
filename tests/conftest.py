@@ -12,7 +12,6 @@ from pathlib import Path
 from click.testing import CliRunner
 from gitwrite_cli.main import cli
 # Note: Rich and gitwrite_core.exceptions might be needed if other fixtures use them.
-from unittest.mock import MagicMock, PropertyMock # For mock_repo fixture
 
 # Helper to create a commit (enhanced version from test_cli_sync_merge.py)
 def make_commit(repo, filename, content, message, branch_name=None): # Added branch_name for flexibility
@@ -442,47 +441,6 @@ def synctest_repos(tmp_path: Path, local_repo: pygit2.Repository, bare_remote_re
         "local_repo_path_str": str(local_repo_path_for_sync),
         "remote_bare_repo_path_str": bare_remote_repo_obj.path # Use .path for string URL
     }
-
-@pytest.fixture
-def mock_repo() -> MagicMock: # Type hint for clarity
-    """Fixture to create a mock pygit2.Repository object."""
-    repo = MagicMock(spec=pygit2.Repository)
-    repo.is_bare = False
-    repo.is_empty = False
-    repo.head_is_unborn = False
-    # Ensuring default_signature is a Signature object if code under test expects one.
-    # If only its attributes are accessed, a MagicMock might be enough.
-    # For safety, let's make it a real Signature if that's what pygit2.Repository would provide.
-    try:
-        repo.default_signature = pygit2.Signature("Test User", "test@example.com", 1234567890, 0)
-    except Exception: # Handle cases where pygit2 might not be fully available in test env
-        repo.default_signature = MagicMock()
-        repo.default_signature.name = "Test User"
-        repo.default_signature.email = "test@example.com"
-        repo.default_signature.time = 1234567890
-        repo.default_signature.offset = 0
-
-
-    mock_head_commit = MagicMock(spec=pygit2.Commit)
-    # Create a valid Oid for tests that might need it
-    # Changed .id to .oid to match attribute access in core code (e.g. create_tag)
-    try:
-        mock_head_commit.oid = pygit2.Oid(hex="0123456789abcdef0123456789abcdef01234567")
-    except Exception: # Fallback if pygit2.Oid is not available
-        mock_head_commit.oid = "0123456789abcdef0123456789abcdef01234567" # Ensure this is also .oid
-
-    # short_id is often derived from id/oid, ensure consistency or mock if used directly
-    mock_head_commit.short_id = "0123456" # This is fine if short_id is independently mocked
-    mock_head_commit.type = pygit2.GIT_OBJECT_COMMIT # Use actual constant if available
-    mock_head_commit.peel.return_value = mock_head_commit # peel() on a commit returns itself
-
-    repo.revparse_single.return_value = mock_head_commit
-    repo.references = MagicMock()
-    repo.references.create = MagicMock()
-    repo.create_tag = MagicMock()
-    repo.listall_tags = MagicMock(return_value=[])
-    repo.__getitem__ = MagicMock(return_value=mock_head_commit) # For repo[oid] access
-    return repo
 
 # --- From tests/test_core_branching.py ---
 

@@ -94,6 +94,7 @@ def test_export_to_epub_pandoc_not_found(temp_git_repo_path, monkeypatch):
     with pytest.raises(PandocError, match="Pandoc not found. Please ensure pandoc is installed"):
         export_to_epub(str(temp_git_repo_path), "HEAD", ["file1.md"], str(output_epub))
 
+@pytest.mark.skipif(shutil.which("pandoc") is None, reason="core checks for pandoc before it opens the repo")
 def test_export_to_epub_repo_dir_not_found(tmp_path):
     with pytest.raises(RepositoryNotFoundError, match="Repository directory not found"):
         export_to_epub(str(tmp_path / "non_existent_repo"), "HEAD", ["f.md"], str(tmp_path / "o.epub"))
@@ -348,3 +349,56 @@ def test_export_to_epub_annotated_tag_to_blob_error(temp_git_repo_path, mock_pyp
     output_epub = temp_git_repo_path / "output.epub"
     with pytest.raises(CommitNotFoundError, match=f"Tag '{tag_name}' does not point to a valid commit."):
         export_to_epub(str(temp_git_repo_path), tag_name, ["f.md"], str(output_epub))
+
+
+# ============================================================================
+# Real pandoc (skipped when pandoc is not installed)
+# ============================================================================
+
+needs_pandoc = pytest.mark.skipif(shutil.which("pandoc") is None, reason="pandoc is not installed")
+
+
+def _zip_text(path):
+    """Return (mimetype entry or None, concatenated xml/xhtml text) of a zip-based document."""
+    import zipfile
+    with zipfile.ZipFile(path) as z:
+        mimetype = z.read("mimetype") if "mimetype" in z.namelist() else None
+        text = " ".join(z.read(n).decode("utf-8", "replace") for n in z.namelist() if n.endswith((".xhtml", ".xml")))
+    return mimetype, text
+
+
+@needs_pandoc
+def test_real_pandoc_epub_contains_the_committed_chapters_in_order(temp_git_repo_path):
+    init_test_repo_corrected(temp_git_repo_path, {"a.md": "# Alpha\n\nfirst body", "b.md": "# Beta\n\nsecond body"}, "chapters")
+    out = temp_git_repo_path / "real.epub"
+
+    result = export_to_epub(str(temp_git_repo_path), "HEAD", ["b.md", "a.md"], str(out))
+
+    assert result["status"] == "success"
+    mimetype, text = _zip_text(out)
+    assert mimetype == b"application/epub+zip"
+    assert text.index("second body") < text.index("first body")
+
+
+@needs_pandoc
+def test_real_pandoc_docx_is_a_word_document(temp_git_repo_path):
+    init_test_repo_corrected(temp_git_repo_path, {"a.md": "# Alpha\n\nhello docx"}, "chapter")
+    out = temp_git_repo_path / "real.docx"
+
+    result = export_to_docx(str(temp_git_repo_path), "HEAD", ["a.md"], str(out))
+
+    assert result["status"] == "success"
+    _, text = _zip_text(out)
+    assert "hello docx" in text
+
+
+@needs_pandoc
+@pytest.mark.skipif(not any(shutil.which(e) for e in ("pdflatex", "xelatex", "lualatex")), reason="no LaTeX engine installed")
+def test_real_pandoc_pdf_starts_with_pdf_header(temp_git_repo_path):
+    init_test_repo_corrected(temp_git_repo_path, {"a.md": "# Alpha\n\nhello pdf"}, "chapter")
+    out = temp_git_repo_path / "real.pdf"
+
+    result = export_to_pdf(str(temp_git_repo_path), "HEAD", ["a.md"], str(out))
+
+    assert result["status"] == "success"
+    assert out.read_bytes().startswith(b"%PDF")

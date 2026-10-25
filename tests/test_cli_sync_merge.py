@@ -6,7 +6,6 @@ import shutil # shutil was for fixtures, now in conftest
 import re # Used by TestMergeCommandCLI
 from pathlib import Path # Used by test methods directly
 from click.testing import CliRunner # For type hinting runner fixture from conftest
-from unittest.mock import patch # Used by TestSyncCommandCLI
 from .conftest import make_commit
 
 from gitwrite_cli.main import cli
@@ -349,41 +348,25 @@ class TestSyncCommandCLI:
         assert result.exit_code == 1
         assert "Error: Repository is empty or HEAD is unborn. Cannot sync." in result.output
 
-    @patch('gitwrite_cli.main.sync_repository') # Corrected patch path
-    def test_sync_cli_handles_core_fetch_error(self, mock_sync_core, runner: CliRunner, synctest_repos): # Fixtures from conftest
-        os.chdir(synctest_repos["local_repo_path_str"])
-        # This mock will be called by the CLI 'sync' command.
-        # If sync_repository catches FetchError and returns a dict, these tests need to change.
-        # Based on previous output, it seems sync_repository *does not* let FetchError propagate to CLI's except block.
-        # Instead, it returns a dictionary that the CLI then uses to report.
-        mock_sync_core.return_value = {
-            "fetch_status": {"message": "FETCH_ERROR_MESSAGE"},
-            "local_update_status": {"message": "LOCAL_UPDATE_MESSAGE"},
-            "push_status": {"message": "PUSH_MESSAGE"},
-            "status": "error_in_sub_operation", # This ensures the "completed with errors" message is triggered
-            "branch_synced": "mock_branch_fetch_error"
-        }
-        result = runner.invoke(cli, ["sync"])
-        assert result.exit_code == 0, f"CLI Error: {result.output}"
-        assert "FETCH_ERROR_MESSAGE" in result.output
-        assert "LOCAL_UPDATE_MESSAGE" in result.output
-        assert "PUSH_MESSAGE" in result.output
-        assert "Sync process for branch 'mock_branch_fetch_error' with remote 'origin' completed with errors in some steps." in result.output
+    def test_sync_cli_reports_unreachable_remote(self, runner: CliRunner, synctest_repos, tmp_path: Path):
+        local_path = synctest_repos["local_repo_path_str"]
+        os.chdir(local_path)
+        local_repo = pygit2.Repository(local_path)
+        local_repo.remotes.set_url("origin", str(tmp_path / "no_such_remote.git"))
 
-    @patch('gitwrite_cli.main.sync_repository') # Corrected patch path
-    def test_sync_cli_handles_core_push_error(self, mock_sync_core, runner: CliRunner, synctest_repos): # Fixtures from conftest
-        os.chdir(synctest_repos["local_repo_path_str"])
-        # Similar to FetchError, assuming PushError is handled by sync_repository and reported in dict.
-        mock_sync_core.return_value = {
-            "fetch_status": {"message": "FETCH_COMPLETE_MESSAGE"},
-            "local_update_status": {"message": "LOCAL_UPDATE_OK_MESSAGE"},
-            "push_status": {"message": "PUSH_ERROR_MESSAGE"},
-            "status": "error_in_sub_operation", # This ensures the "completed with errors" message is triggered
-            "branch_synced": "mock_branch_push_error"
-        }
         result = runner.invoke(cli, ["sync"])
-        assert result.exit_code == 0, f"CLI Error: {result.output}"
-        assert "FETCH_COMPLETE_MESSAGE" in result.output
-        assert "LOCAL_UPDATE_OK_MESSAGE" in result.output
-        assert "PUSH_ERROR_MESSAGE" in result.output
-        assert "Sync process for branch 'mock_branch_push_error' with remote 'origin' completed with errors in some steps." in result.output
+
+        assert result.exit_code != 0
+        assert "Failed to fetch from remote 'origin'" in result.output
+
+    def test_sync_cli_reports_unreachable_push_target(self, runner: CliRunner, synctest_repos, tmp_path: Path):
+        local_path = synctest_repos["local_repo_path_str"]
+        os.chdir(local_path)
+        local_repo = pygit2.Repository(local_path)
+        make_commit(local_repo, "ahead.txt", "only local", "Local commit to push", branch_name="main")
+        local_repo.config["remote.origin.pushurl"] = str(tmp_path / "no_such_push_target.git")
+
+        result = runner.invoke(cli, ["sync"])
+
+        assert result.exit_code != 0
+        assert "Failed to push branch 'main' to 'origin'" in result.output
