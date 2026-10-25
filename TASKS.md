@@ -28,7 +28,9 @@ Make annotations safe (no working-tree changes, no git CLI), add D15 anchors, do
 PLAN.md D8, D11, D12, D15. Audit: `docs/AUDIT.md` "Suggested cleanup priorities" 4.
 
 ### ▶ Run state (the agent keeps this current on every stop)
-_Started 2026-10-25 on the cloud session's designated branch `ccr-fab01977-3fk6x6` (restarted from `main` after the queue 1 PR merged)._
+**Queue 2 complete (2026-10-25).** All 5 pieces done, none blocked; one commit per piece (`queue 2.1` … `queue 2.4`; piece 5 changed nothing, so it has no commit). Worked on the cloud session's designated branch `ccr-fab01977-3fk6x6` (restarted from `main` after the queue 1 PR merged).
+Checks at finish: `uv run pytest` = 379 passed, 1 skipped (the real-pandoc PDF test; no LaTeX engine here), same with `init.defaultBranch` = main / unset / trunk / master; interop tests ran with `GITWRITE_REQUIRE_INTEROP=1`; `uv run ruff check .` clean.
+Piece 5 findings (the conflicts list) are in the PR description. PR not opened yet: waiting for the user's go-ahead.
 
 ## Design — numbered pieces (status: `[ ]` not started · `[x]` done · `[!]` blocked)
 
@@ -36,7 +38,7 @@ _Started 2026-10-25 on the cloud session's designated branch `ccr-fab01977-3fk6x
 - [x] **2.** Add D15 anchors: when creating an annotation from file content, compute `prefix`, `suffix` (about 32 characters each, clipped at file edges) and `offset`. The reader accepts annotations with or without them. Add a `locate(annotation, text)` helper with the fallback chain prefix+text+suffix → text → line, and test all three tiers plus moved and duplicated passages.
 - [x] **3.** Write `docs/ANNOTATION_FORMAT.md` as the spec the plugin implements: branch name (default `feedback`, configurable), commit shape (empty tree change, YAML body), every YAML field including the D15 ones, how a status change references the original, and an example. Generate the example from a test so it can't drift.
 - [x] **4.** Build an interop harness in `interop/`: a small Node package with `isomorphic-git` pinned to a current version. Test A: a pytest test drives the CLI to init, save, explore, tag, and annotate, then runs a Node script that reads the log, branches, tags and feedback commits with isomorphic-git and asserts on them. Test B: a Node script inits, commits, branches and tags with isomorphic-git, then core reads the history and branches. Both run `git fsck --strict`. Skip with a clear message if `node` is missing locally; CI installs Node and must run them.
-- [ ] **5.** Investigate only: compare what `gitwrite init` writes (metadata files, `.gitignore`) with what a Veneer project folder contains (`~/Dropbox/node/veneer`, the project-type / project-data docs in `~/Dropbox/node/veneer-api/docs`). Report conflicts in the PR description and change nothing.
+- [x] **5.** Investigate only: compare what `gitwrite init` writes (metadata files, `.gitignore`) with what a Veneer project folder contains (`~/Dropbox/node/veneer`, the project-type / project-data docs in `~/Dropbox/node/veneer-api/docs`). Report conflicts in the PR description and change nothing.
 
 ## Out of scope (do NOT do)
 
