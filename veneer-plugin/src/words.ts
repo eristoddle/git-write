@@ -70,5 +70,5 @@ export function explainError(err: unknown, doing: string): string {
         return shorten(err.message, 200)
     }
   }
-  return `Couldn't ${doing}.`
+  return `Couldn’t ${doing}.`
 }

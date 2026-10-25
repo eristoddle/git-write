@@ -37,6 +37,18 @@
       {
         "id": "gitwrite:show-feedback",
         "title": "Show Feedback"
+      },
+      {
+        "id": "gitwrite:sync",
+        "title": "Sync with Remote"
+      },
+      {
+        "id": "gitwrite:connect-remote",
+        "title": "Connect to a Remote"
+      },
+      {
+        "id": "gitwrite:forget-token",
+        "title": "Forget Saved Sync Token"
       }
     ],
     "surfaces": [
@@ -138,6 +150,12 @@
             "verb": "reject"
           }
         ]
+      },
+      {
+        "id": "gitwrite:connect",
+        "title": "Connect to a Remote",
+        "icon": "cloud",
+        "side": "modal"
       }
     ],
     "settings": [
@@ -147,6 +165,14 @@
         "default": "feedback",
         "label": "Feedback branch",
         "description": "The branch that holds readers’ comments on your pages. GitWrite uses “feedback”.",
+        "scope": "both"
+      },
+      {
+        "id": "gitwrite:remote-username",
+        "type": "string",
+        "default": "",
+        "label": "Sync user name",
+        "description": "The user name sent with your access token when syncing. Leave empty for GitHub.",
         "scope": "both"
       }
     ]

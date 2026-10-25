@@ -92,7 +92,7 @@ describe('explainError', () => {
   })
 
   it('falls back to a generic sentence for anything else, never leaking an error object', () => {
-    expect(explainError(new Error('ENOENT /secret/path'), 'save that version')).toBe("Couldn't save that version.")
-    expect(explainError('boom', 'save that version')).toBe("Couldn't save that version.")
+    expect(explainError(new Error('ENOENT /secret/path'), 'save that version')).toBe('Couldn’t save that version.')
+    expect(explainError('boom', 'save that version')).toBe('Couldn’t save that version.')
   })
 })

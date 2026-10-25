@@ -4,6 +4,7 @@ import { registerCompare } from './compare'
 import { registerExplorations } from './explorations'
 import { registerHistory } from './history'
 import { registerSave } from './save'
+import { registerSync } from './sync'
 import { registerTags } from './tags'
 
 export interface Options {
@@ -21,6 +22,7 @@ export async function start(api: PluginApi, options: Options = {}): Promise<void
   registerTags(api, { afterTag: history.refresh, now: options.now })
   const explorations = registerExplorations(api, { beginSave: () => beginSave() })
   const feedback = registerFeedback(api)
+  registerSync(api, { afterSync: async () => { await Promise.all([history.refresh(), explorations.refresh(), feedback.reload()]) } })
   await Promise.all([history.refresh(), explorations.refresh(), feedback.reload()])
 }
 

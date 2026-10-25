@@ -32,7 +32,10 @@ describe('manifest', () => {
       'Show Explorations',
       'Start an Exploration',
       'Name a Version',
-      'Show Feedback'
+      'Show Feedback',
+      'Sync with Remote',
+      'Connect to a Remote',
+      'Forget Saved Sync Token'
     ])
     // Git's own words stay out of what the writer reads.
     const titles = [...commands.map((c) => c.title), ...surfaces.map((s) => s.title)].join(' ')
