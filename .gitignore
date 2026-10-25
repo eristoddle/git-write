@@ -27,3 +27,11 @@ backup_*/
 .idea/
 *.swp
 *.swo
+# Generated / local
+.coverage
+coverage.xml
+htmlcov/
+.qoder/
+.claude/settings.local.json
+gitwrite_cli/poetry.lock
+gitwrite_cli/.venv/
