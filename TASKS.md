@@ -47,7 +47,7 @@ Plugin id `gitwrite`; contributions are `gitwrite:<lowercase-hyphen>`; titles us
 ## Design — numbered pieces (status: `[ ]` not started · `[x]` done · `[!]` blocked)
 
 - [x] **1.** Scaffold `veneer-plugin/` from the Veneer handoff README and its example plugins: `manifest.json` (id `gitwrite`, `apiVersion` `^0.40.0`, `main` `main.js`, the contributions above), `package.json` (scripts `build` / `typecheck` / `test`; `@veneer/api` from `github:eristoddle/veneer-api#v0.40.0`), `.npmrc` with `allow-git=all`, `tsconfig.json`, `.gitignore` with `main.js`, `README.md`. Add a CI job for typecheck, test and build.
-- [ ] **2.** Save a Version: command opens the `gitwrite:save` form; submitting calls `api.history.save` (starting history first when the project has none), tells the writer in plain words what happened (including "nothing changed" and "no history for a loose file"), and refreshes the history list.
+- [x] **2.** Save a Version: command opens the `gitwrite:save` form; submitting calls `api.history.save` (starting history first when the project has none), tells the writer in plain words what happened (including "nothing changed" and "no history for a loose file"), and refreshes the history list.
 - [ ] **3.** History surface (newest first: message, author, time), read-only view of a version of the open page, and Restore (puts the old text on the open page with `api.editor.edit`, then saves it as a new version; history is never rewritten).
 - [ ] **4.** Compare: two versions, or a version and the open page, into a `diff` view; for version-vs-page, Accept/Reject per change via `onDiffAction` and `api.editor.edit` (one undo step each).
 
