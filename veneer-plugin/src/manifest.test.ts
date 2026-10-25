@@ -30,7 +30,8 @@ describe('manifest', () => {
       'Compare Two Versions',
       'Compare a Version with This Page',
       'Show Explorations',
-      'Start an Exploration'
+      'Start an Exploration',
+      'Name a Version'
     ])
     // Git's own words stay out of what the writer reads.
     const titles = [...commands.map((c) => c.title), ...surfaces.map((s) => s.title)].join(' ')

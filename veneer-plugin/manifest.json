@@ -29,6 +29,10 @@
       {
         "id": "gitwrite:start-exploration",
         "title": "Start an Exploration"
+      },
+      {
+        "id": "gitwrite:name-version",
+        "title": "Name a Version"
       }
     ],
     "surfaces": [
@@ -85,6 +89,12 @@
         "id": "gitwrite:start",
         "title": "Start an Exploration",
         "icon": "git-fork",
+        "side": "modal"
+      },
+      {
+        "id": "gitwrite:name",
+        "title": "Name a Version",
+        "icon": "tag",
         "side": "modal"
       }
     ],
