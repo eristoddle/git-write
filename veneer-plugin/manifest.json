@@ -1,0 +1,35 @@
+{
+  "id": "gitwrite",
+  "name": "GitWrite",
+  "version": "0.1.0",
+  "apiVersion": "^0.40.0",
+  "main": "main.js",
+  "contributes": {
+    "commands": [
+      { "id": "gitwrite:save-version", "title": "Save a Version" },
+      { "id": "gitwrite:show-history", "title": "Show Version History" },
+      { "id": "gitwrite:compare-versions", "title": "Compare Two Versions" },
+      { "id": "gitwrite:compare-with-page", "title": "Compare a Version with This Page" }
+    ],
+    "surfaces": [
+      {
+        "id": "gitwrite:history",
+        "title": "Versions",
+        "icon": "history",
+        "side": "right",
+        "rowActions": [
+          {
+            "id": "gitwrite:restore-version",
+            "title": "Restore as New Version",
+            "input": "confirm",
+            "appliesTo": ["file"],
+            "prompt": "Put “{name}” on this page as a new version?",
+            "verb": "restore"
+          }
+        ]
+      },
+      { "id": "gitwrite:compare", "title": "Compare", "icon": "git-compare", "side": "right", "width": "wide" },
+      { "id": "gitwrite:save", "title": "Save a Version", "icon": "save", "side": "modal" }
+    ]
+  }
+}

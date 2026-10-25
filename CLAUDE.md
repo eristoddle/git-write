@@ -11,7 +11,8 @@ before design work. The repo holds:
   export, exceptions, models).
 - `gitwrite_cli/`: the Click-based `gitwrite` command (`gitwrite_cli.main:cli`).
 - `tests/`: pytest suite.
-- `veneer-plugin/`: the Veneer plugin. It does not exist yet (queues 3 and 4 in `TASKS.md`).
+- `veneer-plugin/`: the Veneer plugin (TypeScript on `@veneer/api`; queues 3 and 4 in `TASKS.md`). `manifest.json` is authoritative; `src/*.ts` each has a `*.test.ts` on the API's fake host.
+- `interop/`: Node harness proving pygit2 and isomorphic-git read each other's repos.
 - `docs/`: `AUDIT.md` (what works and what was broken), `USER_GUIDE.md`, `VENEER_DIRECTION.md`,
   `ANNOTATION_FORMAT.md` (queue 2). The old API, SDK, web app, wiki and deployment files were
   deleted (D4, D11) and are in git history.
@@ -25,6 +26,9 @@ uv sync                          # install
 uv run pytest                    # tests
 uv run ruff check .              # lint (line length 100, rules: defaults + import sorting)
 uv run gitwrite --help           # run the CLI from source
+
+cd veneer-plugin && npm ci       # the plugin (Node 20+)
+npm run typecheck && npm test && npm run build
 ```
 
 ## Test rule
