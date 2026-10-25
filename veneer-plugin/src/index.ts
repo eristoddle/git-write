@@ -1,10 +1,26 @@
 import type { PluginApi } from '@veneer/api'
+import { registerHistory } from './history'
 import { registerSave } from './save'
 
+export interface Options {
+  /** The clock, so a test can pin "3 days ago". */
+  now?: () => Date
+}
+
+/** Wires every feature. Exported separately from `onload` so tests can pass a fixed clock. */
+export async function start(api: PluginApi, options: Options = {}): Promise<void> {
+  // The list needs the save form (its empty state offers it), the form needs the list (it refreshes it).
+  let beginSave: () => Promise<void> = async () => {}
+  const history = registerHistory(api, { beginSave: () => beginSave(), now: options.now })
+  beginSave = registerSave(api, history.refresh).begin
+  await history.refresh()
+}
+
 /**
- * GitWrite for Veneer. Each feature attaches its handlers here; nothing runs at load (the kernel
- * wakes the plugin on first use of a command or surface declared in manifest.json).
+ * GitWrite for Veneer. Each feature attaches its handlers by the ids in manifest.json. The kernel
+ * wakes the plugin on first use of a command or surface, so loading only hands over the first
+ * version list.
  */
-export function onload(api: PluginApi): void {
-  registerSave(api)
+export function onload(api: PluginApi): Promise<void> {
+  return start(api)
 }

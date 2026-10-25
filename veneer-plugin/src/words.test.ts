@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { veneerError } from '@veneer/api'
-import { explainError, LOOSE_FILE_SENTENCE, shorten, versionDetail, versionTitle, whenText } from './words'
+import { dateText, explainError, LOOSE_FILE_SENTENCE, shorten, versionDetail, versionTitle, whenText } from './words'
 
 const now = new Date('2026-10-25T12:00:00Z')
 const ago = (ms: number): string => new Date(now.getTime() - ms).toISOString()
@@ -30,6 +30,13 @@ describe('whenText', () => {
 
   it('says nothing for a date it cannot read', () => {
     expect(whenText('not a date', now)).toBe('')
+  })
+})
+
+describe('dateText', () => {
+  it('is a plain date that does not change as time passes', () => {
+    expect(dateText('2026-10-02T09:00:00Z', 'UTC')).toBe('2 Oct 2026')
+    expect(dateText('nope')).toBe('')
   })
 })
 

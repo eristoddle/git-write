@@ -35,11 +35,13 @@ describe('manifest', () => {
     expect(titles).not.toMatch(/commit|branch|checkout|revert/i)
   })
 
-  it('loads on the fake host without doing any work', async () => {
+  it('loads on the fake host, changes nothing, and lets go of everything when unloaded', async () => {
     const fake = createFakeHost(manifest, plugin)
     await fake.load()
-    expect(fake.views.size).toBe(0)
+    expect([...fake.views.keys()]).toEqual(['gitwrite:history'])
     expect(fake.edits).toEqual([])
+    expect(fake.notices).toEqual([])
+    expect(fake.history.commits).toEqual([])
     await fake.unload()
     expect(fake.liveDisposables()).toBe(0)
   })

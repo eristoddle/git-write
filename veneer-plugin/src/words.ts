@@ -33,6 +33,13 @@ export function whenText(iso: string, now: Date = new Date(), timeZone?: string)
   if (age < DAY) return plural(Math.floor(age / HOUR), 'hour') + ' ago'
   if (age < 2 * DAY) return 'yesterday'
   if (age < 7 * DAY) return plural(Math.floor(age / DAY), 'day') + ' ago'
+  return dateText(iso, timeZone)
+}
+
+/** A date that stays true when read later ("12 Oct 2026"), for text that is saved, not shown fresh. */
+export function dateText(iso: string, timeZone?: string): string {
+  const then = new Date(iso)
+  if (Number.isNaN(then.getTime())) return ''
   return then.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', timeZone })
 }
 

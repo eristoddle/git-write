@@ -32,11 +32,14 @@ export function saveForm(options: { note?: string; message?: string; error?: str
  * save in a project that has no history starts it. `afterSave` runs once a version exists (the
  * history list refreshes there).
  */
-export function registerSave(api: PluginApi, afterSave: () => Promise<void> = async () => {}): void {
+export function registerSave(api: PluginApi, afterSave: () => Promise<void> = async () => {}): {
+  begin(): Promise<void>
+} {
   let note: string | undefined
   let saving = false
 
-  api.commands.handle(SAVE_COMMAND, async () => {
+  /** Opens the form (or says why there is nothing to save versions of). */
+  const begin = async (): Promise<void> => {
     const { project } = api.workspace.current()
     if (project === null || project.kind !== 'project') {
       api.notify({ message: LOOSE_FILE_SENTENCE })
@@ -45,7 +48,9 @@ export function registerSave(api: PluginApi, afterSave: () => Promise<void> = as
     note = (await api.history.isRepository()) ? undefined : FIRST_VERSION_NOTE
     api.surfaces.setView(SAVE_SURFACE, saveForm({ note }))
     api.surfaces.show(SAVE_SURFACE)
-  })
+  }
+
+  api.commands.handle(SAVE_COMMAND, begin)
 
   // Keep what the writer has typed, and take the error away once they start fixing it.
   api.surfaces.onFormChange(SAVE_SURFACE, (_field, value) => {
@@ -76,4 +81,6 @@ export function registerSave(api: PluginApi, afterSave: () => Promise<void> = as
       saving = false
     }
   })
+
+  return { begin }
 }
