@@ -1,5 +1,6 @@
 import pytest
 import pygit2
+from tests.helpers import init_repo
 import os
 import shutil # shutil was for fixtures, now in conftest
 import re # Used by TestMergeCommandCLI
@@ -103,7 +104,7 @@ class TestMergeCommandCLI:
     def test_merge_empty_repo_cli(self, runner: CliRunner, tmp_path: Path): # runner from conftest, tmp_path from pytest
         empty_repo = tmp_path / "empty_for_merge_cli"
         empty_repo.mkdir()
-        pygit2.init_repository(str(empty_repo))
+        init_repo(empty_repo)
         os.chdir(empty_repo)
 
         result = runner.invoke(cli, ["merge", "anybranch"])
@@ -112,7 +113,7 @@ class TestMergeCommandCLI:
 
     def test_merge_bare_repo_cli(self, runner: CliRunner, tmp_path: Path): # runner from conftest, tmp_path from pytest
         bare_repo_path = tmp_path / "bare_for_merge_cli.git"
-        pygit2.init_repository(str(bare_repo_path), bare=True)
+        init_repo(bare_repo_path, bare=True)
         os.chdir(bare_repo_path) # CLI will discover CWD is a bare repo
 
         result = runner.invoke(cli, ["merge", "anybranch"])
@@ -122,7 +123,7 @@ class TestMergeCommandCLI:
     def test_merge_no_signature_cli(self, runner: CliRunner, tmp_path: Path, configure_git_user_for_cli): # runner from conftest, tmp_path from pytest, added configure_git_user_for_cli
         repo_path_no_sig = tmp_path / "no_sig_repo_for_cli_merge"
         repo_path_no_sig.mkdir()
-        repo = pygit2.init_repository(str(repo_path_no_sig))
+        repo = init_repo(repo_path_no_sig)
         # The configure_git_user_for_cli fixture will apply to this repo when os.chdir is called.
         # DO NOT configure user.name/user.email for this repo
 
@@ -289,7 +290,8 @@ class TestSyncCommandCLI:
         config_clone["user.name"] = "Remote Conflicter"
         config_clone["user.email"] = "remote_conflict@example.com"
         remote_main = clone_repo.branches.remote["origin/main"]
-        clone_repo.branches.local.create("main", remote_main.peel(pygit2.Commit))
+        if clone_repo.branches.local.get("main") is None:  # the clone checks out the remote HEAD, which is main
+            clone_repo.branches.local.create("main", remote_main.peel(pygit2.Commit))
         clone_repo.checkout("refs/heads/main")
         clone_repo.reset(c1_oid, pygit2.GIT_RESET_HARD)
         make_commit(clone_repo, conflict_filename, "Remote version of line", "Remote C2 on main", branch_name="main")
@@ -341,7 +343,7 @@ class TestSyncCommandCLI:
     def test_sync_empty_repo_cli(self, runner: CliRunner, tmp_path: Path): # runner from conftest, tmp_path from pytest
         empty_repo_path = tmp_path / "empty_for_sync"
         empty_repo_path.mkdir()
-        pygit2.init_repository(str(empty_repo_path))
+        init_repo(empty_repo_path)
         os.chdir(empty_repo_path)
         result = runner.invoke(cli, ["sync"])
         assert result.exit_code == 1

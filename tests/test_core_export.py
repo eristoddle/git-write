@@ -1,5 +1,6 @@
 import pytest
 import pygit2
+from tests.helpers import init_repo
 import pypandoc
 import os
 import shutil
@@ -23,7 +24,7 @@ def init_test_repo_corrected(tmp_path: pathlib.Path, add_files: dict = None, com
             return repo
     except pygit2.GitError:
         tmp_path.mkdir(parents=True, exist_ok=True)
-        pygit2.init_repository(str(tmp_path), bare=False)
+        init_repo(tmp_path, bare=False)
         repo = pygit2.Repository(str(tmp_path))
 
     if add_files:
@@ -102,7 +103,7 @@ def test_export_to_epub_not_a_git_repo(temp_git_repo_path, mock_pypandoc_path_fo
         export_to_epub(str(temp_git_repo_path), "HEAD", ["f.md"], str(temp_git_repo_path / "o.epub"))
 
 def test_export_to_epub_empty_repository(temp_git_repo_path, mock_pypandoc_path_found):
-    pygit2.init_repository(str(temp_git_repo_path), bare=False)
+    init_repo(temp_git_repo_path, bare=False)
     output_epub = temp_git_repo_path / "output.epub"
     with pytest.raises(GitWriteError, match="Repository at .* is empty and has no commits to export from."):
         export_to_epub(str(temp_git_repo_path), "HEAD", ["file.md"], str(output_epub))

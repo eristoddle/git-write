@@ -5,6 +5,7 @@ site_packages_path = "/home/jules/.pyenv/versions/3.12.11/lib/python3.12/site-pa
 if site_packages_path not in sys.path:
     sys.path.insert(0, site_packages_path)
 import pygit2
+from tests.helpers import init_repo
 import os
 import shutil
 from pathlib import Path
@@ -86,7 +87,7 @@ def cli_test_repo(tmp_path: Path):
     """Creates a standard initialized repo for CLI tests, returning its path."""
     repo_path = tmp_path / "cli_git_repo_explore_switch" # Unique name
     repo_path.mkdir()
-    repo = pygit2.init_repository(str(repo_path), bare=False)
+    repo = init_repo(repo_path, bare=False)
     # Initial commit
     file_path = repo_path / "initial.txt"
     file_path.write_text("initial content for explore/switch tests")
@@ -101,11 +102,11 @@ def cli_test_repo(tmp_path: Path):
 def cli_repo_with_remote(tmp_path: Path, runner: CliRunner): # Added runner fixture for potential CLI use
     local_repo_path = tmp_path / "cli_local_for_remote_switch"
     local_repo_path.mkdir()
-    local_repo = pygit2.init_repository(str(local_repo_path))
+    local_repo = init_repo(local_repo_path)
     make_commit(local_repo, "main_file.txt", "content on main", "Initial commit on main")
 
     bare_remote_path = tmp_path / "cli_remote_server_switch.git"
-    pygit2.init_repository(str(bare_remote_path), bare=True)
+    init_repo(bare_remote_path, bare=True)
 
     origin_remote = local_repo.remotes.create("origin", str(bare_remote_path))
     main_branch_name = local_repo.head.shorthand
@@ -137,7 +138,7 @@ def local_repo(local_repo_path: Path): # Adapted from test_main.py
     if local_repo_path.exists():
         shutil.rmtree(local_repo_path)
     local_repo_path.mkdir()
-    repo = pygit2.init_repository(str(local_repo_path), bare=False)
+    repo = init_repo(local_repo_path, bare=False)
     # Use the make_commit from conftest.py
     make_commit(repo, "initial.txt", "Initial content", "Initial version") # Changed message
     config = repo.config
@@ -182,7 +183,7 @@ def bare_remote_repo_obj(tmp_path: Path) -> pygit2.Repository:
     if bare_repo_path.exists():
         shutil.rmtree(bare_repo_path)
     # Initialize a bare repository
-    repo = pygit2.init_repository(str(bare_repo_path), bare=True)
+    repo = init_repo(bare_repo_path, bare=True)
     return repo
 
 # Helper functions for save/revert tests (from test_cli_save_revert.py)
@@ -354,7 +355,7 @@ def configure_git_user_for_cli(tmp_path: Path): # tmp_path is a built-in pytest 
 def cli_repo_for_merge(tmp_path: Path, configure_git_user_for_cli) -> Path:
     repo_path = tmp_path / "cli_merge_normal_repo"
     repo_path.mkdir()
-    pygit2.init_repository(str(repo_path))
+    init_repo(repo_path)
     configure_git_user_for_cli(str(repo_path)) # Call the config fixture
     repo = pygit2.Repository(str(repo_path))
     # Use the conftest make_commit
@@ -370,7 +371,7 @@ def cli_repo_for_merge(tmp_path: Path, configure_git_user_for_cli) -> Path:
 def cli_repo_for_ff_merge(tmp_path: Path, configure_git_user_for_cli) -> Path:
     repo_path = tmp_path / "cli_repo_for_ff_merge"
     repo_path.mkdir()
-    pygit2.init_repository(str(repo_path))
+    init_repo(repo_path)
     configure_git_user_for_cli(str(repo_path))
     repo = pygit2.Repository(str(repo_path))
     make_commit(repo, "main_base.txt", "base for ff", "C0: Base on main", branch_name="main")
@@ -384,7 +385,7 @@ def cli_repo_for_ff_merge(tmp_path: Path, configure_git_user_for_cli) -> Path:
 def cli_repo_for_conflict_merge(tmp_path: Path, configure_git_user_for_cli) -> Path:
     repo_path = tmp_path / "cli_repo_for_conflict_merge"
     repo_path.mkdir()
-    pygit2.init_repository(str(repo_path))
+    init_repo(repo_path)
     configure_git_user_for_cli(str(repo_path))
     repo = pygit2.Repository(str(repo_path))
     conflict_file = "conflict.txt"
@@ -415,7 +416,7 @@ def synctest_repos(tmp_path: Path, local_repo: pygit2.Repository, bare_remote_re
     local_repo_path_for_sync.mkdir()
 
     # Initialize a new local repo for sync test to avoid interference with the generic local_repo
-    cloned_local_repo = pygit2.init_repository(str(local_repo_path_for_sync), bare=False)
+    cloned_local_repo = init_repo(local_repo_path_for_sync, bare=False)
     config_local = cloned_local_repo.config
     config_local["user.name"] = "Local Sync User"
     config_local["user.email"] = "localsync@example.com"
@@ -574,7 +575,7 @@ def make_initial_commit(repo_path_str: str, filename: str = "initial.txt", conte
 def test_repo(tmp_path: Path) -> Path:
     repo_path = tmp_path / "test_git_repo_core" # Renamed to avoid conflict if used elsewhere
     repo_path.mkdir(exist_ok=True) # exist_ok for safety
-    pygit2.init_repository(str(repo_path), bare=False)
+    init_repo(repo_path, bare=False)
     make_initial_commit(str(repo_path))
     return repo_path
 
@@ -582,13 +583,13 @@ def test_repo(tmp_path: Path) -> Path:
 def empty_test_repo(tmp_path: Path) -> Path:
     repo_path = tmp_path / "empty_git_repo_core" # Renamed
     repo_path.mkdir(exist_ok=True)
-    pygit2.init_repository(str(repo_path), bare=False)
+    init_repo(repo_path, bare=False)
     return repo_path
 
 @pytest.fixture
 def bare_test_repo(tmp_path: Path) -> Path: # This returns Path, distinct from bare_remote_repo_obj
     repo_path = tmp_path / "bare_git_repo_core.git" # Renamed
-    pygit2.init_repository(str(repo_path), bare=True)
+    init_repo(repo_path, bare=True)
     return repo_path
 
 @pytest.fixture
@@ -604,7 +605,7 @@ def configure_git_user() -> Callable[[pygit2.Repository], None]: # Type hint for
 def repo_with_remote_branches(tmp_path: Path, configure_git_user: Callable[[pygit2.Repository], None]) -> Path: # Added configure_git_user
     local_repo_path = tmp_path / "local_for_remote_branch_tests_core" # Renamed
     local_repo_path.mkdir(exist_ok=True)
-    local_repo = pygit2.init_repository(str(local_repo_path))
+    local_repo = init_repo(local_repo_path)
     configure_git_user(local_repo) # Configure user for commits made by make_initial_commit if it uses default_signature
     # make_initial_commit now defaults to 'main' or respects pygit2's default.
     # The commits inside this fixture should ideally use make_commit_on_path for consistency
@@ -613,7 +614,7 @@ def repo_with_remote_branches(tmp_path: Path, configure_git_user: Callable[[pygi
 
 
     bare_remote_path = tmp_path / "remote_server_for_branch_tests_core.git" # Renamed
-    pygit2.init_repository(str(bare_remote_path), bare=True)
+    init_repo(bare_remote_path, bare=True)
 
     if "origin" not in local_repo.remotes:
         origin_remote = local_repo.remotes.create("origin", str(bare_remote_path))
@@ -654,7 +655,7 @@ def repo_with_remote_branches(tmp_path: Path, configure_git_user: Callable[[pygi
 def repo_for_merge(tmp_path: Path, configure_git_user: Callable[[pygit2.Repository], None]) -> Path:
     repo_path = tmp_path / "repo_for_merge_normal_core" # Renamed
     repo_path.mkdir(exist_ok=True)
-    repo = pygit2.init_repository(str(repo_path))
+    repo = init_repo(repo_path)
     configure_git_user(repo)
     make_commit_on_path(str(repo_path), filename="common.txt", content="line0", msg="C0: Initial on main", branch_name="main")
     c0_oid = repo.head.target
@@ -698,7 +699,7 @@ def create_test_signature(repo: pygit2.Repository) -> pygit2.Signature:
 def repo_for_ff_merge(tmp_path: Path, configure_git_user: Callable[[pygit2.Repository], None]) -> Path:
     repo_path = tmp_path / "repo_for_ff_merge_core" # Renamed
     repo_path.mkdir(exist_ok=True)
-    repo = pygit2.init_repository(str(repo_path))
+    repo = init_repo(repo_path)
     configure_git_user(repo)
     make_commit_on_path(str(repo_path), filename="main_base.txt", content="base for ff", msg="C0: Base on main", branch_name="main")
     c0_oid = repo.head.target
@@ -715,7 +716,7 @@ def repo_for_ff_merge(tmp_path: Path, configure_git_user: Callable[[pygit2.Repos
 def repo_for_conflict_merge(tmp_path: Path, configure_git_user: Callable[[pygit2.Repository], None]) -> Path:
     repo_path = tmp_path / "repo_for_conflict_merge_core" # Renamed
     repo_path.mkdir(exist_ok=True)
-    repo = pygit2.init_repository(str(repo_path))
+    repo = init_repo(repo_path)
     configure_git_user(repo)
     conflict_file = "conflict.txt"
     make_commit_on_path(str(repo_path), filename=conflict_file, content="Line1\nCommon Line\nLine3", msg="C0: Common ancestor", branch_name="main")

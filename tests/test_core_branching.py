@@ -1,5 +1,6 @@
 import pytest # For pytest.raises
-import pygit2 # Used directly in tests
+import pygit2
+from tests.helpers import init_repo # Used directly in tests
 import os # Used by some test setups if not handled by fixtures
 import shutil # Used by some test setups
 from pathlib import Path # Used by some test setups
@@ -425,7 +426,7 @@ class TestMergeBranch:
         # Clean up existing repo at path and reinitialize without signature
         if (repo_no_sig_path / ".git").exists(): # Ensure .git exists before trying to remove
             shutil.rmtree(repo_no_sig_path / ".git") # shutil import is kept
-        repo = pygit2.init_repository(str(repo_no_sig_path))
+        repo = init_repo(repo_no_sig_path)
 
         # Explicitly delete local config for user.name and user.email
         config = repo.config

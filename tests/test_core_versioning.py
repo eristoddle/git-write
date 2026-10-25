@@ -1,6 +1,7 @@
 import unittest
 import unittest.mock as mock
 import pygit2
+from tests.helpers import init_repo
 import shutil
 import tempfile
 from pathlib import Path
@@ -25,7 +26,7 @@ class GitWriteCoreTestCaseBase(unittest.TestCase):
     def setUp(self):
         self.repo_path_obj = Path(tempfile.mkdtemp())
         self.repo_path_str = str(self.repo_path_obj)
-        pygit2.init_repository(self.repo_path_str, bare=False)
+        init_repo(self.repo_path_str, bare=False)
         self.repo = pygit2.Repository(self.repo_path_str)
 
         try:

@@ -1,5 +1,6 @@
 import pytest # Still needed for @pytest.fixture if any local fixtures remain (none expected for now) and for tmp_path
-import pygit2 # Used directly in some tests
+import pygit2
+from tests.helpers import init_repo # Used directly in some tests
 import os # Used directly in some tests
 # shutil was for fixtures, now in conftest
 from pathlib import Path # Used directly in some tests
@@ -113,7 +114,7 @@ class TestGitWriteInit:
         gitignore_path = test_dir / ".gitignore"
         user_entry = "# User specific ignore\n*.mydata\n"
         gitignore_path.write_text(user_entry)
-        pygit2.init_repository(str(test_dir)) # pygit2 import is still needed
+        init_repo(test_dir) # pygit2 import is still needed
         repo = pygit2.Repository(str(test_dir))
         make_commit(repo, ".gitignore", user_entry, "Add initial .gitignore with user entry") # make_commit from conftest
         result = runner.invoke(cli, ["init"])

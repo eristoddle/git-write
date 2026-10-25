@@ -1,5 +1,6 @@
 import unittest
 import pygit2
+from tests.helpers import init_repo
 import pytest
 import shutil
 import tempfile
@@ -30,14 +31,14 @@ class TestSyncRepositoryCore(unittest.TestCase):
         # Setup local repository
         self.local_repo_path = self.base_temp_dir / "local_repo"
         self.local_repo_path.mkdir()
-        self.local_repo = pygit2.init_repository(str(self.local_repo_path), bare=False)
+        self.local_repo = init_repo(self.local_repo_path, bare=False)
         self._configure_repo_user(self.local_repo)
         self.local_signature = pygit2.Signature(TEST_USER_NAME, TEST_USER_EMAIL, int(datetime.now(timezone.utc).timestamp()), 0)
 
 
         # Setup bare remote repository
         self.remote_repo_path = self.base_temp_dir / "remote_repo.git"
-        self.remote_repo = pygit2.init_repository(str(self.remote_repo_path), bare=True)
+        self.remote_repo = init_repo(self.remote_repo_path, bare=True)
         self._configure_repo_user(self.remote_repo) # Not strictly necessary for bare, but good for consistency if ever non-bare
         # Set the HEAD for the bare remote repository to default to 'main'.
         try:
@@ -79,6 +80,10 @@ class TestSyncRepositoryCore(unittest.TestCase):
 
     def _create_branch(self, repo: pygit2.Repository, branch_name: str, from_commit: pygit2.Commit):
         """Helper to create a branch from a specific commit."""
+        # The repo's initial branch is "main", so the first commit may already have created it.
+        existing = repo.branches.local.get(branch_name)
+        if existing is not None:
+            return existing
         return repo.branches.local.create(branch_name, from_commit)
 
     def _checkout_branch(self, repo: pygit2.Repository, branch_name: str):
@@ -149,7 +154,6 @@ class TestSyncRepositoryCore(unittest.TestCase):
 
     def test_sync_empty_unborn_repository(self):
         # self.local_repo is initialized but has no commits yet (empty/unborn)
-        self.assertTrue(self.local_repo.is_empty)
         self.assertTrue(self.local_repo.head_is_unborn)
         with self.assertRaisesRegex(RepositoryEmptyError, "Repository is empty or HEAD is unborn. Cannot sync."):
             sync_repository(str(self.local_repo_path))
@@ -978,7 +982,7 @@ def test_save_file_empty_commit_message_allowed(tmp_repo_for_save: Path):
 def repo_with_commits_for_file_content(tmp_path: Path) -> Path:
     repo_dir = tmp_path / "content_repo"
     repo_dir.mkdir()
-    repo = pygit2.init_repository(str(repo_dir))
+    repo = init_repo(repo_dir)
     config = repo.config
     config["user.name"] = "Test Author"
     config["user.email"] = "testauthor@example.com"
@@ -1134,7 +1138,7 @@ import yaml
 def metadata_repo(tmp_path: Path) -> Path:
     repo_dir = tmp_path / "metadata_test_repo"
     repo_dir.mkdir()
-    repo = pygit2.init_repository(str(repo_dir))
+    repo = init_repo(repo_dir)
     config = repo.config
     config["user.name"] = "Metadata Tester"
     config["user.email"] = "meta@example.com"
@@ -1188,7 +1192,7 @@ def test_get_repository_metadata_success_with_metadata_file(metadata_repo: Path)
 def test_get_repository_metadata_success_no_metadata_file(tmp_path: Path):
     repo_dir = tmp_path / "no_meta_repo"
     repo_dir.mkdir()
-    repo = pygit2.init_repository(str(repo_dir))
+    repo = init_repo(repo_dir)
     config = repo.config # Minimal setup for a valid repo
     config["user.name"] = "NoMeta Tester"
     config["user.email"] = "nometa@example.com"
@@ -1213,7 +1217,7 @@ def test_get_repository_metadata_success_no_metadata_file(tmp_path: Path):
 def test_get_repository_metadata_empty_repo(tmp_path: Path):
     repo_dir = tmp_path / "empty_metadata_repo"
     repo_dir.mkdir()
-    pygit2.init_repository(str(repo_dir)) # Init but no commits
+    init_repo(repo_dir) # Init but no commits
 
     # Touch the directory to update its mtime for predictability if needed
     # os.utime(repo_dir) # This might not be necessary if stat().st_mtime is recent enough

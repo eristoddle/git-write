@@ -1,5 +1,6 @@
 import pytest
-import pygit2 # Still used by tests directly
+import pygit2
+from tests.helpers import init_repo # Still used by tests directly
 import os # Still used by tests directly
 import re # For TestHistoryCommandCLI
 from pathlib import Path # Still used by tests directly
@@ -20,7 +21,7 @@ class TestCompareCommandCLI:
         """Test `gitwrite compare` in an empty initialized repo."""
         empty_repo_path = tmp_path / "empty_compare_repo"
         empty_repo_path.mkdir()
-        pygit2.init_repository(str(empty_repo_path))
+        init_repo(empty_repo_path)
 
         os.chdir(empty_repo_path)
         result = runner.invoke(cli, ["compare"]) # runner from conftest
@@ -178,7 +179,7 @@ class TestHistoryCommandCLI:
         """Test `gitwrite history` in an empty initialized repo."""
         empty_repo_path = tmp_path / "empty_history_repo"
         empty_repo_path.mkdir()
-        pygit2.init_repository(str(empty_repo_path))
+        init_repo(empty_repo_path)
         os.chdir(empty_repo_path)
         result = runner.invoke(cli, ["history"]) # runner from conftest
         assert result.exit_code == 0, f"CLI Error: {result.output}"
@@ -187,7 +188,7 @@ class TestHistoryCommandCLI:
     def test_history_bare_repo_cli(self, runner: CliRunner, tmp_path: Path): # runner from conftest, tmp_path from pytest
         """Test `gitwrite history` in a bare repo."""
         bare_repo_path = tmp_path / "bare_history_repo.git"
-        pygit2.init_repository(str(bare_repo_path), bare=True)
+        init_repo(bare_repo_path, bare=True)
         os.chdir(bare_repo_path)
         result = runner.invoke(cli, ["history"]) # runner from conftest
         assert result.exit_code == 0, f"CLI Error: {result.output}"
