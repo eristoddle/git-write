@@ -62,6 +62,20 @@ export function registerHistory(api: PluginApi, options: HistoryOptions): Histor
   let versions: HistoryCommit[] = []
   let question: Picking | null = null
 
+  /** The names the writer gave versions (tags), by version. A failure to read them never hides the list. */
+  async function namesByVersion(): Promise<Map<string, string[]>> {
+    const byVersion = new Map<string, string[]>()
+    try {
+      for (const tag of await api.history.tags()) byVersion.set(tag.commit, [...(byVersion.get(tag.commit) ?? []), tag.name])
+    } catch {
+      /* the list is useful without the names */
+    }
+    return byVersion
+  }
+
+  const withNames = (detail: string, names: string[] | undefined): string =>
+    names === undefined ? detail : `${detail} · named ${names.map((n) => `“${n}”`).join(', ')}`
+
   /** What the writer is asked to do, else a warning that the list stops at the latest versions. */
   const shownNote = (): string | undefined =>
     question?.note ?? (versions.length >= LOG_PAGE ? `Showing the latest ${LOG_PAGE} versions.` : undefined)
@@ -83,13 +97,14 @@ export function registerHistory(api: PluginApi, options: HistoryOptions): Histor
       return empty(explainError(err, 'read the version history'))
     }
     if (versions.length === 0) return empty(NO_VERSIONS, true)
+    const named = await namesByVersion()
     return {
       kind: 'list',
       ...(shownNote() === undefined ? {} : { note: shownNote() }),
       items: versions.map((commit) => ({
         id: commit.id,
         label: versionTitle(commit),
-        detail: versionDetail(commit, now()),
+        detail: withNames(versionDetail(commit, now()), named.get(commit.id)),
         kind: 'file' as const
       })),
       empty: { text: NO_VERSIONS, action: { id: SAVE_ACTION, label: 'Save a Version' } }

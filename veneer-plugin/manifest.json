@@ -6,10 +6,50 @@
   "main": "main.js",
   "contributes": {
     "commands": [
-      { "id": "gitwrite:save-version", "title": "Save a Version" },
-      { "id": "gitwrite:show-history", "title": "Show Version History" },
-      { "id": "gitwrite:compare-versions", "title": "Compare Two Versions" },
-      { "id": "gitwrite:compare-with-page", "title": "Compare a Version with This Page" }
+      {
+        "id": "gitwrite:save-version",
+        "title": "Save a Version"
+      },
+      {
+        "id": "gitwrite:show-history",
+        "title": "Show Version History"
+      },
+      {
+        "id": "gitwrite:compare-versions",
+        "title": "Compare Two Versions"
+      },
+      {
+        "id": "gitwrite:compare-with-page",
+        "title": "Compare a Version with This Page"
+      },
+      {
+        "id": "gitwrite:show-explorations",
+        "title": "Show Explorations"
+      },
+      {
+        "id": "gitwrite:start-exploration",
+        "title": "Start an Exploration"
+      },
+      {
+        "id": "gitwrite:name-version",
+        "title": "Name a Version"
+      },
+      {
+        "id": "gitwrite:show-feedback",
+        "title": "Show Feedback"
+      },
+      {
+        "id": "gitwrite:sync",
+        "title": "Sync with Remote"
+      },
+      {
+        "id": "gitwrite:connect-remote",
+        "title": "Connect to a Remote"
+      },
+      {
+        "id": "gitwrite:forget-token",
+        "title": "Forget Saved Sync Token"
+      }
     ],
     "surfaces": [
       {
@@ -22,14 +62,119 @@
             "id": "gitwrite:restore-version",
             "title": "Restore as New Version",
             "input": "confirm",
-            "appliesTo": ["file"],
+            "appliesTo": [
+              "file"
+            ],
             "prompt": "Put “{name}” on this page as a new version?",
             "verb": "restore"
           }
         ]
       },
-      { "id": "gitwrite:compare", "title": "Compare", "icon": "git-compare", "side": "right", "width": "wide" },
-      { "id": "gitwrite:save", "title": "Save a Version", "icon": "save", "side": "modal" }
+      {
+        "id": "gitwrite:compare",
+        "title": "Compare",
+        "icon": "git-compare",
+        "side": "right",
+        "width": "wide"
+      },
+      {
+        "id": "gitwrite:save",
+        "title": "Save a Version",
+        "icon": "save",
+        "side": "modal"
+      },
+      {
+        "id": "gitwrite:explorations",
+        "title": "Explorations",
+        "icon": "git-branch",
+        "side": "right",
+        "rowActions": [
+          {
+            "id": "gitwrite:switch-exploration",
+            "title": "Switch to This Exploration",
+            "input": "confirm",
+            "appliesTo": [
+              "file"
+            ],
+            "prompt": "Switch to “{name}”? Your page is saved first, then the project’s files change to match it.",
+            "verb": "switch"
+          },
+          {
+            "id": "gitwrite:merge-exploration",
+            "title": "Bring Into This Exploration",
+            "input": "confirm",
+            "appliesTo": [
+              "file"
+            ],
+            "prompt": "Bring “{name}” into the exploration you are on? Your page is saved first. If both changed the same part, nothing is changed.",
+            "verb": "bring in"
+          }
+        ]
+      },
+      {
+        "id": "gitwrite:start",
+        "title": "Start an Exploration",
+        "icon": "git-fork",
+        "side": "modal"
+      },
+      {
+        "id": "gitwrite:name",
+        "title": "Name a Version",
+        "icon": "tag",
+        "side": "modal"
+      },
+      {
+        "id": "gitwrite:feedback",
+        "title": "Feedback",
+        "icon": "message-square",
+        "side": "right",
+        "rowActions": [
+          {
+            "id": "gitwrite:accept-feedback",
+            "title": "Accept",
+            "input": "confirm",
+            "appliesTo": [
+              "file"
+            ],
+            "prompt": "Mark this comment as accepted?",
+            "verb": "accept"
+          },
+          {
+            "id": "gitwrite:reject-feedback",
+            "title": "Reject",
+            "input": "confirm",
+            "appliesTo": [
+              "file"
+            ],
+            "prompt": "Mark this comment as rejected?",
+            "verb": "reject"
+          }
+        ]
+      },
+      {
+        "id": "gitwrite:connect",
+        "title": "Connect to a Remote",
+        "icon": "cloud",
+        "side": "modal"
+      }
+    ],
+    "settings": [
+      {
+        "id": "gitwrite:feedback-branch",
+        "type": "string",
+        "default": "feedback",
+        "label": "Feedback branch",
+        "description": "The branch that holds readers’ comments on your pages. GitWrite uses “feedback”.",
+        "scope": "both"
+      },
+      {
+        "id": "gitwrite:remote-username",
+        "type": "string",
+        "default": "",
+        "label": "Sync user name",
+        "description": "The user name sent with your access token when syncing. Leave empty for GitHub.",
+        "scope": "both"
+      }
     ]
   }
 }

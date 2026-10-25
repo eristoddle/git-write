@@ -13,7 +13,7 @@ export function parseAnnotationMessage(message) {
   if (parts.length < 3 || parts[1].trim() !== '') return null;
   let data;
   try {
-    data = YAML.parse(parts.slice(2).join('\n'));
+    data = YAML.parse(parts.slice(2).join('\n'), { version: '1.1' });
   } catch {
     return null;
   }

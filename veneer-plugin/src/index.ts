@@ -1,7 +1,11 @@
 import type { PluginApi } from '@veneer/api'
+import { registerFeedback } from './annotations'
 import { registerCompare } from './compare'
+import { registerExplorations } from './explorations'
 import { registerHistory } from './history'
 import { registerSave } from './save'
+import { registerSync } from './sync'
+import { registerTags } from './tags'
 
 export interface Options {
   /** The clock, so a test can pin "3 days ago". */
@@ -15,7 +19,11 @@ export async function start(api: PluginApi, options: Options = {}): Promise<void
   const history = registerHistory(api, { beginSave: () => beginSave(), now: options.now })
   beginSave = registerSave(api, history.refresh).begin
   registerCompare(api, history)
-  await history.refresh()
+  registerTags(api, { afterTag: history.refresh, now: options.now })
+  const explorations = registerExplorations(api, { beginSave: () => beginSave() })
+  const feedback = registerFeedback(api)
+  registerSync(api, { afterSync: async () => { await Promise.all([history.refresh(), explorations.refresh(), feedback.reload()]) } })
+  await Promise.all([history.refresh(), explorations.refresh(), feedback.reload()])
 }
 
 /**

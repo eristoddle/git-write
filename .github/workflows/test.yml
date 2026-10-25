@@ -29,12 +29,15 @@ jobs:
         with:
           node-version: "22"
           cache: npm
-          cache-dependency-path: interop/package-lock.json
+          cache-dependency-path: |
+            interop/package-lock.json
+            veneer-plugin/package-lock.json
 
       - name: Install dependencies
         run: |
           uv sync
           npm ci --prefix interop
+          npm ci --prefix veneer-plugin
 
       - name: Install Pandoc
         run: sudo apt-get update && sudo apt-get install -y pandoc

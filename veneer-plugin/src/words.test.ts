@@ -75,6 +75,15 @@ describe('explainError', () => {
     expect(sentence).toBe('This project has no version history yet. Save a version to start one.')
   })
 
+  it('turns git\'s own wording about unsaved changes and taken names into the writer\'s', () => {
+    expect(explainError(veneerError('history/uncommitted', 'Save a point before switching: a.md has changes.'), 'x')).toBe(
+      'Your project has changes that are not in a version yet. Use “Save a Version”, then try again.'
+    )
+    expect(explainError(veneerError('history/exists', 'A branch with that name already exists.'), 'x')).toBe(
+      'That name is already in use. Choose another.'
+    )
+  })
+
   it('passes on the host\'s own plain sentence for other failures, kept to one short line', () => {
     expect(explainError(veneerError('history/not-found', "That file isn't in that save point."), 'x')).toBe(
       "That file isn't in that save point."
@@ -83,7 +92,7 @@ describe('explainError', () => {
   })
 
   it('falls back to a generic sentence for anything else, never leaking an error object', () => {
-    expect(explainError(new Error('ENOENT /secret/path'), 'save that version')).toBe("Couldn't save that version.")
-    expect(explainError('boom', 'save that version')).toBe("Couldn't save that version.")
+    expect(explainError(new Error('ENOENT /secret/path'), 'save that version')).toBe('Couldn’t save that version.')
+    expect(explainError('boom', 'save that version')).toBe('Couldn’t save that version.')
   })
 })
