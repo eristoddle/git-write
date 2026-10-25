@@ -28,7 +28,10 @@ A `veneer-plugin/` that lets a writer save a version, browse and restore version
 PLAN.md D7, D8, D9, D12. Plugin layout per the Veneer handoff README and its example plugins (`book_forge`'s copy is on Stephan's machine, not in the cloud session).
 
 ### ▶ Run state (the agent keeps this current on every stop)
-_Started 2026-10-25 on the designated branch `ccr-fab01977-3fk6x6` (restarted from `main` after the queue 2 PR merged)._
+**Queue 3 complete (2026-10-25).** All 4 pieces done, none blocked; one commit per piece (`queue 3.1` … `queue 3.4`). Worked on the designated branch `ccr-fab01977-3fk6x6` (restarted from `main` after the queue 2 PR merged).
+Checks at finish: in `veneer-plugin/`, `npm run typecheck`, `npm test` (74 tests on the fake host, also run under three time zones) and `npm run build` pass, and pass from a clean checkout with `npm ci` on Node 22 / npm 10.9 (what CI uses). Python: 379 passed, 1 skipped; `ruff` clean.
+**Not verified in the running Veneer app** (only on the API's fake host): how the modal save form, the wide Compare panel, the icons (`history`, `git-compare`, `save`) and the confirm-on-row Restore actually look and behave. The API's own docs describe them; nobody has loaded this plugin into Veneer yet.
+PR not opened yet: waiting for the user's go-ahead.
 
 ## Contribution IDs (decided at promotion, 2026-10-25; Stephan approved these names)
 
