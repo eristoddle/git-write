@@ -28,23 +28,25 @@ Cut the repo down to what the plan keeps (core + CLI), move it to Python 3.12 + 
 PLAN.md D4, D6, D10, D11, D12. Audit: `docs/AUDIT.md` sections "Suggested cleanup priorities" 2, 3, 5, 6, 7, and "Security / remote-API readiness".
 
 ### ▶ Run state (the agent keeps this current on every stop)
-_Not started._
+**Queue 1 complete (2026-10-25).** All 8 pieces done, none blocked. One commit per piece (`queue 1.1` … `queue 1.8`, plus `1.4a`/`1.5a-d` splits).
+Worked on the cloud session's designated branch `ccr-fab01977-3fk6x6` instead of `queue/1-cleanup`; no PR opened (not requested). Nothing remains.
+Checks at finish: `uv run pytest` = 319 passed, 2 skipped (pandoc-gated PDF test and the console-script test needs the installed package), identical with `init.defaultBranch` = main / unset / trunk / master; `uv run ruff check .` clean.
 
 ## Design — numbered pieces (status: `[ ]` not started · `[x]` done · `[!]` blocked)
 
-- [ ] **1. Hygiene.**
+- [x] **1. Hygiene.**
   - Delete the untracked `gitwrite_cli/.venv`.
   - Untrack and delete `repomix-output.xml`, coverage files (`.coverage`, `coverage.xml`, `htmlcov/` if tracked), `gitwrite_cli/poetry.lock`, `.qoder/`, and `logs/`.
   - Untrack `.claude/settings.local.json` but keep the file locally.
   - Add all of these to `.gitignore`. Don't touch `.claude/agents/`.
-- [ ] **2. Delete what Veneer replaces (D4, D11).**
+- [x] **2. Delete what Veneer replaces (D4, D11).**
   - Directories: `gitwrite-web/`, `gitwrite_sdk/`, `gitwrite_api/`, `wiki/`, `integration_tests/` (it targets the API).
   - API tests: `tests/test_api_*.py` and any other test that imports `gitwrite_api`.
   - Root files: `writegit-project-doc.md`, `nginx.conf`, `docker-compose.yml`, `Dockerfile`, `deploy.sh`, `DEPLOYMENT.md`.
   - Docs: `docs/DEPLOYMENT_GUIDE.md`, `docs/API_REFERENCE.md`.
   - Remove `gitwrite_core`'s import of `gitwrite_api.models` (audit, cleanup priority 2) and move whatever it used into core.
   - Update `.github/workflows/test.yml` to drop the SDK/Node job.
-- [ ] **3. Toolchain (D6).** _(depends on #2)_
+- [x] **3. Toolchain (D6).** _(depends on #2)_
   - Rewrite `pyproject.toml` as PEP 621 for uv, `requires-python = ">=3.12"`.
   - Runtime deps at current versions: `pygit2`, `click`, `rich`, `pyyaml`, `pypandoc`, plus anything else core or CLI actually imports. Find out with grep; don't guess.
   - Drop FastAPI, uvicorn, python-jose, passlib, bcrypt, pydantic and other API-only deps unless core still imports them.
@@ -53,25 +55,25 @@ _Not started._
   - Remove `poetry.lock` and `poetry.toml`, generate `uv.lock`.
   - Update CI to `astral-sh/setup-uv`, Python 3.12, `uv sync`, `uv run pytest`, `uv run ruff check .`, keeping the pandoc install step.
   - Fix any pygit2 API breakage the version bump surfaces.
-- [ ] **4. Honest tests.** _(depends on #3)_
+- [x] **4. Honest tests.** _(depends on #3)_
   - Every test fixture that creates a repo sets the initial branch explicitly. The suite must pass both with `git config --global init.defaultBranch main` and with it unset.
   - Find tests that mock pygit2 or `gitwrite_core` (`grep -n "mock\|patch" tests/`). Rewrite each one against real temp repos, or delete it if it only tests the mock. If any test is xfailed only because of a mock, fix or delete it.
   - Export tests skip cleanly when pandoc isn't installed.
-- [ ] **5. Core bug fixes, each with an unmocked regression test.** _(depends on #4)_
+- [x] **5. Core bug fixes, each with an unmocked regression test.** _(depends on #4)_
   - (a) `gitwrite_core/tagging.py` around line 32: `.oid` → `.id`, so tag creation works on current pygit2.
   - (b) `gitwrite_core/versioning.py` around line 691: `walk(..., hide=)` is not a pygit2 argument. Use `walker.hide(oid)`, so branch review works.
   - (c) `save_and_commit_file` (`gitwrite_core/repository.py`; the audit cites the API at `repository.py:781-815` calling it) rejects any path that resolves into `.git/` or outside the repo root. Test with `.git/config`, `../x`, an absolute path and a symlinked parent.
   - (d) Every `_run_git_command`-style subprocess call: pass `--` before paths, and validate that anything used as a commit ID is a hex OID (`^[0-9a-f]{4,40}$`) before it reaches git. Test that an annotation ID of `--output=/tmp/x` is rejected and writes nothing.
   - (e) Run `git grep -n "subprocess\|_run_git" gitwrite_core` and list every remaining git CLI call in the report. Don't convert them to pygit2 here (annotations are queue 2).
-- [ ] **6. CLI works end to end (D10).** _(depends on #5)_
+- [x] **6. CLI works end to end (D10).** _(depends on #5)_
   - Add `tests/test_cli_e2e.py` using Click's `CliRunner` on a real temp repo: init → save → history → explore (create branch) → switch → save → merge → tag add → review → export epub (skip if no pandoc).
   - Each step asserts on repo state (refs, commit count, files), not just the exit code.
   - `uv run gitwrite --help` works.
-- [ ] **7. Ruff clean.** _(depends on #3)_
+- [x] **7. Ruff clean.** _(depends on #3)_
   - Add a `[tool.ruff]` config (line length 100, target py312, default rules plus `I` for imports) and fix what it reports.
   - Any per-line `noqa` needs a short reason comment.
   - No unrelated refactors.
-- [ ] **8. Docs match reality.** _(depends on #2, #6)_
+- [x] **8. Docs match reality.** _(depends on #2, #6)_
   - In `CLAUDE.md`, replace everything **above** `## Development workflow — planning vs implementation` with a short accurate description: what's in the repo now (core, CLI, tests, and soon `veneer-plugin/`), the uv commands, the no-mock test rule, and a pointer to PLAN.md. Keep the workflow section and everything below it unchanged.
   - Rewrite `README.md` to the current scope: what GitWrite is, CLI install via uv, the real command list from `gitwrite --help`, and "Veneer plugin coming" with a link to PLAN.md.
   - Prune `docs/USER_GUIDE.md` and `docs/LOCAL_TESTING_GUIDE.md` to commands that exist. Delete either one if little survives.
