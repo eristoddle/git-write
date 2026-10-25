@@ -28,7 +28,11 @@ Add to `veneer-plugin/`: explorations (list, start, switch), tags, merge, annota
 PLAN.md D8, D9, D12, D15. Stephan approved building on the fake host only for sync (no real remote can be reached from the cloud session): a manual checklist for the real-world checks goes in the PR.
 
 ### ▶ Run state (the agent keeps this current on every stop)
-_Started 2026-10-25 on the designated branch `ccr-fab01977-3fk6x6` (restarted from `main` after the queue 3 PR merged)._
+**Queue 4 complete (2026-10-25).** All 5 pieces done, none blocked; one commit per piece (`queue 4.1` … `queue 4.5`, with `4.4a` for the shared `locate`). Worked on the designated branch `ccr-fab01977-3fk6x6` (restarted from `main` after the queue 3 PR merged).
+Checks at finish, from a clean checkout: `veneer-plugin/` typecheck, 300 tests on the fake host, build; Python 382 passed, 1 skipped; `ruff` clean; interop and plugin cross-language tests run with `GITWRITE_REQUIRE_INTEROP=1`.
+**Bugs found and fixed while building, each now pinned by a test:** (1) the `yaml` package's default YAML 1.2 writes a comment like `yes`, `1:30` or `2026-10-25` bare and PyYAML reads it back as a boolean, number or date, so the plugin reads and writes YAML 1.1; (2) the feedback list emptied itself during a reload, so a click then did nothing; (3) a reload requested during a read shared that read and showed stale data; (4) a choice field holding a version no longer offered made the whole form malformed.
+**Not verified:** anything in a running Veneer, and sync against a real host (the fake host only records the call). A manual checklist is in the PR.
+PR not opened yet: waiting for the user's go-ahead.
 
 ## Contribution IDs (decided at promotion, 2026-10-25; follow the queue 3 pattern)
 
