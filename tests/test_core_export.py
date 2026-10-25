@@ -326,10 +326,7 @@ def test_export_to_epub_lightweight_tag_to_blob_error(temp_git_repo_path, mock_p
     repo = init_test_repo_corrected(temp_git_repo_path, {"f.md": "c"}, "Initial")
     blob_oid = repo.create_blob(b"blob data")
     tag_name = "light_tag_to_blob"
-    try:
-        repo.references.create(f"refs/tags/{tag_name}", blob_oid.hex)
-    except Exception as e:
-        pytest.skip(f"Could not create lightweight tag to blob for test: {e}")
+    repo.references.create(f"refs/tags/{tag_name}", blob_oid)
 
     output_epub = temp_git_repo_path / "output.epub"
     with pytest.raises(CommitNotFoundError,
@@ -341,10 +338,7 @@ def test_export_to_epub_annotated_tag_to_blob_error(temp_git_repo_path, mock_pyp
     blob_oid = repo.create_blob(b"blob data")
     tag_name = "ann_tag_to_blob"
     tagger = pygit2.Signature("Tagger", "tag@example.com")
-    try:
-        repo.create_tag(tag_name, blob_oid, pygit2.GIT_OBJECT_BLOB, tagger, "Tagging a blob")
-    except Exception as e:
-        pytest.skip(f"Could not create annotated tag to blob for test: {e}")
+    repo.create_tag(tag_name, blob_oid, pygit2.enums.ObjectType.BLOB, tagger, "Tagging a blob")
 
     output_epub = temp_git_repo_path / "output.epub"
     with pytest.raises(CommitNotFoundError, match=f"Tag '{tag_name}' does not point to a valid commit."):

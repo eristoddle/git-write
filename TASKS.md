@@ -30,7 +30,7 @@ PLAN.md D4, D6, D10, D11, D12. Audit: `docs/AUDIT.md` sections "Suggested cleanu
 ### ▶ Run state (the agent keeps this current on every stop)
 **Queue 1 complete (2026-10-25).** All 8 pieces done, none blocked. One commit per piece (`queue 1.1` … `queue 1.8`, plus `1.4a`/`1.5a-d` splits).
 Worked on the cloud session's designated branch `ccr-fab01977-3fk6x6` instead of `queue/1-cleanup`; no PR opened (not requested). Nothing remains.
-Checks at finish: `uv run pytest` = 319 passed, 2 skipped (pandoc-gated PDF test and the console-script test needs the installed package), identical with `init.defaultBranch` = main / unset / trunk / master; `uv run ruff check .` clean.
+Checks at finish: `uv run pytest` = 320 passed, 1 skipped (the real-pandoc PDF test, which needs a LaTeX engine this machine lacks), identical with `init.defaultBranch` = main / unset / trunk / master; `uv run ruff check .` clean.
 
 ## Design — numbered pieces (status: `[ ]` not started · `[x]` done · `[!]` blocked)
 
