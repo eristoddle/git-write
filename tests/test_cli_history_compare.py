@@ -1,13 +1,16 @@
-import pytest
-import pygit2 # Still used by tests directly
-import os # Still used by tests directly
-import re # For TestHistoryCommandCLI
-from pathlib import Path # Still used by tests directly
-from click.testing import CliRunner # For type hinting runner fixture from conftest
-from .conftest import make_commit
-# shutil was for local_repo fixture, now in conftest
+import os  # Still used by tests directly
+import re  # For TestHistoryCommandCLI
+from pathlib import Path  # Still used by tests directly
 
+import pygit2
+from click.testing import CliRunner  # For type hinting runner fixture from conftest
+
+# shutil was for local_repo fixture, now in conftest
 from gitwrite_cli.main import cli
+from tests.helpers import init_repo  # Still used by tests directly
+
+from .conftest import make_commit
+
 # Fixtures runner, local_repo_path, local_repo and helper make_commit are now in conftest.py
 
 #######################################
@@ -20,7 +23,7 @@ class TestCompareCommandCLI:
         """Test `gitwrite compare` in an empty initialized repo."""
         empty_repo_path = tmp_path / "empty_compare_repo"
         empty_repo_path.mkdir()
-        pygit2.init_repository(str(empty_repo_path))
+        init_repo(empty_repo_path)
 
         os.chdir(empty_repo_path)
         result = runner.invoke(cli, ["compare"]) # runner from conftest
@@ -163,7 +166,7 @@ class TestCompareCommandCLI:
         make_commit(repo, "fileC.txt", "content C", "Commit C on branch2") # make_commit from conftest
         result = runner.invoke(cli, ["compare", "branch1", "branch2"]) # runner from conftest
         assert result.exit_code == 0, f"CLI Error: {result.output}"
-        assert f"Diff between branch1 (a) and branch2 (b):" in result.output # Removed \n
+        assert "Diff between branch1 (a) and branch2 (b):" in result.output # Removed \n
         assert "--- a/fileB.txt" in result.output
         assert "+++ b/fileC.txt" in result.output
 
@@ -178,7 +181,7 @@ class TestHistoryCommandCLI:
         """Test `gitwrite history` in an empty initialized repo."""
         empty_repo_path = tmp_path / "empty_history_repo"
         empty_repo_path.mkdir()
-        pygit2.init_repository(str(empty_repo_path))
+        init_repo(empty_repo_path)
         os.chdir(empty_repo_path)
         result = runner.invoke(cli, ["history"]) # runner from conftest
         assert result.exit_code == 0, f"CLI Error: {result.output}"
@@ -187,7 +190,7 @@ class TestHistoryCommandCLI:
     def test_history_bare_repo_cli(self, runner: CliRunner, tmp_path: Path): # runner from conftest, tmp_path from pytest
         """Test `gitwrite history` in a bare repo."""
         bare_repo_path = tmp_path / "bare_history_repo.git"
-        pygit2.init_repository(str(bare_repo_path), bare=True)
+        init_repo(bare_repo_path, bare=True)
         os.chdir(bare_repo_path)
         result = runner.invoke(cli, ["history"]) # runner from conftest
         assert result.exit_code == 0, f"CLI Error: {result.output}"
@@ -294,8 +297,7 @@ class TestHistoryCommandCLI:
         repo = local_repo
         os.chdir(repo.workdir)
         # Ensure initial commit message doesn't conflict with search logic
-        initial_commit_obj_original = repo.get(repo.head.target)
-        original_initial_message = initial_commit_obj_original.message
+        repo.get(repo.head.target)
         # Temporarily change initial commit message if needed, or ensure test commit messages are distinct
         # For this test, let's assume the default "Initial commit" is fine if the logic correctly counts lines.
         # The issue was that "Initial commit" contains "Commit". Let's use a different message.

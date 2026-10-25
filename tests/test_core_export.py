@@ -1,20 +1,21 @@
-import pytest
-import pygit2
-import pypandoc
-import os
-import shutil
 import pathlib
-import time
+import shutil
 from unittest import mock
 
-from gitwrite_core.export import export_to_epub, export_to_pdf, export_to_docx
+import pygit2
+import pypandoc
+import pytest
+
 from gitwrite_core.exceptions import (
-    PandocError,
-    RepositoryNotFoundError,
     CommitNotFoundError,
     FileNotFoundInCommitError,
     GitWriteError,
+    PandocError,
+    RepositoryNotFoundError,
 )
+from gitwrite_core.export import export_to_docx, export_to_epub, export_to_pdf
+from tests.helpers import init_repo
+
 
 def init_test_repo_corrected(tmp_path: pathlib.Path, add_files: dict = None, commit_message: str = "Initial commit"):
     try:
@@ -23,7 +24,7 @@ def init_test_repo_corrected(tmp_path: pathlib.Path, add_files: dict = None, com
             return repo
     except pygit2.GitError:
         tmp_path.mkdir(parents=True, exist_ok=True)
-        pygit2.init_repository(str(tmp_path), bare=False)
+        init_repo(tmp_path, bare=False)
         repo = pygit2.Repository(str(tmp_path))
 
     if add_files:
@@ -93,6 +94,7 @@ def test_export_to_epub_pandoc_not_found(temp_git_repo_path, monkeypatch):
     with pytest.raises(PandocError, match="Pandoc not found. Please ensure pandoc is installed"):
         export_to_epub(str(temp_git_repo_path), "HEAD", ["file1.md"], str(output_epub))
 
+@pytest.mark.skipif(shutil.which("pandoc") is None, reason="core checks for pandoc before it opens the repo")
 def test_export_to_epub_repo_dir_not_found(tmp_path):
     with pytest.raises(RepositoryNotFoundError, match="Repository directory not found"):
         export_to_epub(str(tmp_path / "non_existent_repo"), "HEAD", ["f.md"], str(tmp_path / "o.epub"))
@@ -102,7 +104,7 @@ def test_export_to_epub_not_a_git_repo(temp_git_repo_path, mock_pypandoc_path_fo
         export_to_epub(str(temp_git_repo_path), "HEAD", ["f.md"], str(temp_git_repo_path / "o.epub"))
 
 def test_export_to_epub_empty_repository(temp_git_repo_path, mock_pypandoc_path_found):
-    pygit2.init_repository(str(temp_git_repo_path), bare=False)
+    init_repo(temp_git_repo_path, bare=False)
     output_epub = temp_git_repo_path / "output.epub"
     with pytest.raises(GitWriteError, match="Repository at .* is empty and has no commits to export from."):
         export_to_epub(str(temp_git_repo_path), "HEAD", ["file.md"], str(output_epub))
@@ -149,7 +151,7 @@ def test_export_to_epub_pandoc_conversion_error(temp_git_repo_path, mock_pypando
         export_to_epub(str(temp_git_repo_path), "HEAD", ["file1.md"], str(output_epub))
 
 def test_export_to_epub_output_dir_creation_OSError(temp_git_repo_path, mock_pypandoc_path_found, monkeypatch):
-    repo = init_test_repo_corrected(temp_git_repo_path, {"file1.md": "content"}, "Initial")
+    init_test_repo_corrected(temp_git_repo_path, {"file1.md": "content"}, "Initial")
     output_epub_path_str = str(temp_git_repo_path / "uncreatable_dir" / "output.epub")
     target_dir_to_fail = pathlib.Path(output_epub_path_str).parent
     def mock_mkdir_side_effect(path_instance, parents=False, exist_ok=False, mode=0o777):
@@ -324,10 +326,7 @@ def test_export_to_epub_lightweight_tag_to_blob_error(temp_git_repo_path, mock_p
     repo = init_test_repo_corrected(temp_git_repo_path, {"f.md": "c"}, "Initial")
     blob_oid = repo.create_blob(b"blob data")
     tag_name = "light_tag_to_blob"
-    try:
-        repo.references.create(f"refs/tags/{tag_name}", blob_oid.hex)
-    except Exception as e:
-        pytest.skip(f"Could not create lightweight tag to blob for test: {e}")
+    repo.references.create(f"refs/tags/{tag_name}", blob_oid)
 
     output_epub = temp_git_repo_path / "output.epub"
     with pytest.raises(CommitNotFoundError,
@@ -339,11 +338,61 @@ def test_export_to_epub_annotated_tag_to_blob_error(temp_git_repo_path, mock_pyp
     blob_oid = repo.create_blob(b"blob data")
     tag_name = "ann_tag_to_blob"
     tagger = pygit2.Signature("Tagger", "tag@example.com")
-    try:
-        repo.create_tag(tag_name, blob_oid, pygit2.GIT_OBJECT_BLOB, tagger, "Tagging a blob")
-    except Exception as e:
-        pytest.skip(f"Could not create annotated tag to blob for test: {e}")
+    repo.create_tag(tag_name, blob_oid, pygit2.enums.ObjectType.BLOB, tagger, "Tagging a blob")
 
     output_epub = temp_git_repo_path / "output.epub"
     with pytest.raises(CommitNotFoundError, match=f"Tag '{tag_name}' does not point to a valid commit."):
         export_to_epub(str(temp_git_repo_path), tag_name, ["f.md"], str(output_epub))
+
+
+# ============================================================================
+# Real pandoc (skipped when pandoc is not installed)
+# ============================================================================
+
+needs_pandoc = pytest.mark.skipif(shutil.which("pandoc") is None, reason="pandoc is not installed")
+
+
+def _zip_text(path):
+    """Return (mimetype entry or None, concatenated xml/xhtml text) of a zip-based document."""
+    import zipfile
+    with zipfile.ZipFile(path) as z:
+        mimetype = z.read("mimetype") if "mimetype" in z.namelist() else None
+        text = " ".join(z.read(n).decode("utf-8", "replace") for n in z.namelist() if n.endswith((".xhtml", ".xml")))
+    return mimetype, text
+
+
+@needs_pandoc
+def test_real_pandoc_epub_contains_the_committed_chapters_in_order(temp_git_repo_path):
+    init_test_repo_corrected(temp_git_repo_path, {"a.md": "# Alpha\n\nfirst body", "b.md": "# Beta\n\nsecond body"}, "chapters")
+    out = temp_git_repo_path / "real.epub"
+
+    result = export_to_epub(str(temp_git_repo_path), "HEAD", ["b.md", "a.md"], str(out))
+
+    assert result["status"] == "success"
+    mimetype, text = _zip_text(out)
+    assert mimetype == b"application/epub+zip"
+    assert text.index("second body") < text.index("first body")
+
+
+@needs_pandoc
+def test_real_pandoc_docx_is_a_word_document(temp_git_repo_path):
+    init_test_repo_corrected(temp_git_repo_path, {"a.md": "# Alpha\n\nhello docx"}, "chapter")
+    out = temp_git_repo_path / "real.docx"
+
+    result = export_to_docx(str(temp_git_repo_path), "HEAD", ["a.md"], str(out))
+
+    assert result["status"] == "success"
+    _, text = _zip_text(out)
+    assert "hello docx" in text
+
+
+@needs_pandoc
+@pytest.mark.skipif(not any(shutil.which(e) for e in ("pdflatex", "xelatex", "lualatex")), reason="no LaTeX engine installed")
+def test_real_pandoc_pdf_starts_with_pdf_header(temp_git_repo_path):
+    init_test_repo_corrected(temp_git_repo_path, {"a.md": "# Alpha\n\nhello pdf"}, "chapter")
+    out = temp_git_repo_path / "real.pdf"
+
+    result = export_to_pdf(str(temp_git_repo_path), "HEAD", ["a.md"], str(out))
+
+    assert result["status"] == "success"
+    assert out.read_bytes().startswith(b"%PDF")

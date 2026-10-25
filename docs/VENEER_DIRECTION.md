@@ -6,3 +6,4 @@
 - GitWrite runs as a **remote API**. The Veneer plugin is a thin client that calls it over the network (through Veneer's `api.net.fetch`).
 - The current code was built quickly with early coding models and was barely tested. **Open decision:** keep and fix what's here, or collect the intent from it (writer-friendly terms, branching and cherry-picking, annotations, export) into a fresh plan and start over.
 - Detailed planning hasn't started yet.
+- 2026-10-25: the open decision above was settled: local first, with Veneer driving git directly. See [PLAN.md](../PLAN.md) D8.

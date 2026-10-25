@@ -1,4 +1,3 @@
-from pygit2.errors import GitError
 
 class GitWriteError(Exception):
     """Base exception for all gitwrite-core errors."""

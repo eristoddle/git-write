@@ -1,11 +1,16 @@
-import pytest # For pytest.raises, pytest.skip (if used directly in tests)
-import pygit2 # Used directly in tests
-import os # Used directly in tests
+import os  # Used directly in tests
+
 # shutil was for fixtures, now in conftest
-from pathlib import Path # Used directly in tests
-from click.testing import CliRunner # For type hinting runner fixture from conftest
+from pathlib import Path  # Used directly in tests
+
+import pygit2
+import pytest  # For pytest.raises, pytest.skip (if used directly in tests)
+from click.testing import CliRunner  # For type hinting runner fixture from conftest
+
 from gitwrite_cli.main import cli
-from .conftest import make_commit, create_file, stage_file, resolve_conflict
+from tests.helpers import init_repo  # Used directly in tests
+
+from .conftest import create_file, make_commit, resolve_conflict, stage_file
 
 # Helper functions (make_commit, create_file, stage_file, resolve_conflict) are in conftest.py
 # Fixtures (repo_with_unstaged_changes, repo_with_staged_changes, repo_with_merge_conflict, repo_with_revert_conflict) are in conftest.py
@@ -80,7 +85,7 @@ class TestRevertCommandCLI:
         """Test reverting the initial commit made by the fixture."""
         os.chdir(local_repo.workdir)
         initial_commit_hash = local_repo.head.target
-        initial_commit_obj = local_repo[initial_commit_hash]
+        local_repo[initial_commit_hash]
         initial_file_path = Path("initial.txt")
         assert initial_file_path.exists()
 
@@ -222,7 +227,8 @@ class TestRevertCommandCLI:
         assert not status, f"Working directory should be clean but status is: {status}"
 
         # Check that REVERT_HEAD is not set
-        with pytest.raises(KeyError): local_repo.lookup_reference("REVERT_HEAD")
+        with pytest.raises(KeyError):
+            local_repo.lookup_reference("REVERT_HEAD")
 
         # The following lines for resolving conflict and saving are now moot if the revert aborts cleanly.
         # For the purpose of this subtask (making tests pass), I will comment them out.
@@ -270,7 +276,7 @@ class TestSaveCommandCLI:
         # configure_git_user_for_cli will set user.name and user.email for the repo created at repo_path
         repo_path = tmp_path / "new_repo_for_initial_save"
         repo_path.mkdir()
-        pygit2.init_repository(str(repo_path)) # pygit2 import is kept
+        init_repo(repo_path) # pygit2 import is kept
         configure_git_user_for_cli(str(repo_path)) # Call the fixture
         os.chdir(repo_path) # os import is kept
         (repo_path / "first_file.txt").write_text("Hello world") # Path import is kept
@@ -471,7 +477,8 @@ class TestSaveCommandCLI:
         # assert "Conflicting files:" in result.output
         # assert "revert_conflict_file.txt" in result.output
         # REVERT_HEAD should be cleared after a successful save
-        with pytest.raises(KeyError): repo.lookup_reference("REVERT_HEAD")
+        with pytest.raises(KeyError):
+            repo.lookup_reference("REVERT_HEAD")
 
 
     def test_save_include_error_during_merge_cli(self, runner: CliRunner, repo_with_merge_conflict: pygit2.Repository): # Fixtures from conftest

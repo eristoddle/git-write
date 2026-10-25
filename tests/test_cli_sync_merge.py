@@ -1,16 +1,17 @@
-import pytest
-import pygit2
 import os
-import shutil # shutil was for fixtures, now in conftest
-import re # Used by TestMergeCommandCLI
-from pathlib import Path # Used by test methods directly
-from click.testing import CliRunner # For type hinting runner fixture from conftest
-from unittest.mock import patch # Used by TestSyncCommandCLI
-from .conftest import make_commit
+import re  # Used by TestMergeCommandCLI
+import shutil  # shutil was for fixtures, now in conftest
+from pathlib import Path  # Used by test methods directly
+
+import pygit2
+from click.testing import CliRunner  # For type hinting runner fixture from conftest
 
 from gitwrite_cli.main import cli
+from tests.helpers import init_repo
+
+from .conftest import make_commit
+
 # It's good practice to import specific exceptions if they are explicitly caught or expected.
-from gitwrite_core.exceptions import FetchError, PushError # Used by test methods directly
 
 # Helper function make_commit is in conftest.py (enhanced version)
 # Fixtures runner, local_repo (generic one from conftest), cli_test_repo,
@@ -103,7 +104,7 @@ class TestMergeCommandCLI:
     def test_merge_empty_repo_cli(self, runner: CliRunner, tmp_path: Path): # runner from conftest, tmp_path from pytest
         empty_repo = tmp_path / "empty_for_merge_cli"
         empty_repo.mkdir()
-        pygit2.init_repository(str(empty_repo))
+        init_repo(empty_repo)
         os.chdir(empty_repo)
 
         result = runner.invoke(cli, ["merge", "anybranch"])
@@ -112,7 +113,7 @@ class TestMergeCommandCLI:
 
     def test_merge_bare_repo_cli(self, runner: CliRunner, tmp_path: Path): # runner from conftest, tmp_path from pytest
         bare_repo_path = tmp_path / "bare_for_merge_cli.git"
-        pygit2.init_repository(str(bare_repo_path), bare=True)
+        init_repo(bare_repo_path, bare=True)
         os.chdir(bare_repo_path) # CLI will discover CWD is a bare repo
 
         result = runner.invoke(cli, ["merge", "anybranch"])
@@ -122,7 +123,7 @@ class TestMergeCommandCLI:
     def test_merge_no_signature_cli(self, runner: CliRunner, tmp_path: Path, configure_git_user_for_cli): # runner from conftest, tmp_path from pytest, added configure_git_user_for_cli
         repo_path_no_sig = tmp_path / "no_sig_repo_for_cli_merge"
         repo_path_no_sig.mkdir()
-        repo = pygit2.init_repository(str(repo_path_no_sig))
+        repo = init_repo(repo_path_no_sig)
         # The configure_git_user_for_cli fixture will apply to this repo when os.chdir is called.
         # DO NOT configure user.name/user.email for this repo
 
@@ -282,18 +283,20 @@ class TestSyncCommandCLI:
         local_commit_after_local_change = local_repo.head.target # Save this OID
 
         # Ensure clone starts from C1 before making its own C2
-        if Path(str(remote_clone_repo_path)).exists(): shutil.rmtree(str(remote_clone_repo_path))
+        if Path(str(remote_clone_repo_path)).exists():
+            shutil.rmtree(str(remote_clone_repo_path))
         pygit2.clone_repository(remote_bare_repo_path_str, str(remote_clone_repo_path))
         clone_repo = pygit2.Repository(str(remote_clone_repo_path))
         config_clone = clone_repo.config
         config_clone["user.name"] = "Remote Conflicter"
         config_clone["user.email"] = "remote_conflict@example.com"
         remote_main = clone_repo.branches.remote["origin/main"]
-        clone_repo.branches.local.create("main", remote_main.peel(pygit2.Commit))
+        if clone_repo.branches.local.get("main") is None:  # the clone checks out the remote HEAD, which is main
+            clone_repo.branches.local.create("main", remote_main.peel(pygit2.Commit))
         clone_repo.checkout("refs/heads/main")
         clone_repo.reset(c1_oid, pygit2.GIT_RESET_HARD)
         make_commit(clone_repo, conflict_filename, "Remote version of line", "Remote C2 on main", branch_name="main")
-        clone_repo.remotes["origin"].push([f"+refs/heads/main:refs/heads/main"]) # Force push if main already exists
+        clone_repo.remotes["origin"].push(["+refs/heads/main:refs/heads/main"]) # Force push if main already exists
         shutil.rmtree(str(remote_clone_repo_path))
 
         result = runner.invoke(cli, ["sync"])
@@ -341,47 +344,31 @@ class TestSyncCommandCLI:
     def test_sync_empty_repo_cli(self, runner: CliRunner, tmp_path: Path): # runner from conftest, tmp_path from pytest
         empty_repo_path = tmp_path / "empty_for_sync"
         empty_repo_path.mkdir()
-        pygit2.init_repository(str(empty_repo_path))
+        init_repo(empty_repo_path)
         os.chdir(empty_repo_path)
         result = runner.invoke(cli, ["sync"])
         assert result.exit_code == 1
         assert "Error: Repository is empty or HEAD is unborn. Cannot sync." in result.output
 
-    @patch('gitwrite_cli.main.sync_repository') # Corrected patch path
-    def test_sync_cli_handles_core_fetch_error(self, mock_sync_core, runner: CliRunner, synctest_repos): # Fixtures from conftest
-        os.chdir(synctest_repos["local_repo_path_str"])
-        # This mock will be called by the CLI 'sync' command.
-        # If sync_repository catches FetchError and returns a dict, these tests need to change.
-        # Based on previous output, it seems sync_repository *does not* let FetchError propagate to CLI's except block.
-        # Instead, it returns a dictionary that the CLI then uses to report.
-        mock_sync_core.return_value = {
-            "fetch_status": {"message": "FETCH_ERROR_MESSAGE"},
-            "local_update_status": {"message": "LOCAL_UPDATE_MESSAGE"},
-            "push_status": {"message": "PUSH_MESSAGE"},
-            "status": "error_in_sub_operation", # This ensures the "completed with errors" message is triggered
-            "branch_synced": "mock_branch_fetch_error"
-        }
-        result = runner.invoke(cli, ["sync"])
-        assert result.exit_code == 0, f"CLI Error: {result.output}"
-        assert "FETCH_ERROR_MESSAGE" in result.output
-        assert "LOCAL_UPDATE_MESSAGE" in result.output
-        assert "PUSH_MESSAGE" in result.output
-        assert "Sync process for branch 'mock_branch_fetch_error' with remote 'origin' completed with errors in some steps." in result.output
+    def test_sync_cli_reports_unreachable_remote(self, runner: CliRunner, synctest_repos, tmp_path: Path):
+        local_path = synctest_repos["local_repo_path_str"]
+        os.chdir(local_path)
+        local_repo = pygit2.Repository(local_path)
+        local_repo.remotes.set_url("origin", str(tmp_path / "no_such_remote.git"))
 
-    @patch('gitwrite_cli.main.sync_repository') # Corrected patch path
-    def test_sync_cli_handles_core_push_error(self, mock_sync_core, runner: CliRunner, synctest_repos): # Fixtures from conftest
-        os.chdir(synctest_repos["local_repo_path_str"])
-        # Similar to FetchError, assuming PushError is handled by sync_repository and reported in dict.
-        mock_sync_core.return_value = {
-            "fetch_status": {"message": "FETCH_COMPLETE_MESSAGE"},
-            "local_update_status": {"message": "LOCAL_UPDATE_OK_MESSAGE"},
-            "push_status": {"message": "PUSH_ERROR_MESSAGE"},
-            "status": "error_in_sub_operation", # This ensures the "completed with errors" message is triggered
-            "branch_synced": "mock_branch_push_error"
-        }
         result = runner.invoke(cli, ["sync"])
-        assert result.exit_code == 0, f"CLI Error: {result.output}"
-        assert "FETCH_COMPLETE_MESSAGE" in result.output
-        assert "LOCAL_UPDATE_OK_MESSAGE" in result.output
-        assert "PUSH_ERROR_MESSAGE" in result.output
-        assert "Sync process for branch 'mock_branch_push_error' with remote 'origin' completed with errors in some steps." in result.output
+
+        assert result.exit_code != 0
+        assert "Failed to fetch from remote 'origin'" in result.output
+
+    def test_sync_cli_reports_unreachable_push_target(self, runner: CliRunner, synctest_repos, tmp_path: Path):
+        local_path = synctest_repos["local_repo_path_str"]
+        os.chdir(local_path)
+        local_repo = pygit2.Repository(local_path)
+        make_commit(local_repo, "ahead.txt", "only local", "Local commit to push", branch_name="main")
+        local_repo.config["remote.origin.pushurl"] = str(tmp_path / "no_such_push_target.git")
+
+        result = runner.invoke(cli, ["sync"])
+
+        assert result.exit_code != 0
+        assert "Failed to push branch 'main' to 'origin'" in result.output

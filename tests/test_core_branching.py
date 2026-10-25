@@ -1,25 +1,27 @@
-import pytest # For pytest.raises
-import pygit2 # Used directly in tests
-import os # Used by some test setups if not handled by fixtures
-import shutil # Used by some test setups
-from pathlib import Path # Used by some test setups
-# Typing imports are now in conftest.py
+import shutil  # Used by some test setups
+from pathlib import Path  # Used by some test setups
 
+import pygit2
+import pytest  # For pytest.raises
+
+# Typing imports are now in conftest.py
 # Corrected import path for core modules
 from gitwrite_core.branching import (
     create_and_switch_branch,
     list_branches,
+    merge_branch_into_current,  # Added for merge tests
     switch_to_branch,
-    merge_branch_into_current # Added for merge tests
 )
 from gitwrite_core.exceptions import (
-    RepositoryNotFoundError,
-    RepositoryEmptyError,
     BranchAlreadyExistsError,
     BranchNotFoundError,
-    MergeConflictError, # Added for merge tests
-    GitWriteError
+    GitWriteError,
+    MergeConflictError,  # Added for merge tests
+    RepositoryEmptyError,
+    RepositoryNotFoundError,
 )
+from tests.helpers import init_repo  # Used directly in tests
+
 from .conftest import make_commit_on_path
 
 # Helper functions (make_commit_on_path, make_initial_commit) are in conftest.py
@@ -180,7 +182,8 @@ class TestListBranches:
 
     def test_list_branches_repo_not_found(self, tmp_path: Path): # tmp_path from pytest
         non_existent_path = tmp_path / "non_existent_repo_for_list"
-        if non_existent_path.exists(): shutil.rmtree(non_existent_path) # shutil import is kept
+        if non_existent_path.exists():
+            shutil.rmtree(non_existent_path) # shutil import is kept
         with pytest.raises(RepositoryNotFoundError):
             list_branches(str(non_existent_path))
 
@@ -288,7 +291,8 @@ class TestSwitchToBranch:
 
     def test_switch_repo_not_found(self, tmp_path: Path): # tmp_path from pytest
         non_existent_path = tmp_path / "non_existent_for_switch"
-        if non_existent_path.exists(): shutil.rmtree(non_existent_path) # shutil import is kept
+        if non_existent_path.exists():
+            shutil.rmtree(non_existent_path) # shutil import is kept
         with pytest.raises(RepositoryNotFoundError):
             switch_to_branch(str(non_existent_path), "anybranch")
 
@@ -340,7 +344,7 @@ class TestMergeBranch:
         merge_commit = repo_check_commit.get(merge_commit_oid)
         assert isinstance(merge_commit, pygit2.Commit)
         assert len(merge_commit.parents) == 2
-        assert f"Merge branch 'feature' into main" in merge_commit.message
+        assert "Merge branch 'feature' into main" in merge_commit.message
 
         # Re-instantiate repo object to check state
         repo_after_merge = pygit2.Repository(str(repo_for_merge))
@@ -425,7 +429,7 @@ class TestMergeBranch:
         # Clean up existing repo at path and reinitialize without signature
         if (repo_no_sig_path / ".git").exists(): # Ensure .git exists before trying to remove
             shutil.rmtree(repo_no_sig_path / ".git") # shutil import is kept
-        repo = pygit2.init_repository(str(repo_no_sig_path))
+        repo = init_repo(repo_no_sig_path)
 
         # Explicitly delete local config for user.name and user.email
         config = repo.config

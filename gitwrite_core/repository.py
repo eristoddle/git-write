@@ -1,10 +1,11 @@
-from pathlib import Path
-import pygit2
 import os
 import time
-from typing import Optional, Dict, List, Any
-from datetime import datetime, timezone, timedelta # For timezone.utc and timedelta
-import yaml # For reading metadata.yml
+from datetime import datetime, timedelta, timezone  # For timezone.utc and timedelta
+from pathlib import Path
+from typing import Any, Dict, List, Optional
+
+import pygit2
+import yaml  # For reading metadata.yml
 
 # Common ignore patterns for .gitignore
 COMMON_GITIGNORE_PATTERNS = [
@@ -139,7 +140,7 @@ def initialize_repository(path_str: str, project_name: Optional[str] = None) -> 
             except KeyError: # File is not in index and not in working dir (e.g. after a clean)
                  if gitignore_file.exists(): # if it exists on disk, it's new
                     items_to_stage_relative.append(gitignore_rel_path_str)
-            except pygit2.GitError as e:
+            except pygit2.GitError:
                 # Could fail if target_dir is not a repo, but we checked this
                 pass # Best effort to check status
 
@@ -226,7 +227,8 @@ def initialize_repository(path_str: str, project_name: Optional[str] = None) -> 
                 else:
                     # No changes to commit, but structure is there.
                     action_summary = "GitWrite structure already present and up-to-date."
-                    if not is_existing_repo : action_summary = "Initialized empty Git repository.\n" + action_summary
+                    if not is_existing_repo:
+                        action_summary = "Initialized empty Git repository.\n" + action_summary
                     return {'status': 'success', 'message': action_summary.replace(".\n", f" in {target_dir.name}.\n").strip(), 'path': str(target_dir.resolve())}
 
             except pygit2.GitError as e:
@@ -234,7 +236,8 @@ def initialize_repository(path_str: str, project_name: Optional[str] = None) -> 
         else:
             # No files were staged, means structure likely already exists and is tracked.
             message = "GitWrite structure already present and tracked."
-            if not is_existing_repo : message = f"Initialized empty Git repository in {target_dir.name}.\n{message}"
+            if not is_existing_repo:
+                message = f"Initialized empty Git repository in {target_dir.name}.\n{message}"
 
             return {'status': 'success', 'message': message, 'path': str(target_dir.resolve())}
 
@@ -350,12 +353,19 @@ def sync_repository(repo_path_str: str, remote_name: str = "origin", branch_name
     Synchronizes a local repository branch with its remote counterpart.
     It fetches changes, integrates them (fast-forward or merge), and optionally pushes.
     """
-    from .exceptions import ( # Local import to avoid issues if this file is imported elsewhere early
-        RepositoryNotFoundError, RepositoryEmptyError, DetachedHeadError,
-        RemoteNotFoundError, BranchNotFoundError, FetchError,
-        MergeConflictError, PushError, GitWriteError
+    import time  # For fallback signature
+
+    from .exceptions import (  # Local import to avoid issues if this file is imported elsewhere early
+        BranchNotFoundError,
+        DetachedHeadError,
+        FetchError,
+        GitWriteError,
+        MergeConflictError,
+        PushError,
+        RemoteNotFoundError,
+        RepositoryEmptyError,
+        RepositoryNotFoundError,
     )
-    import time # For fallback signature
 
     # Initialize return dictionary structure
     result_summary = {
@@ -542,7 +552,8 @@ def sync_repository(repo_path_str: str, remote_name: str = "origin", branch_name
                     # For typical workflow, after merge/ff, local should be same or ahead.
                     # If it's same, nothing to push. If ahead, push.
                     push_ahead, push_behind = repo.ahead_behind(current_local_head_oid, their_commit_oid_for_push)
-                    if push_ahead > 0 : needs_push = True
+                    if push_ahead > 0:
+                        needs_push = True
                     # If push_behind > 0 here, something is wrong (fetch/merge didn't work or concurrent remote change)
 
             if needs_push:
@@ -764,7 +775,8 @@ def list_commits(repo_path_str: str, branch_name: Optional[str] = None, max_coun
         if not commits_data and (repo.is_empty or (branch_name and not commits_data)):
             # If we found a branch but it has no commits (e.g. orphaned branch or just initialized)
              message = f"No commits found for branch '{branch_name}'." if branch_name else "No commits found."
-             if repo.is_empty : message = "Repository is empty." # More specific message for empty repo
+             if repo.is_empty:
+                 message = "Repository is empty." # More specific message for empty repo
              return {'status': 'no_commits', 'commits': [], 'message': message}
 
 
@@ -795,24 +807,21 @@ def save_and_commit_file(repo_path_str: str, file_path: str, content: str, commi
     """
     try:
         repo_path = Path(repo_path_str)
-        absolute_file_path = repo_path / file_path
 
-        # Ensure file_path is treated as relative and does not try to escape the repo
-        # Resolve paths to compare them reliably
+        # Resolve symlinks and ".." first, then require the result to sit strictly inside the repo
+        # and outside .git. Nothing is written before this passes. A prefix test (startswith) is not
+        # enough: "/tmp/repo-evil" starts with "/tmp/repo".
         resolved_repo_path = repo_path.resolve()
-        resolved_file_path = absolute_file_path.resolve()
-
-        if not resolved_file_path.is_relative_to(resolved_repo_path):
-            # Check if the resolved file path starts with the resolved repo path,
-            # This is a more robust check for containment.
-            if not str(resolved_file_path).startswith(str(resolved_repo_path)):
-                 return {'status': 'error', 'message': 'File path is outside the repository.', 'commit_id': None}
-            # If it starts with, but is_relative_to is False, it might be the same path.
-            # Allow if it's the same (e.g. repo_path is a file itself, though unlikely for a repo root)
-            # However, typical usage is file_path is a file *within* repo_path directory.
-            # The check `str(resolved_file_path).startswith(str(resolved_repo_path))` handles most cases.
-            # A direct equality check for resolved paths can be added if files can be repos.
-            # For now, if `is_relative_to` fails, we double check with startswith.
+        resolved_file_path = (repo_path / file_path).resolve()
+        try:
+            relative_to_repo = resolved_file_path.relative_to(resolved_repo_path)
+        except ValueError:
+            return {'status': 'error', 'message': 'File path is outside the repository.', 'commit_id': None}
+        if relative_to_repo == Path('.'):
+            return {'status': 'error', 'message': 'File path must name a file inside the repository.', 'commit_id': None}
+        if any(part.lower() == '.git' for part in relative_to_repo.parts):
+            return {'status': 'error', 'message': 'File path must not point inside the .git directory.', 'commit_id': None}
+        absolute_file_path = resolved_file_path
 
         # Create parent directories if they don't exist
         try:
@@ -1117,7 +1126,12 @@ def get_file_content_at_commit(repo_path_str: str, file_path: str, commit_sha_st
         A dictionary with 'status', 'message', and file details ('content', 'size', 'mode', 'is_binary')
         if successful.
     """
-    from .exceptions import RepositoryNotFoundError, CommitNotFoundError, FileNotFoundInCommitError, GitWriteError
+    from .exceptions import (
+        CommitNotFoundError,
+        FileNotFoundInCommitError,
+        GitWriteError,
+        RepositoryNotFoundError,
+    )
 
     try:
         try:
@@ -1220,8 +1234,8 @@ def save_and_commit_multiple_files(repo_path_str: str, files_to_commit: Dict[str
     Returns:
         A dictionary with 'status', 'message', and 'commit_id' (if successful).
     """
-    import shutil # For shutil.copyfile
-    import os # For path normalization and checking
+    import os  # For path normalization and checking
+    import shutil  # For shutil.copyfile
 
     try:
         repo_path = Path(repo_path_str)

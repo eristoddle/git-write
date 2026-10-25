@@ -1,18 +1,17 @@
 # This module will contain functions for exporting repository content to various formats.
 
 import pathlib
-import tempfile
 from typing import Dict, List, Union
 
 import pygit2
 import pypandoc
 
 from gitwrite_core.exceptions import (
-    GitWriteError,
-    RepositoryNotFoundError,
     CommitNotFoundError,
     FileNotFoundInCommitError,
+    GitWriteError,
     PandocError,
+    RepositoryNotFoundError,
 )
 
 
@@ -62,7 +61,7 @@ def export_to_epub(
     except Exception as e:
         raise RepositoryNotFoundError(f"Invalid repository path: {repo_path_str} - {e}")
 
-    if repo.is_empty:
+    if repo.is_empty or repo.head_is_unborn:  # is_empty is False for an unborn HEAD that is not libgit2's default branch
         raise GitWriteError(f"Repository at {repo_path_str} is empty and has no commits to export from.")
 
     commit: pygit2.Commit
@@ -210,7 +209,7 @@ def export_to_pdf(
     except Exception as e:
         raise RepositoryNotFoundError(f"Invalid repository path: {repo_path_str} - {e}")
 
-    if repo.is_empty:
+    if repo.is_empty or repo.head_is_unborn:  # is_empty is False for an unborn HEAD that is not libgit2's default branch
         raise GitWriteError(f"Repository at {repo_path_str} is empty and has no commits to export from.")
 
     commit: pygit2.Commit
@@ -368,7 +367,7 @@ def export_to_docx(
     except Exception as e:
         raise RepositoryNotFoundError(f"Invalid repository path: {repo_path_str} - {e}")
 
-    if repo.is_empty:
+    if repo.is_empty or repo.head_is_unborn:  # is_empty is False for an unborn HEAD that is not libgit2's default branch
         raise GitWriteError(f"Repository at {repo_path_str} is empty and has no commits to export from.")
 
     commit: pygit2.Commit

@@ -1,18 +1,18 @@
-import pytest
 import subprocess
-import os
-import shutil
 from pathlib import Path
+
+import pytest
 import yaml
 
-from gitwrite_api.models import Annotation, AnnotationStatus
 from gitwrite_core.annotations import (
+    _run_git_command,  # For direct setup if needed, or use higher level funcs
     create_annotation_commit,
     list_annotations,
     update_annotation_status,
-    _run_git_command # For direct setup if needed, or use higher level funcs
 )
-from gitwrite_core.exceptions import RepositoryOperationError, AnnotationError
+from gitwrite_core.exceptions import AnnotationError, RepositoryOperationError
+from gitwrite_core.models import Annotation, AnnotationStatus
+
 
 # Pytest fixture for a temporary Git repository
 @pytest.fixture
@@ -219,7 +219,7 @@ def test_update_non_existent_annotation(temp_git_repo: Path):
     """Test trying to update an annotation that doesn't exist."""
     with pytest.raises(RepositoryOperationError): # Or AnnotationError depending on how specific the check is
         update_annotation_status(
-            str(temp_git_repo), "feedback_branch", "nonexistentcommitsha", AnnotationStatus.ACCEPTED
+            str(temp_git_repo), "feedback_branch", "0123456789abcdef0123456789abcdef01234567", AnnotationStatus.ACCEPTED
         )
 
 def test_create_annotation_in_invalid_repo(tmp_path: Path):
@@ -507,7 +507,7 @@ print("Initial test structure for test_core_annotations.py created.")
 
 # Placeholder for actual test execution and debugging
 # To run these tests (assuming pytest is set up and PYTHONPATH includes the project root):
-# Ensure gitwrite_core and gitwrite_api are importable.
+# Ensure gitwrite_core is importable.
 # `pytest tests/test_core_annotations.py`
 
 # Note: Shortened ht, sl, el, c, a for some test data for brevity in test setup.

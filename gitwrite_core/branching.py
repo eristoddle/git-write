@@ -1,14 +1,16 @@
+from typing import Any, Dict, List  # Added Optional
+
 import pygit2
-from pathlib import Path
-from typing import List, Dict, Any, Optional # Added Optional
-from .exceptions import ( # Ensure all are imported, including BranchNotFoundError and MergeConflictError
-    RepositoryNotFoundError,
-    RepositoryEmptyError,
+
+from .exceptions import (  # Ensure all are imported, including BranchNotFoundError and MergeConflictError
     BranchAlreadyExistsError,
-    BranchNotFoundError, # Already added in a previous step, ensure it stays
-    MergeConflictError, # Added for merge function
-    GitWriteError
+    BranchNotFoundError,  # Already added in a previous step, ensure it stays
+    GitWriteError,
+    MergeConflictError,  # Added for merge function
+    RepositoryEmptyError,
+    RepositoryNotFoundError,
 )
+
 
 def create_and_switch_branch(repo_path_str: str, branch_name: str) -> Dict[str, Any]: # Updated return type
     """

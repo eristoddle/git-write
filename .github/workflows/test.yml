@@ -13,10 +13,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Set up Python 3.10
-        uses: actions/setup-python@v4
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v5
         with:
-          python-version: "3.10"
+          python-version: "3.12"
 
       - name: Configure Git
         run: |
@@ -24,29 +25,13 @@ jobs:
           git config --global user.email "test@example.com"
 
       - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install poetry
-          poetry install
-      - name: Install Pandoc
-        run: sudo apt-get update && sudo apt-get install pandoc
-      - name: Test with pytest
-        run: |
-          poetry run pytest --cov=gitwrite_core --cov=gitwrite_cli tests/
+        run: uv sync
 
-  test-sdk:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '18'
-      - name: Install SDK dependencies
-        run: |
-          cd gitwrite_sdk
-          npm install
-      - name: Test SDK with Jest
-        run: |
-          cd gitwrite_sdk
-          npm test
+      - name: Install Pandoc
+        run: sudo apt-get update && sudo apt-get install -y pandoc
+
+      - name: Lint
+        run: uv run ruff check .
+
+      - name: Test with pytest
+        run: uv run pytest --cov=gitwrite_core --cov=gitwrite_cli tests/

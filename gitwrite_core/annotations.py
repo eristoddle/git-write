@@ -1,18 +1,39 @@
 # Core Annotation Handling Logic
 # This module will contain functions for creating, listing, and managing annotations.
 
-from typing import List, Dict, Optional
-import yaml # For storing annotation data in commit bodies
 import os
+import re
+import subprocess
 from pathlib import Path
+from typing import Dict, List, Optional
+
+import pygit2
+import yaml  # For storing annotation data in commit bodies
+
+from .exceptions import AnnotationError, RepositoryOperationError
 
 # Assuming git library like 'gitpython' might be used, or direct CLI calls.
 # For now, we'll conceptualize with direct CLI calls or a helper.
 # from git import Repo, GitCommandError # Example if GitPython is available
+from .models import Annotation, AnnotationStatus
 
-from gitwrite_api.models import Annotation, AnnotationStatus
-import subprocess
-from .exceptions import AnnotationError, RepositoryOperationError
+_COMMIT_ID_RE = re.compile(r'[0-9a-f]{4,40}')
+
+
+def _validate_commit_id(commit_id: str) -> str:
+    """Only a hex object ID may reach the git CLI as a revision (a value like
+    "--output=/tmp/x" would otherwise be read as a git option and write a file)."""
+    if not isinstance(commit_id, str) or not _COMMIT_ID_RE.fullmatch(commit_id):
+        raise AnnotationError(f"Invalid commit ID {commit_id!r}: expected 4 to 40 lowercase hex characters.")
+    return commit_id
+
+
+def _validate_branch_name(branch: str) -> str:
+    """Reject anything git would parse as an option or that is not a legal branch name."""
+    if (not isinstance(branch, str) or not branch or branch.startswith('-')
+            or not pygit2.reference_is_valid_name(f'refs/heads/{branch}')):
+        raise AnnotationError(f"Invalid feedback branch name {branch!r}.")
+    return branch
 
 
 # Helper function to run git commands
@@ -64,12 +85,13 @@ def create_annotation_commit(repo_path: str, feedback_branch: str, annotation_da
     """
     if not os.path.isdir(os.path.join(repo_path, '.git')):
         raise RepositoryOperationError(f"'{repo_path}' is not a valid Git repository.")
+    _validate_branch_name(feedback_branch)
 
     # Ensure the feedback branch exists and switch to it
     try:
         # Check if branch exists locally
         _run_git_command(repo_path, ['rev-parse', '--verify', feedback_branch], expect_stdout=False)
-        _run_git_command(repo_path, ['checkout', feedback_branch], expect_stdout=False)
+        _run_git_command(repo_path, ['checkout', feedback_branch, '--'], expect_stdout=False)
     except RepositoryOperationError:
         # Branch does not exist, create it from HEAD
         # Check if there are any commits in the repo. If not, git checkout -b will fail.
@@ -160,6 +182,7 @@ def list_annotations(repo_path: str, feedback_branch: str) -> List[Annotation]:
     """
     if not os.path.isdir(os.path.join(repo_path, '.git')):
         raise RepositoryOperationError(f"'{repo_path}' is not a valid Git repository.")
+    _validate_branch_name(feedback_branch)
 
     annotations: List[Annotation] = []
 
@@ -190,7 +213,7 @@ def list_annotations(repo_path: str, feedback_branch: str) -> List[Annotation]:
     # We'll use a unique delimiter that's unlikely to appear in commit messages.
     log_format = "%H%x00%B%x01" # Null byte to separate hash and body, SOH to separate entries
     try:
-        log_output = _run_git_command(repo_path, ['log', feedback_branch, f'--pretty=format:{log_format}'])
+        log_output = _run_git_command(repo_path, ['log', f'--pretty=format:{log_format}', feedback_branch, '--'])
     except RepositoryOperationError as e:
         # This can happen if the branch exists but has no commits.
         if "does not have any commits yet" in str(e) or "unknown revision" in str(e): # check for messages indicating no commits
@@ -256,11 +279,11 @@ def list_annotations(repo_path: str, feedback_branch: str) -> List[Annotation]:
                 # original_annotation_id will be handled by update_annotation_status logic later
             )
             annotations.append(annotation)
-        except yaml.YAMLError as e:
+        except yaml.YAMLError:
             # Not a valid YAML body, or not an annotation commit we recognize. Skip it.
             # print(f"Skipping commit {commit_sha[:7]} - YAML parsing error: {e}")
             continue
-        except Exception as e: # Catch other potential errors during Annotation creation
+        except Exception: # Catch other potential errors during Annotation creation
             # print(f"Skipping commit {commit_sha[:7]} - Error creating annotation object: {e}")
             continue
 
@@ -276,7 +299,6 @@ def list_annotations(repo_path: str, feedback_branch: str) -> List[Annotation]:
     # Not strictly needed if git log is guaranteed newest first and we process updates first for an ID.
     # Simpler: just use a set of original_ids that have been finalized.
 
-    finalized_original_ids: set[str] = set()
 
 
     for entry in reversed(commit_entries): # Process oldest first to build up state
@@ -374,7 +396,7 @@ def list_annotations(repo_path: str, feedback_branch: str) -> List[Annotation]:
                 # Now we process 'A' (original). We should NOT overwrite processed_annotations['A'] with older status.
                 # The logic of `if commit_sha not in processed_annotations:` handles this correctly.
 
-        except (yaml.YAMLError, ValueError, KeyError) as e: # Catches Pydantic validation errors too if strict
+        except (yaml.YAMLError, ValueError, KeyError): # Catches Pydantic validation errors too if strict
             # print(f"Skipping commit {commit_sha[:7]} - data processing error: {e}") # For debugging
             continue
 
@@ -400,11 +422,13 @@ def update_annotation_status(repo_path: str, feedback_branch: str, annotation_co
     """
     if not os.path.isdir(os.path.join(repo_path, '.git')):
         raise RepositoryOperationError(f"'{repo_path}' is not a valid Git repository.")
+    _validate_branch_name(feedback_branch)
+    _validate_commit_id(annotation_commit_id)
 
     # 0. Ensure feedback branch exists and check it out
     try:
         _run_git_command(repo_path, ['rev-parse', '--verify', feedback_branch], expect_stdout=False)
-        _run_git_command(repo_path, ['checkout', feedback_branch], expect_stdout=False)
+        _run_git_command(repo_path, ['checkout', feedback_branch, '--'], expect_stdout=False)
     except RepositoryOperationError as e:
         # If branch doesn't exist, cannot update an annotation on it.
         raise RepositoryOperationError(f"Feedback branch '{feedback_branch}' not found or could not be checked out: {e}") from e
@@ -415,7 +439,7 @@ def update_annotation_status(repo_path: str, feedback_branch: str, annotation_co
     original_annotation_data: Optional[Annotation] = None
     try:
         # %B gives the raw body, including subject, blank line, and message body
-        commit_full_message = _run_git_command(repo_path, ['show', '-s', '--format=%B', annotation_commit_id])
+        commit_full_message = _run_git_command(repo_path, ['show', '-s', '--format=%B', annotation_commit_id, '--'])
 
         message_lines = commit_full_message.split('\n', 2)
         if len(message_lines) < 3 or message_lines[1].strip() != "":

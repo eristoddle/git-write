@@ -1,25 +1,38 @@
-import unittest
-import pygit2
-import pytest
+import os
 import shutil
 import tempfile
+import unittest
+from datetime import datetime, timedelta, timezone  # Corrected import
 from pathlib import Path
-import os
-from datetime import datetime, timezone, timedelta # Corrected import
-from typing import Tuple, Optional
-from unittest import mock
-import pytest
 
-from gitwrite_core.repository import sync_repository, get_conflicting_files # Assuming get_conflicting_files is in repository.py
+import pygit2
+import pytest
+import yaml
+
 from gitwrite_core.exceptions import (
-    RepositoryNotFoundError, RepositoryEmptyError, DetachedHeadError,
-    RemoteNotFoundError, BranchNotFoundError, FetchError,
-    MergeConflictError, PushError, GitWriteError
+    BranchNotFoundError,
+    CommitNotFoundError,
+    DetachedHeadError,
+    FetchError,
+    FileNotFoundInCommitError,
+    GitWriteError,
+    MergeConflictError,
+    PushError,
+    RemoteNotFoundError,
+    RepositoryEmptyError,
+    RepositoryNotFoundError,
 )
+from gitwrite_core.repository import (
+    get_file_content_at_commit,
+    get_repository_metadata,
+    initialize_repository,
+    save_and_commit_file,
+    sync_repository,
+)
+from tests.helpers import init_repo
 
 # Constants TEST_USER_NAME and TEST_USER_EMAIL are now in conftest.py
-from .conftest import TEST_USER_NAME, TEST_USER_EMAIL
-from gitwrite_core.repository import initialize_repository, save_and_commit_file
+from .conftest import TEST_USER_EMAIL, TEST_USER_NAME
 
 
 class TestSyncRepositoryCore(unittest.TestCase):
@@ -30,14 +43,14 @@ class TestSyncRepositoryCore(unittest.TestCase):
         # Setup local repository
         self.local_repo_path = self.base_temp_dir / "local_repo"
         self.local_repo_path.mkdir()
-        self.local_repo = pygit2.init_repository(str(self.local_repo_path), bare=False)
+        self.local_repo = init_repo(self.local_repo_path, bare=False)
         self._configure_repo_user(self.local_repo)
         self.local_signature = pygit2.Signature(TEST_USER_NAME, TEST_USER_EMAIL, int(datetime.now(timezone.utc).timestamp()), 0)
 
 
         # Setup bare remote repository
         self.remote_repo_path = self.base_temp_dir / "remote_repo.git"
-        self.remote_repo = pygit2.init_repository(str(self.remote_repo_path), bare=True)
+        self.remote_repo = init_repo(self.remote_repo_path, bare=True)
         self._configure_repo_user(self.remote_repo) # Not strictly necessary for bare, but good for consistency if ever non-bare
         # Set the HEAD for the bare remote repository to default to 'main'.
         try:
@@ -60,12 +73,14 @@ class TestSyncRepositoryCore(unittest.TestCase):
                 try:
                     os.chmod(filepath, 0o777)
                     os.remove(filepath)
-                except OSError: pass # Ignore if not possible
+                except OSError:
+                    pass # Ignore if not possible
             for name in dirs:
                 dirpath = os.path.join(root, name)
                 try:
                     os.rmdir(dirpath)
-                except OSError: pass # Ignore if not possible
+                except OSError:
+                    pass # Ignore if not possible
         try:
             shutil.rmtree(self.base_temp_dir)
         except OSError:
@@ -79,6 +94,10 @@ class TestSyncRepositoryCore(unittest.TestCase):
 
     def _create_branch(self, repo: pygit2.Repository, branch_name: str, from_commit: pygit2.Commit):
         """Helper to create a branch from a specific commit."""
+        # The repo's initial branch is "main", so the first commit may already have created it.
+        existing = repo.branches.local.get(branch_name)
+        if existing is not None:
+            return existing
         return repo.branches.local.create(branch_name, from_commit)
 
     def _checkout_branch(self, repo: pygit2.Repository, branch_name: str):
@@ -149,7 +168,6 @@ class TestSyncRepositoryCore(unittest.TestCase):
 
     def test_sync_empty_unborn_repository(self):
         # self.local_repo is initialized but has no commits yet (empty/unborn)
-        self.assertTrue(self.local_repo.is_empty)
         self.assertTrue(self.local_repo.head_is_unborn)
         with self.assertRaisesRegex(RepositoryEmptyError, "Repository is empty or HEAD is unborn. Cannot sync."):
             sync_repository(str(self.local_repo_path))
@@ -252,29 +270,20 @@ class TestSyncRepositoryCore(unittest.TestCase):
         self.assertTrue(result["fetch_status"]["received_objects"] > 0 or result["fetch_status"]["total_objects"] > 0)
 
         # Verify the remote tracking branch for 'feature_on_remote' now exists locally
-        self.assertIn(f"refs/remotes/origin/feature_on_remote", self.local_repo.listall_references())
+        self.assertIn("refs/remotes/origin/feature_on_remote", self.local_repo.listall_references())
 
 
-    @mock.patch('pygit2.Remote.fetch') # Corrected: pygit2.Remote.fetch
-    def test_sync_fetch_failure(self, mock_fetch):
-        # Setup: local repo with 'main', remote 'origin'
+    def test_sync_fetch_failure(self):
         self._make_commit(self.local_repo, "initial.txt", "content", "Initial commit")
         initial_commit_obj = self.local_repo.lookup_reference("HEAD").peel(pygit2.Commit)
         self._create_branch(self.local_repo, "main", initial_commit_obj)
         self._checkout_branch(self.local_repo, "main")
 
-        self._add_remote(self.local_repo, "origin", "file://" + str(self.remote_repo_path)) # Using file:// URL
+        # A real remote that does not exist: libgit2 fails to open it.
+        self._add_remote(self.local_repo, "origin", str(self.base_temp_dir / "no_such_remote.git"))
 
-        # Configure mock_fetch to raise GitError
-        mock_fetch.side_effect = pygit2.GitError("Simulated fetch failure (e.g., network error)")
-
-        with self.assertRaisesRegex(FetchError, "Failed to fetch from remote 'origin': Simulated fetch failure"):
+        with self.assertRaisesRegex(FetchError, "Failed to fetch from remote 'origin'"):
             sync_repository(str(self.local_repo_path), remote_name="origin", branch_name_opt="main")
-
-        # Alternatively, if we want to check the returned dict status:
-        # result = sync_repository(str(self.local_repo_path), remote_name="origin", branch_name_opt="main")
-        # self.assertIn("failed", result["fetch_status"]["message"].lower())
-        # self.assertEqual(result["status"], "error_in_sub_operation") # Or a more specific error status
 
     # 3. Local Update Scenarios (with push=False, allow_no_push=True)
     def test_sync_local_up_to_date(self):
@@ -297,7 +306,7 @@ class TestSyncRepositoryCore(unittest.TestCase):
         # Then local_repo makes C2. Local is now ahead.
 
         # 1. Make C1 on local_repo
-        c1_local_oid = self._make_commit(self.local_repo, "file1.txt", "content1", "C1")
+        self._make_commit(self.local_repo, "file1.txt", "content1", "C1")
         c1_commit_obj = self.local_repo.lookup_reference("HEAD").peel(pygit2.Commit)
         self._create_branch(self.local_repo, "main", c1_commit_obj)
         self._checkout_branch(self.local_repo, "main")
@@ -309,7 +318,7 @@ class TestSyncRepositoryCore(unittest.TestCase):
 
         # 3. Make C2 on local_repo (on 'main' branch, which is already checked out)
         # Local 'main' is now at C2, which is one commit ahead of remote 'main' (at C1).
-        c2_local_oid = self._make_commit(self.local_repo, "file2.txt", "content2", "C2 local only")
+        self._make_commit(self.local_repo, "file2.txt", "content2", "C2 local only")
 
         result = sync_repository(str(self.local_repo_path), branch_name_opt="main", push=False, allow_no_push=True)
 
@@ -322,7 +331,7 @@ class TestSyncRepositoryCore(unittest.TestCase):
     def test_sync_fast_forward(self):
         # Setup: Remote is ahead of local, FF is possible
         # 1. Initial commit on local 'main', push to remote 'main'
-        c1_oid = self._make_commit(self.local_repo, "common_file.txt", "Initial", "C1")
+        self._make_commit(self.local_repo, "common_file.txt", "Initial", "C1")
         c1_commit_obj = self.local_repo.lookup_reference("HEAD").peel(pygit2.Commit)
         self._create_branch(self.local_repo, "main", c1_commit_obj)
         self._checkout_branch(self.local_repo, "main")
@@ -428,7 +437,7 @@ class TestSyncRepositoryCore(unittest.TestCase):
         self.assertTrue((self.local_repo_path / "local_change.txt").exists())
         self.assertTrue((self.local_repo_path / "remote_change.txt").exists())
         print(f"DEBUG: local_repo.state in test_sync_merge_clean is {self.local_repo.state()}") # Diagnostic print
-        self.assertEqual(self.local_repo.state(), pygit2.GIT_REPOSITORY_STATE_NONE) # Called state()
+        self.assertEqual(self.local_repo.state(), pygit2.enums.RepositoryState.NONE) # Called state()
         self.assertEqual(result["status"], "success")
 
     def test_sync_merge_conflicts(self):
@@ -442,7 +451,7 @@ class TestSyncRepositoryCore(unittest.TestCase):
         self._push_to_remote(self.local_repo, "origin", "main")
 
         # 2. Local C2: modifies common_line (on 'main')
-        c2_local_oid = self._make_commit(self.local_repo, "conflict_file.txt", "line1\nlocal_change_on_common\nline3", "C2 Local")
+        self._make_commit(self.local_repo, "conflict_file.txt", "line1\nlocal_change_on_common\nline3", "C2 Local")
 
         # 3. Remote C2: modifies common_line differently
         temp_clone_path = self.base_temp_dir / "temp_clone_for_conflict"
@@ -467,7 +476,7 @@ class TestSyncRepositoryCore(unittest.TestCase):
         temp_clone_repo.index.add("conflict_file.txt")
         temp_clone_repo.index.write()
         tree_clone = temp_clone_repo.index.write_tree()
-        c2_remote_oid = temp_clone_repo.create_commit("HEAD", sig_clone, sig_clone, "C2 Remote conflict", tree_clone, [c1_oid])
+        temp_clone_repo.create_commit("HEAD", sig_clone, sig_clone, "C2 Remote conflict", tree_clone, [c1_oid])
         temp_clone_repo.remotes["origin"].push(["refs/heads/main:refs/heads/main"])
         shutil.rmtree(temp_clone_path)
 
@@ -482,7 +491,7 @@ class TestSyncRepositoryCore(unittest.TestCase):
         # Check repo state: index should have conflicts, MERGE_HEAD should be gone (due to state_cleanup in core)
         # self.assertTrue(self.local_repo.index.has_conflicts()) # Removed this problematic line
         print(f"DEBUG: local_repo.state in test_sync_merge_conflicts is {self.local_repo.state()}") # Diagnostic print
-        self.assertEqual(self.local_repo.state(), pygit2.GIT_REPOSITORY_STATE_NONE) # Called state(); state_cleanup likely resets state to NONE
+        self.assertEqual(self.local_repo.state(), pygit2.enums.RepositoryState.NONE) # Called state(); state_cleanup likely resets state to NONE
         # The `save_changes` function calls state_cleanup which removes MERGE_HEAD.
         # `sync_repository` also calls `state_cleanup` if conflicts are detected AFTER `repo.merge()`.
         # Let's verify MERGE_HEAD is gone.
@@ -554,105 +563,25 @@ class TestSyncRepositoryCore(unittest.TestCase):
         self.assertFalse(result["push_status"]["pushed"])
         self.assertIn("Nothing to push", result["push_status"]["message"])
 
-    # Removed @pytest.mark.xfail
-    @mock.patch('pygit2.Remote.push')
-    @pytest.mark.xfail(reason="Fails with KeyError: refs/heads/main. Remote bare repo setup is flawed.")
-    def test_sync_push_failure_non_fast_forward(self, mock_push_method):
-        # 1. Base C1 on local 'main', pushed to remote 'main'
-        c1_oid = self._make_commit(self.local_repo, "base_file.txt", "v1", "C1 Base")
-        # Ensure 'main' branch exists from this commit and is checked out
-        if "main" not in self.local_repo.branches.local:
-            self._create_branch(self.local_repo, "main", self.local_repo.get(c1_oid))
-        self._checkout_branch(self.local_repo, "main")
-
-        self._add_remote(self.local_repo, "origin", str(self.remote_repo_path))
-        self._push_to_remote(self.local_repo, "origin", "main") # Remote 'main' is at C1
-
-        # Verify remote 'main' exists and set remote HEAD (important for clone behavior)
-        # Re-open the remote repo to ensure we have the latest state after push
-        fresh_remote_repo = pygit2.Repository(str(self.remote_repo_path))
-
-        # Ensure refs/heads/main actually exists on remote after push before trying to set HEAD to it
-        try:
-            fresh_remote_repo.lookup_reference("refs/heads/main")
-        except KeyError:
-            self.fail("refs/heads/main was not created on the remote repository after push.")
-
-        # Explicitly set HEAD on the bare remote to point to the 'main' branch
-        fresh_remote_repo.set_head("refs/heads/main")
-
-        # Now, assertions on the fresh_remote_repo instance
-        self.assertIsNotNone(fresh_remote_repo.lookup_reference("refs/heads/main"), "refs/heads/main should exist on remote after push and set_head.")
-        head_ref = fresh_remote_repo.head
-        self.assertEqual(head_ref.name, "HEAD") # Symbolic ref name
-        # Check if HEAD is symbolic and points to 'refs/heads/main'
-        if head_ref.type == pygit2.GIT_REFERENCE_SYMBOLIC:
-            self.assertEqual(head_ref.target, "refs/heads/main", "Remote HEAD should point to refs/heads/main")
-        else:
-            self.fail(f"Remote HEAD is not symbolic after set_head, but is {head_ref.target}")
-
-
-        # 2. Local C2: Add a new file (main branch)
-        c2_local_oid = self._make_commit(self.local_repo, "local_file.txt", "local content", "C2 Local")
-
-        # 3. Remote C2': Add a different new file (main branch, from C1)
-        # Simulate this via a temporary clone
-        temp_clone_path = self.base_temp_dir / "temp_clone_for_nff_push"
-        temp_clone = pygit2.clone_repository(str(self.remote_repo_path), str(temp_clone_path))
-        self._configure_repo_user(temp_clone)
-        sig_clone = pygit2.Signature(TEST_USER_NAME, TEST_USER_EMAIL, int(datetime.now(timezone.utc).timestamp()), 0)
-
-        # Checkout main in clone and reset to C1
-        if "main" not in temp_clone.branches.local: # Should exist due to clone
-             remote_main_commit = temp_clone.lookup_reference("refs/remotes/origin/main").peel(pygit2.Commit)
-             temp_clone.branches.local.create("main", remote_main_commit)
-        temp_clone.checkout("refs/heads/main")
-        temp_clone.reset(c1_oid, pygit2.GIT_RESET_HARD) # Reset clone's main to C1
-
-        # Create C2' on clone's main
-        (Path(temp_clone.workdir) / "remote_file.txt").write_text("remote content")
-        temp_clone.index.add("remote_file.txt")
-        temp_clone.index.write()
-        tree_clone = temp_clone.index.write_tree()
-        c2_remote_oid = temp_clone.create_commit("HEAD", sig_clone, sig_clone, "C2' Remote", tree_clone, [c1_oid])
-        temp_clone.remotes["origin"].push(["refs/heads/main:refs/heads/main"])
-        shutil.rmtree(str(temp_clone.workdir)) # Use str() for Path object before rmtree
-
-        # At this point:
-        # Local 'main' is at C2 (C1 -> C2_local)
-        # Remote 'main' is at C2' (C1 -> C2_remote)
-        # sync_repository should:
-        # - Fetch C2'.
-        # - Merge C2' into local C2. This should be a clean merge (different files), creating C3_merge.
-        # - Attempt to push C3_merge. This will be non-fast-forward as remote is at C2'.
-
-        mock_push_method.side_effect = pygit2.GitError("Push failed: non-fast-forward simulated")
-
-        with self.assertRaisesRegex(PushError, "non-fast-forward simulated"):
-            sync_repository(str(self.local_repo_path), branch_name_opt="main", push=True)
-
-        # Verify mock was called (means merge was successful)
-        mock_push_method.assert_called_once()
-
-    @mock.patch('pygit2.Remote.push')
-    def test_sync_push_failure_auth_error(self, mock_push_method):
-        # Create 'main' branch and commit C1
-        self._make_commit(self.local_repo, "file_for_auth_test.txt", "content", "C1")
+    def test_sync_push_failure_unreachable_push_url(self):
+        self._make_commit(self.local_repo, "file_for_push_test.txt", "content", "C1")
         main_commit_obj = self.local_repo.lookup_reference("HEAD").peel(pygit2.Commit)
         self._create_branch(self.local_repo, "main", main_commit_obj)
         self._checkout_branch(self.local_repo, "main")
 
         self._add_remote(self.local_repo, "origin", str(self.remote_repo_path))
-        # Don't push C1 yet, so local is ahead.
+        # Fetching works, pushing goes to a remote that does not exist, so the push fails for real.
+        self.local_repo.config["remote.origin.pushurl"] = str(self.base_temp_dir / "no_such_push_target.git")
 
-        mock_push_method.side_effect = pygit2.GitError("Push failed: Authentication required")
-
-        with self.assertRaisesRegex(PushError, "Authentication required"):
+        with self.assertRaisesRegex(PushError, "Failed to push branch 'main' to 'origin'"):
             sync_repository(str(self.local_repo_path), branch_name_opt="main", push=True)
+
+        # The real remote did not receive anything.
+        self.assertNotIn("refs/heads/main", self.remote_repo.listall_references())
 
     def test_sync_push_skipped_by_flag(self):
         # Local is ahead, but push=False
-        c1_local_oid = self._make_commit(self.local_repo, "file1.txt", "content1", "C1")
+        self._make_commit(self.local_repo, "file1.txt", "content1", "C1")
         main_commit_obj = self.local_repo.lookup_reference("HEAD").peel(pygit2.Commit)
         self._create_branch(self.local_repo, "main", main_commit_obj)
         self._checkout_branch(self.local_repo, "main")
@@ -978,7 +907,7 @@ def test_save_file_empty_commit_message_allowed(tmp_repo_for_save: Path):
 def repo_with_commits_for_file_content(tmp_path: Path) -> Path:
     repo_dir = tmp_path / "content_repo"
     repo_dir.mkdir()
-    repo = pygit2.init_repository(str(repo_dir))
+    repo = init_repo(repo_dir)
     config = repo.config
     config["user.name"] = "Test Author"
     config["user.email"] = "testauthor@example.com"
@@ -1008,12 +937,10 @@ def repo_with_commits_for_file_content(tmp_path: Path) -> Path:
     repo.index.add(subdir_file_rel)
     repo.index.write() # Write after all adds for the commit
     tree2_oid = repo.index.write_tree()
-    commit2_oid = repo.create_commit("HEAD", sig, sig, "Second commit, modified text_file, added subdir_file", tree2_oid, [commit1_oid])
+    repo.create_commit("HEAD", sig, sig, "Second commit, modified text_file, added subdir_file", tree2_oid, [commit1_oid])
 
     return repo_dir
 
-from gitwrite_core.repository import get_file_content_at_commit
-from gitwrite_core.exceptions import RepositoryNotFoundError, CommitNotFoundError, FileNotFoundInCommitError, GitWriteError
 
 
 def test_get_file_content_success_text(repo_with_commits_for_file_content: Path):
@@ -1127,14 +1054,13 @@ def test_get_file_content_non_utf8_text_file(repo_with_commits_for_file_content:
 
 # --- Tests for get_repository_metadata ---
 
-from gitwrite_core.repository import get_repository_metadata
-import yaml
+
 
 @pytest.fixture
 def metadata_repo(tmp_path: Path) -> Path:
     repo_dir = tmp_path / "metadata_test_repo"
     repo_dir.mkdir()
-    repo = pygit2.init_repository(str(repo_dir))
+    repo = init_repo(repo_dir)
     config = repo.config
     config["user.name"] = "Metadata Tester"
     config["user.email"] = "meta@example.com"
@@ -1145,7 +1071,7 @@ def metadata_repo(tmp_path: Path) -> Path:
     repo.index.add("initial_file.txt")
     repo.index.write()
     tree1_oid = repo.index.write_tree()
-    commit1_oid = repo.create_commit("HEAD", sig, sig, "Initial commit", tree1_oid, [])
+    repo.create_commit("HEAD", sig, sig, "Initial commit", tree1_oid, [])
 
     # Create metadata.yml
     metadata_content = {"description": "This is a test repository for metadata."}
@@ -1173,7 +1099,7 @@ def test_get_repository_metadata_success_with_metadata_file(metadata_repo: Path)
     if not parents and not repo.is_empty: # Should have a parent from fixture's initial commit
         pytest.fail("Repository HEAD is unborn or has no target after initial commit in fixture.")
 
-    commit_meta_oid = repo.create_commit("HEAD", sig, sig, "Commit metadata.yml", tree_oid, parents)
+    repo.create_commit("HEAD", sig, sig, "Commit metadata.yml", tree_oid, parents)
 
     metadata = get_repository_metadata(metadata_repo)
     assert metadata is not None
@@ -1188,7 +1114,7 @@ def test_get_repository_metadata_success_with_metadata_file(metadata_repo: Path)
 def test_get_repository_metadata_success_no_metadata_file(tmp_path: Path):
     repo_dir = tmp_path / "no_meta_repo"
     repo_dir.mkdir()
-    repo = pygit2.init_repository(str(repo_dir))
+    repo = init_repo(repo_dir)
     config = repo.config # Minimal setup for a valid repo
     config["user.name"] = "NoMeta Tester"
     config["user.email"] = "nometa@example.com"
@@ -1199,7 +1125,7 @@ def test_get_repository_metadata_success_no_metadata_file(tmp_path: Path):
     repo.index.add("file.txt")
     repo.index.write()
     tree_oid = repo.index.write_tree()
-    commit_oid = repo.create_commit("HEAD", sig, sig, "Initial commit", tree_oid, [])
+    repo.create_commit("HEAD", sig, sig, "Initial commit", tree_oid, [])
 
     metadata = get_repository_metadata(repo_dir)
     assert metadata is not None
@@ -1213,7 +1139,7 @@ def test_get_repository_metadata_success_no_metadata_file(tmp_path: Path):
 def test_get_repository_metadata_empty_repo(tmp_path: Path):
     repo_dir = tmp_path / "empty_metadata_repo"
     repo_dir.mkdir()
-    pygit2.init_repository(str(repo_dir)) # Init but no commits
+    init_repo(repo_dir) # Init but no commits
 
     # Touch the directory to update its mtime for predictability if needed
     # os.utime(repo_dir) # This might not be necessary if stat().st_mtime is recent enough
