@@ -1,0 +1,519 @@
+{
+ "locate": [
+  {
+   "name": "context tier finds the passage where it is",
+   "text": "The rain had not stopped for three days, and the river was rising against the old stone bridge.\nMarta counted the sandbags twice. Then she counted them again.\nBy evening the road was gone.\n",
+   "annotation": {
+    "highlighted_text": "Marta counted the sandbags twice.",
+    "start_line": 1,
+    "end_line": 1,
+    "prefix": "g against the old stone bridge.\n",
+    "suffix": " Then she counted them again.\nBy",
+    "offset": 96
+   },
+   "expected": {
+    "start": 96,
+    "end": 129,
+    "method": "context"
+   }
+  },
+  {
+   "name": "context survives edits elsewhere",
+   "text": "New opening.\n\nThe rain had not stopped for three days, and the river was rising against the old stone bridge.\nMarta counted the sandbags twice. Then she counted them again.\nBy evening the road was gone.\n\nNew ending.\n",
+   "annotation": {
+    "highlighted_text": "Marta counted the sandbags twice.",
+    "start_line": 1,
+    "end_line": 1,
+    "prefix": "g against the old stone bridge.\n",
+    "suffix": " Then she counted them again.\nBy",
+    "offset": 96
+   },
+   "expected": {
+    "start": 110,
+    "end": 143,
+    "method": "context"
+   }
+  },
+  {
+   "name": "text tier when the words around it changed",
+   "text": "Rain kept falling for three days, and the river was rising against the old stone bridge.\nMarta counted the sandbags twice. She recounted them again.\nBy evening the road was gone.\n",
+   "annotation": {
+    "highlighted_text": "Marta counted the sandbags twice.",
+    "start_line": 1,
+    "end_line": 1,
+    "prefix": "g against the old stone bridge.\n",
+    "suffix": " Then she counted them again.\nBy",
+    "offset": 96
+   },
+   "expected": {
+    "start": 89,
+    "end": 122,
+    "method": "text"
+   }
+  },
+  {
+   "name": "line tier when the passage itself was rewritten",
+   "text": "The rain had not stopped for three days, and the river was rising against the old stone bridge.\nMarta tallied every sandbag. Then she counted them again.\nBy evening the road was gone.\n",
+   "annotation": {
+    "highlighted_text": "Marta counted the sandbags twice.",
+    "start_line": 1,
+    "end_line": 1,
+    "prefix": "g against the old stone bridge.\n",
+    "suffix": " Then she counted them again.\nBy",
+    "offset": 96
+   },
+   "expected": {
+    "start": 96,
+    "end": 153,
+    "method": "line"
+   }
+  },
+  {
+   "name": "moved with its context",
+   "text": "not stopped for three days, and the river was rising against the old stone bridge.\nMarta counted the sandbags twice. Then she counted them again.\nBy evening the road was gone.\n\nChapter One\n\n",
+   "annotation": {
+    "highlighted_text": "Marta counted the sandbags twice.",
+    "start_line": 1,
+    "end_line": 1,
+    "prefix": "g against the old stone bridge.\n",
+    "suffix": " Then she counted them again.\nBy",
+    "offset": 96
+   },
+   "expected": {
+    "start": 83,
+    "end": 116,
+    "method": "context"
+   }
+  },
+  {
+   "name": "moved without its context",
+   "text": "Preface: Marta counted the sandbags twice. (moved)\nThe rain had not stopped for three days, and the river was rising against the old stone bridge.\n Then she counted them again.\nBy evening the road was gone.\n",
+   "annotation": {
+    "highlighted_text": "Marta counted the sandbags twice.",
+    "start_line": 1,
+    "end_line": 1,
+    "prefix": "g against the old stone bridge.\n",
+    "suffix": " Then she counted them again.\nBy",
+    "offset": 96
+   },
+   "expected": {
+    "start": 9,
+    "end": 42,
+    "method": "text"
+   }
+  },
+  {
+   "name": "duplicates told apart by context",
+   "text": "First scene.\nHe said no.\nSecond scene.\nHe said no.\nThird scene.\n",
+   "annotation": {
+    "highlighted_text": "He said no.",
+    "start_line": 3,
+    "end_line": 3,
+    "prefix": "cene.\nHe said no.\nSecond scene.\n",
+    "suffix": "\nThird scene.\n",
+    "offset": 39
+   },
+   "expected": {
+    "start": 39,
+    "end": 50,
+    "method": "context"
+   }
+  },
+  {
+   "name": "duplicates, context changed: nearest the old offset",
+   "text": "Opening.\nHe said no.\nMiddle.\nHe said no.\nClose.\n",
+   "annotation": {
+    "highlighted_text": "He said no.",
+    "start_line": 3,
+    "end_line": 3,
+    "prefix": "cene.\nHe said no.\nSecond scene.\n",
+    "suffix": "\nThird scene.\n",
+    "offset": 39
+   },
+   "expected": {
+    "start": 29,
+    "end": 40,
+    "method": "text"
+   }
+  },
+  {
+   "name": "duplicates, no offset: nearest the stored line",
+   "text": "x\nsame\ny\nsame\n",
+   "annotation": {
+    "highlighted_text": "same",
+    "start_line": 3,
+    "end_line": 3,
+    "prefix": null,
+    "suffix": null,
+    "offset": null
+   },
+   "expected": {
+    "start": 9,
+    "end": 13,
+    "method": "text"
+   }
+  },
+  {
+   "name": "no anchors goes straight to text",
+   "text": "The rain had not stopped for three days, and the river was rising against the old stone bridge.\nMarta counted the sandbags twice. Then she counted them again.\nBy evening the road was gone.\n",
+   "annotation": {
+    "highlighted_text": "Marta counted the sandbags twice.",
+    "start_line": 1,
+    "end_line": 1,
+    "prefix": null,
+    "suffix": null,
+    "offset": null
+   },
+   "expected": {
+    "start": 96,
+    "end": 129,
+    "method": "text"
+   }
+  },
+  {
+   "name": "anchor clipped at the start of the file",
+   "text": "Hello world, this is the file.",
+   "annotation": {
+    "highlighted_text": "Hello",
+    "start_line": 0,
+    "end_line": 0,
+    "prefix": "",
+    "suffix": " world, this is the file.",
+    "offset": 0
+   },
+   "expected": {
+    "start": 0,
+    "end": 5,
+    "method": "context"
+   }
+  },
+  {
+   "name": "anchor clipped at the end of the file",
+   "text": "The file ends here",
+   "annotation": {
+    "highlighted_text": "here",
+    "start_line": 0,
+    "end_line": 0,
+    "prefix": "The file ends ",
+    "suffix": "",
+    "offset": 14
+   },
+   "expected": {
+    "start": 14,
+    "end": 18,
+    "method": "context"
+   }
+  },
+  {
+   "name": "whole file is the passage",
+   "text": "all of it",
+   "annotation": {
+    "highlighted_text": "all of it",
+    "start_line": 0,
+    "end_line": 0,
+    "prefix": "",
+    "suffix": "",
+    "offset": 0
+   },
+   "expected": {
+    "start": 0,
+    "end": 9,
+    "method": "context"
+   }
+  },
+  {
+   "name": "line range covers several lines",
+   "text": "zero\none\ntwo\nthree\n",
+   "annotation": {
+    "highlighted_text": "gone",
+    "start_line": 1,
+    "end_line": 2,
+    "prefix": null,
+    "suffix": null,
+    "offset": null
+   },
+   "expected": {
+    "start": 5,
+    "end": 12,
+    "method": "line"
+   }
+  },
+  {
+   "name": "last line without a newline",
+   "text": "a\nlast",
+   "annotation": {
+    "highlighted_text": "gone",
+    "start_line": 1,
+    "end_line": 1,
+    "prefix": null,
+    "suffix": null,
+    "offset": null
+   },
+   "expected": {
+    "start": 2,
+    "end": 6,
+    "method": "line"
+   }
+  },
+  {
+   "name": "crlf line endings",
+   "text": "a\r\nb\r\nc",
+   "annotation": {
+    "highlighted_text": "gone",
+    "start_line": 1,
+    "end_line": 1,
+    "prefix": null,
+    "suffix": null,
+    "offset": null
+   },
+   "expected": {
+    "start": 3,
+    "end": 4,
+    "method": "line"
+   }
+  },
+  {
+   "name": "end line is clamped to the last line",
+   "text": "a\nb",
+   "annotation": {
+    "highlighted_text": "gone",
+    "start_line": 1,
+    "end_line": 40,
+    "prefix": null,
+    "suffix": null,
+    "offset": null
+   },
+   "expected": {
+    "start": 2,
+    "end": 3,
+    "method": "line"
+   }
+  },
+  {
+   "name": "end line before start line is raised to it",
+   "text": "a\nb\nc",
+   "annotation": {
+    "highlighted_text": "gone",
+    "start_line": 1,
+    "end_line": 0,
+    "prefix": null,
+    "suffix": null,
+    "offset": null
+   },
+   "expected": {
+    "start": 2,
+    "end": 3,
+    "method": "line"
+   }
+  },
+  {
+   "name": "nothing found when the lines are gone too",
+   "text": "short file\n",
+   "annotation": {
+    "highlighted_text": "gone",
+    "start_line": 40,
+    "end_line": 40,
+    "prefix": null,
+    "suffix": null,
+    "offset": null
+   },
+   "expected": null
+  },
+  {
+   "name": "empty highlighted text skips text matching",
+   "text": "The rain had not stopped for three days, and the river was rising against the old stone bridge.\nMarta counted the sandbags twice. Then she counted them again.\nBy evening the road was gone.\n",
+   "annotation": {
+    "highlighted_text": "",
+    "start_line": 2,
+    "end_line": 2,
+    "prefix": null,
+    "suffix": null,
+    "offset": null
+   },
+   "expected": {
+    "start": 159,
+    "end": 188,
+    "method": "line"
+   }
+  },
+  {
+   "name": "matching is exact, not case-insensitive",
+   "text": "The Lazy Dog\nthe lazy dog\n",
+   "annotation": {
+    "highlighted_text": "the lazy dog",
+    "start_line": 0,
+    "end_line": 0,
+    "prefix": null,
+    "suffix": null,
+    "offset": null
+   },
+   "expected": {
+    "start": 13,
+    "end": 25,
+    "method": "text"
+   }
+  },
+  {
+   "name": "overlapping occurrences are all candidates",
+   "text": "aaaa",
+   "annotation": {
+    "highlighted_text": "aaa",
+    "start_line": 0,
+    "end_line": 0,
+    "prefix": "",
+    "suffix": "",
+    "offset": 1
+   },
+   "expected": {
+    "start": 1,
+    "end": 4,
+    "method": "context"
+   }
+  },
+  {
+   "name": "code points not UTF-16 units (emoji before the passage)",
+   "text": "😀 intro 😀\nMarta counted the sandbags twice. 😀 Then she counted them again.\nEnd.\n",
+   "annotation": {
+    "highlighted_text": "Marta counted the sandbags twice. 😀",
+    "start_line": 1,
+    "end_line": 1,
+    "prefix": "😀 intro 😀\n",
+    "suffix": " Then she counted them again.\nEn",
+    "offset": 10
+   },
+   "expected": {
+    "start": 10,
+    "end": 45,
+    "method": "context"
+   }
+  },
+  {
+   "name": "emoji, text tier, offset in code points",
+   "text": "😀 opening 😀\nMarta counted the sandbags twice. 😀 Then she counted them again.\nEnd.\n",
+   "annotation": {
+    "highlighted_text": "Marta counted the sandbags twice. 😀",
+    "start_line": 1,
+    "end_line": 1,
+    "prefix": "😀 intro 😀\n",
+    "suffix": " Then she counted them again.\nEn",
+    "offset": 10
+   },
+   "expected": {
+    "start": 12,
+    "end": 47,
+    "method": "text"
+   }
+  },
+  {
+   "name": "nearest the stored offset is measured in code points",
+   "text": "😀😀😀😀😀😀aaaaaaaaaaaaaaaaaasamebbsame",
+   "annotation": {
+    "highlighted_text": "same",
+    "start_line": 0,
+    "end_line": 0,
+    "prefix": "zzz",
+    "suffix": "",
+    "offset": 30
+   },
+   "expected": {
+    "start": 30,
+    "end": 34,
+    "method": "text"
+   }
+  },
+  {
+   "name": "a tie in offset distance goes to the earlier match",
+   "text": "aaaaasamebbbbbbsame",
+   "annotation": {
+    "highlighted_text": "same",
+    "start_line": 0,
+    "end_line": 0,
+    "prefix": "zzz",
+    "suffix": "",
+    "offset": 10
+   },
+   "expected": {
+    "start": 5,
+    "end": 9,
+    "method": "text"
+   }
+  },
+  {
+   "name": "a tie in line distance goes to the earlier match",
+   "text": "same\nx\nsame",
+   "annotation": {
+    "highlighted_text": "same",
+    "start_line": 1,
+    "end_line": 1,
+    "prefix": null,
+    "suffix": null,
+    "offset": null
+   },
+   "expected": {
+    "start": 0,
+    "end": 4,
+    "method": "text"
+   }
+  },
+  {
+   "name": "a duplicate after an emoji picks the right one by code-point offset",
+   "text": "😀😀😀 a\nsame\n😀😀😀 b\nsame\n",
+   "annotation": {
+    "highlighted_text": "same",
+    "start_line": 3,
+    "end_line": 3,
+    "prefix": "😀😀😀 a\nsame\n😀😀😀 b\n",
+    "suffix": "\n",
+    "offset": 17
+   },
+   "expected": {
+    "start": 17,
+    "end": 21,
+    "method": "context"
+   }
+  }
+ ],
+ "statusCommit": {
+  "annotationId": "8c1f6e0b4d2a9f37c5e18b60a47d3e92f1b5c7d4",
+  "created": {
+   "file_path": "chapter1.md",
+   "highlighted_text": "Marta counted the sandbags twice.",
+   "start_line": 1,
+   "end_line": 1,
+   "comment": "Show her fear: \"tell\" less, and mind the colon: here.",
+   "author": "reader@example.com",
+   "status": "new",
+   "prefix": "g against the old stone bridge.\n",
+   "suffix": " Then she counted them again.\nBy",
+   "offset": 96
+  },
+  "newStatus": "accepted",
+  "subject": "Update status: chapter1.md (Annotation 8c1f6e0) to accepted",
+  "body": {
+   "file_path": "chapter1.md",
+   "highlighted_text": "Marta counted the sandbags twice.",
+   "start_line": 1,
+   "end_line": 1,
+   "comment": "Show her fear: \"tell\" less, and mind the colon: here.",
+   "author": "reader@example.com",
+   "status": "accepted",
+   "prefix": "g against the old stone bridge.\n",
+   "suffix": " Then she counted them again.\nBy",
+   "offset": 96,
+   "original_annotation_id": "8c1f6e0b4d2a9f37c5e18b60a47d3e92f1b5c7d4"
+  },
+  "fieldOrder": [
+   "file_path",
+   "highlighted_text",
+   "start_line",
+   "end_line",
+   "comment",
+   "author",
+   "status",
+   "prefix",
+   "suffix",
+   "offset",
+   "original_annotation_id"
+  ]
+ }
+}
