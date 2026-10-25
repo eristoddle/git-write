@@ -219,7 +219,7 @@ def test_update_non_existent_annotation(temp_git_repo: Path):
     """Test trying to update an annotation that doesn't exist."""
     with pytest.raises(RepositoryOperationError): # Or AnnotationError depending on how specific the check is
         update_annotation_status(
-            str(temp_git_repo), "feedback_branch", "nonexistentcommitsha", AnnotationStatus.ACCEPTED
+            str(temp_git_repo), "feedback_branch", "0123456789abcdef0123456789abcdef01234567", AnnotationStatus.ACCEPTED
         )
 
 def test_create_annotation_in_invalid_repo(tmp_path: Path):
