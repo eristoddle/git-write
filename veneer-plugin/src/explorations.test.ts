@@ -3,8 +3,10 @@ import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import type { FormView, ItemsView, PluginManifest } from '@veneer/api'
 import { createFakeHost } from '@veneer/api/testing'
+import { veneerError } from '@veneer/api'
 import {
   EXPLORATIONS_SURFACE,
+  MERGE_ACTION,
   SHOW_EXPLORATIONS_COMMAND,
   START_EXPLORATION_COMMAND,
   START_SURFACE,
@@ -272,5 +274,101 @@ describe('switching explorations', () => {
     await fake.rowAction(EXPLORATIONS_SURFACE, SWITCH_ACTION, 'vanished')
     expect(notices(fake)).toEqual([])
     expect(list(fake).items.map((i) => i.id)).toEqual(['main'])
+  })
+})
+
+describe('bringing an exploration in (merge)', () => {
+  /** main and ending-b both start from "First version"; each then saves its own work. */
+  async function twoExplorations(options: { sameFile: boolean }): Promise<Fake> {
+    const fake = await withHistory({ files: { 'two.md': 'Second page.' } })
+    await fake.api.history.createBranch('ending-b')
+    await fake.api.history.switchTo('ending-b')
+    if (options.sameFile) fake.changeText('Ending B changes page one.')
+    else fake.files.set('two.md', 'Second page, changed on ending-b.')
+    await fake.api.history.save('Work on ending-b')
+    await fake.api.history.switchTo('main')
+    fake.changeText('Main changes page one.')
+    await fake.api.history.save('Work on main')
+    await fake.refreshSurface(EXPLORATIONS_SURFACE)
+    return fake
+  }
+
+  it('brings the other exploration\'s work in when they changed different parts', async () => {
+    const fake = await twoExplorations({ sameFile: false })
+    await fake.rowAction(EXPLORATIONS_SURFACE, MERGE_ACTION, 'ending-b')
+
+    expect(notices(fake)).toEqual(['Brought “ending-b” into “main”. Your page was saved first and the project’s files now include it.'])
+    expect((await fake.api.history.log())[0]?.parents).toHaveLength(2) // a real merge, so both histories are kept
+    expect(await current(fake)).toBe('main')
+  })
+
+  it('stops on a conflict, names the files, and says nothing was changed', async () => {
+    const fake = await twoExplorations({ sameFile: true })
+    const before = (await fake.api.history.log()).map((c) => c.id)
+    await fake.rowAction(EXPLORATIONS_SURFACE, MERGE_ACTION, 'ending-b')
+
+    expect(notices(fake)).toEqual(['Couldn’t bring “ending-b” into “main”. Merging ending-b conflicts in one.md; nothing changed.'])
+    expect((await fake.api.history.log()).map((c) => c.id)).toEqual(before)
+    expect(fake.text()).toBe('Main changes page one.')
+  })
+
+  it('still says nothing was changed if the host\'s own sentence does not', async () => {
+    const fake = await twoExplorations({ sameFile: true })
+    fake.api.history.merge = async () => {
+      throw veneerError('history/conflict', 'Both changed one.md and two.md.')
+    }
+    await fake.rowAction(EXPLORATIONS_SURFACE, MERGE_ACTION, 'ending-b')
+
+    expect(notices(fake)).toEqual(['Couldn’t bring “ending-b” into “main”. Both changed one.md and two.md. Nothing was changed.'])
+  })
+
+  it('keeps a very long list of files inside one short notice', async () => {
+    const fake = await twoExplorations({ sameFile: true })
+    fake.api.history.merge = async () => {
+      throw veneerError('history/conflict', `Conflicts in ${Array.from({ length: 60 }, (_, i) => `chapter-${i}.md`).join(', ')}.`)
+    }
+    await fake.rowAction(EXPLORATIONS_SURFACE, MERGE_ACTION, 'ending-b')
+
+    expect(notices(fake)[0]!.length).toBeLessThanOrEqual(200)
+    expect(notices(fake)[0]).toMatch(/^Couldn’t bring “ending-b” into “main”\. Conflicts in chapter-0\.md/)
+  })
+
+  it('says there is nothing new when the other exploration adds nothing', async () => {
+    const fake = await withHistory()
+    await fake.api.history.createBranch('same')
+    await fake.refreshSurface(EXPLORATIONS_SURFACE)
+    await fake.rowAction(EXPLORATIONS_SURFACE, MERGE_ACTION, 'same')
+
+    expect(notices(fake)).toEqual(['“same” has nothing new for “main”.'])
+  })
+
+  it('will not bring an exploration into itself', async () => {
+    const fake = await withHistory()
+    await fake.refreshSurface(EXPLORATIONS_SURFACE)
+    await fake.rowAction(EXPLORATIONS_SURFACE, MERGE_ACTION, 'main')
+
+    expect(notices(fake)).toEqual(['“main” is the exploration you are on. Choose another to bring in.'])
+  })
+
+  it('asks the writer to save first when there are changes not in a version', async () => {
+    const fake = await twoExplorations({ sameFile: false })
+    fake.changeText('Unsaved words.')
+    await fake.rowAction(EXPLORATIONS_SURFACE, MERGE_ACTION, 'ending-b')
+
+    expect(notices(fake)).toEqual(['Your project has changes that are not in a version yet. Use “Save a Version”, then try again.'])
+  })
+
+  it('reloads the list when the exploration is gone', async () => {
+    const fake = await withHistory()
+    await fake.refreshSurface(EXPLORATIONS_SURFACE)
+    await fake.rowAction(EXPLORATIONS_SURFACE, MERGE_ACTION, 'vanished')
+    expect(notices(fake)).toEqual([])
+  })
+
+  it('does not offer the readers\' feedback branch to bring in', async () => {
+    const fake = await withHistory()
+    await fake.api.history.createBranch('feedback')
+    await fake.refreshSurface(EXPLORATIONS_SURFACE)
+    expect(list(fake).items.map((i) => i.id)).not.toContain('feedback')
   })
 })

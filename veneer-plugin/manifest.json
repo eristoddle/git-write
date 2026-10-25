@@ -82,6 +82,16 @@
             ],
             "prompt": "Switch to “{name}”? Your page is saved first, then the project’s files change to match it.",
             "verb": "switch"
+          },
+          {
+            "id": "gitwrite:merge-exploration",
+            "title": "Bring Into This Exploration",
+            "input": "confirm",
+            "appliesTo": [
+              "file"
+            ],
+            "prompt": "Bring “{name}” into the exploration you are on? Your page is saved first. If both changed the same part, nothing is changed.",
+            "verb": "bring in"
           }
         ]
       },

@@ -1,3 +1,4 @@
+import { isVeneerError } from '@veneer/api'
 import type { FormView, HistoryBranch, ItemsView, PluginApi } from '@veneer/api'
 import { nameProblem } from './names'
 import { feedbackBranch } from './settings'
@@ -8,6 +9,7 @@ export const START_EXPLORATION_COMMAND = 'gitwrite:start-exploration'
 export const EXPLORATIONS_SURFACE = 'gitwrite:explorations'
 export const START_SURFACE = 'gitwrite:start'
 export const SWITCH_ACTION = 'gitwrite:switch-exploration'
+export const MERGE_ACTION = 'gitwrite:merge-exploration'
 
 const NO_VERSIONS = 'No explorations yet. Save a version first, then start one.'
 const SWITCHING_NOTE =
@@ -47,6 +49,16 @@ export function startForm(options: { current?: string; name?: string; error?: st
   }
 }
 
+/** Why bringing `name` into `here` failed, in a sentence: a conflict names the files and says nothing changed. */
+export function explainMergeError(err: unknown, name: string, here: string): string {
+  if (isVeneerError(err) && err.code === 'history/conflict') {
+    const said = err.message.trim()
+    const unchanged = /nothing (was )?changed/i.test(said) ? '' : ' Nothing was changed.'
+    return shorten(`Couldn’t bring “${name}” into “${here}”. ${said}${unchanged}`, 200)
+  }
+  return explainError(err, `bring “${name}” in`)
+}
+
 /**
  * Explorations are branches, in the writer's words. The list hides the readers' feedback branch
  * (switching to it would swap in a stale snapshot of the files) unless the project is somehow on it.
@@ -55,6 +67,7 @@ export function registerExplorations(api: PluginApi, options: ExplorationsOption
   let branches: HistoryBranch[] = []
   let starting = false
   let switching = false
+  let merging = false
 
   async function reserved(): Promise<string> {
     return feedbackBranch(api)
@@ -176,6 +189,39 @@ export function registerExplorations(api: PluginApi, options: ExplorationsOption
     }
   }
 
+  /**
+   * Brings another exploration's work into the one the writer is on. Veneer does only clean merges: when
+   * both changed the same part it changes nothing and names the files, and so do we, plainly.
+   */
+  async function bringIn(name: string): Promise<void> {
+    if (merging) return
+    merging = true
+    try {
+      const target = branches.find((b) => b.name === name)
+      const here = branches.find((b) => b.current)?.name
+      if (target === undefined || here === undefined) return refresh()
+      if (target.current) {
+        api.notify({ message: `“${name}” is the exploration you are on. Choose another to bring in.` })
+        return
+      }
+      try {
+        const commit = await api.history.merge(name)
+        api.notify({
+          message:
+            commit === null
+              ? `“${name}” has nothing new for “${here}”.`
+              : `Brought “${name}” into “${here}”. Your page was saved first and the project’s files now include it.`
+        })
+      } catch (err) {
+        api.notify({ message: explainMergeError(err, name, here) })
+        return
+      }
+      await refresh()
+    } finally {
+      merging = false
+    }
+  }
+
   api.commands.handle(SHOW_EXPLORATIONS_COMMAND, async () => {
     await refresh()
     api.surfaces.show(EXPLORATIONS_SURFACE)
@@ -201,6 +247,7 @@ export function registerExplorations(api: PluginApi, options: ExplorationsOption
   })
   api.surfaces.onRowAction(EXPLORATIONS_SURFACE, async (actionId, rowId) => {
     if (actionId === SWITCH_ACTION) await switchTo(rowId)
+    if (actionId === MERGE_ACTION) await bringIn(rowId)
     return undefined
   })
 
