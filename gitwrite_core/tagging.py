@@ -29,7 +29,7 @@ def create_tag(repo_path_str: str, tag_name: str, target_commit_ish: str = 'HEAD
         raise GitWriteError("Cannot create tags in a bare repository.")
 
     try:
-        target_oid = repo.revparse_single(target_commit_ish).oid
+        target_oid = repo.revparse_single(target_commit_ish).peel(pygit2.Commit).id  # pygit2 objects have .id, not .oid
     except (pygit2.GitError, KeyError): # KeyError for non-existent reference
         raise CommitNotFoundError(f"Commit-ish '{target_commit_ish}' not found in repository '{repo_path_str}'")
 
