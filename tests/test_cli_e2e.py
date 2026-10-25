@@ -6,7 +6,6 @@ Every step checks repository state (refs, commits, files), not just the exit cod
 import shutil
 import subprocess
 import zipfile
-from pathlib import Path
 
 import pygit2
 import pytest

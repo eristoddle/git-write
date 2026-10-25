@@ -1,21 +1,21 @@
 # Core Annotation Handling Logic
 # This module will contain functions for creating, listing, and managing annotations.
 
-from typing import List, Dict, Optional
-import yaml # For storing annotation data in commit bodies
 import os
+import re
+import subprocess
 from pathlib import Path
+from typing import Dict, List, Optional
+
+import pygit2
+import yaml  # For storing annotation data in commit bodies
+
+from .exceptions import AnnotationError, RepositoryOperationError
 
 # Assuming git library like 'gitpython' might be used, or direct CLI calls.
 # For now, we'll conceptualize with direct CLI calls or a helper.
 # from git import Repo, GitCommandError # Example if GitPython is available
-
 from .models import Annotation, AnnotationStatus
-import pygit2
-import re
-import subprocess
-from .exceptions import AnnotationError, RepositoryOperationError
-
 
 _COMMIT_ID_RE = re.compile(r'[0-9a-f]{4,40}')
 
@@ -279,11 +279,11 @@ def list_annotations(repo_path: str, feedback_branch: str) -> List[Annotation]:
                 # original_annotation_id will be handled by update_annotation_status logic later
             )
             annotations.append(annotation)
-        except yaml.YAMLError as e:
+        except yaml.YAMLError:
             # Not a valid YAML body, or not an annotation commit we recognize. Skip it.
             # print(f"Skipping commit {commit_sha[:7]} - YAML parsing error: {e}")
             continue
-        except Exception as e: # Catch other potential errors during Annotation creation
+        except Exception: # Catch other potential errors during Annotation creation
             # print(f"Skipping commit {commit_sha[:7]} - Error creating annotation object: {e}")
             continue
 
@@ -299,7 +299,6 @@ def list_annotations(repo_path: str, feedback_branch: str) -> List[Annotation]:
     # Not strictly needed if git log is guaranteed newest first and we process updates first for an ID.
     # Simpler: just use a set of original_ids that have been finalized.
 
-    finalized_original_ids: set[str] = set()
 
 
     for entry in reversed(commit_entries): # Process oldest first to build up state
@@ -397,7 +396,7 @@ def list_annotations(repo_path: str, feedback_branch: str) -> List[Annotation]:
                 # Now we process 'A' (original). We should NOT overwrite processed_annotations['A'] with older status.
                 # The logic of `if commit_sha not in processed_annotations:` handles this correctly.
 
-        except (yaml.YAMLError, ValueError, KeyError) as e: # Catches Pydantic validation errors too if strict
+        except (yaml.YAMLError, ValueError, KeyError): # Catches Pydantic validation errors too if strict
             # print(f"Skipping commit {commit_sha[:7]} - data processing error: {e}") # For debugging
             continue
 

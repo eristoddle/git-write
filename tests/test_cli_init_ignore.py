@@ -1,16 +1,19 @@
-import pytest # Still needed for @pytest.fixture if any local fixtures remain (none expected for now) and for tmp_path
-import pygit2
-from tests.helpers import init_repo # Used directly in some tests
-import os # Used directly in some tests
+import os  # Used directly in some tests
+
 # shutil was for fixtures, now in conftest
-from pathlib import Path # Used directly in some tests
-from click.testing import CliRunner # For type hinting runner fixture from conftest
-from .conftest import make_commit, _assert_gitwrite_structure, _assert_common_gitignore_patterns
+from pathlib import Path  # Used directly in some tests
+
+import pygit2
+from click.testing import CliRunner  # For type hinting runner fixture from conftest
 
 from gitwrite_cli.main import cli
+
 # COMMON_GITIGNORE_PATTERNS is now imported in conftest.py for helpers.
 # Keep other gitwrite_core.repository imports if tests use them directly.
-from gitwrite_core.repository import initialize_repository, add_pattern_to_gitignore, list_gitignore_patterns, COMMON_GITIGNORE_PATTERNS
+from gitwrite_core.repository import COMMON_GITIGNORE_PATTERNS
+from tests.helpers import init_repo  # Used directly in some tests
+
+from .conftest import _assert_common_gitignore_patterns, _assert_gitwrite_structure, make_commit
 
 # Helper functions (make_commit, _assert_gitwrite_structure, _assert_common_gitignore_patterns) are in conftest.py
 # Fixtures (runner, init_test_dir, local_repo_path, local_repo) are in conftest.py

@@ -1,17 +1,21 @@
-import unittest
-import pygit2
-from tests.helpers import init_repo
+import os
 import shutil
 import tempfile
+import unittest
 from pathlib import Path
-import os
-import pytest
-import pprint # Added for debugging
 
-from gitwrite_core.versioning import revert_commit, save_changes, get_word_level_diff
-from gitwrite_core.exceptions import RepositoryNotFoundError, CommitNotFoundError, MergeConflictError, GitWriteError, NoChangesToSaveError, RevertConflictError
+import pygit2
 
-from .conftest import TEST_USER_NAME, TEST_USER_EMAIL, create_test_signature, create_file
+from gitwrite_core.exceptions import (
+    CommitNotFoundError,
+    MergeConflictError,
+    RepositoryNotFoundError,
+)
+from gitwrite_core.versioning import get_word_level_diff, revert_commit, save_changes
+from tests.helpers import init_repo
+
+from .conftest import TEST_USER_EMAIL, TEST_USER_NAME, create_file, create_test_signature
+
 
 def _create_and_checkout_branch(repo: pygit2.Repository, branch_name: str, from_commit: pygit2.Commit):
     """Helper to create and check out a branch."""
@@ -74,7 +78,7 @@ class TestRevertCommitCore(GitWriteCoreTestCaseBase):
         result = revert_commit(self.repo_path_str, str(c2_oid))
         self.assertEqual(result['status'], 'success')
         revert_commit_obj = self.repo.get(result['new_commit_oid'])
-        self.assertTrue(revert_commit_obj.message.startswith(f"Revert \"Second change C2\""))
+        self.assertTrue(revert_commit_obj.message.startswith("Revert \"Second change C2\""))
         self.assertEqual(file_a_path.read_text(encoding="utf-8"), "Content A from C1")
         self.assertFalse((self.repo_path_obj / "file_b.txt").exists())
         self.assertEqual(self.repo.head.target, revert_commit_obj.id)

@@ -1,13 +1,22 @@
-import pygit2
-import pygit2.enums # Added for MergeFavor
+import difflib  # For get_word_level_diff
+import re  # For get_word_level_diff
+from datetime import datetime, timedelta, timezone
+
 # import pygit2.ops # ModuleNotFoundError with pygit2 1.18.0
 from pathlib import Path
-from datetime import datetime, timezone, timedelta
-from typing import Optional, List, Dict, Any, Tuple
-import re # For get_word_level_diff
-import difflib # For get_word_level_diff
+from typing import Any, Dict, List, Optional, Tuple
 
-from gitwrite_core.exceptions import RepositoryNotFoundError, CommitNotFoundError, NotEnoughHistoryError, MergeConflictError, GitWriteError
+import pygit2
+import pygit2.enums  # Added for MergeFavor
+
+from gitwrite_core.exceptions import (
+    CommitNotFoundError,
+    GitWriteError,
+    MergeConflictError,
+    NotEnoughHistoryError,
+    RepositoryNotFoundError,
+)
+
 
 def _get_commit_summary(commit: pygit2.Commit) -> str:
     """Helper function to get the first line of a commit message."""
@@ -43,7 +52,6 @@ def get_commit_history(repo_path_str: str, count: Optional[int] = None) -> List[
     if repo.is_empty or repo.head_is_unborn:
         return []
 
-    history = []
     # commits_processed = 0 # This variable was unused
 
     # Use GIT_SORT_TOPOLOGICAL in combination with GIT_SORT_REVERSE for oldest-first order
@@ -193,7 +201,7 @@ def revert_commit(repo_path_str: str, commit_ish_to_revert: str) -> dict:
 
     except MergeConflictError:
         raise
-    except GitWriteError as e:
+    except GitWriteError:
         if original_head_oid and str(original_head_oid) != str(repo.head.target):
              repo.reset(original_head_oid, pygit2.GIT_RESET_HARD)
              original_tree_obj_for_index_reset = repo.get(original_index_tree_oid, pygit2.GIT_OBJECT_TREE)
@@ -266,7 +274,8 @@ def get_conflicting_files(conflicts_iterator):
 
 def save_changes(repo_path_str: str, message: str, include_paths: Optional[List[str]] = None) -> Dict:
     import time
-    from .exceptions import NoChangesToSaveError, RevertConflictError, RepositoryEmptyError
+
+    from .exceptions import NoChangesToSaveError, RepositoryEmptyError, RevertConflictError
 
     try:
         repo_discovered_path = pygit2.discover_repository(repo_path_str)
@@ -366,7 +375,8 @@ def save_changes(repo_path_str: str, message: str, include_paths: Optional[List[
                 repo.index.add_all()
             else:
                 for path_spec_item in include_paths:
-                    if not path_spec_item.strip(): continue
+                    if not path_spec_item.strip():
+                        continue
                     path_obj = Path(repo.workdir) / path_spec_item
                     if not path_obj.exists():
                         print(f"Warning: Path '{path_spec_item}' (in initial commit) does not exist and was not added.")
@@ -404,7 +414,8 @@ def save_changes(repo_path_str: str, message: str, include_paths: Optional[List[
         else: # Regular commit
             if include_paths:
                 for path_spec_item in include_paths:
-                    if not path_spec_item.strip(): continue
+                    if not path_spec_item.strip():
+                        continue
                     path_obj = Path(repo.workdir) / path_spec_item
                     if not path_obj.exists():
                         print(f"Warning: Path '{path_spec_item}' does not exist and was not added.")
@@ -648,9 +659,10 @@ def get_branch_review_commits(repo_path_str: str, branch_name_to_review: str, li
         BranchNotFoundError: If the branch_name_to_review is not found.
         GitWriteError: For other Git-related errors.
     """
-    from .exceptions import BranchNotFoundError # Local import to avoid circular dependency issues at module load
-    import difflib # For get_word_level_diff
-    import re # For get_word_level_diff
+
+    from .exceptions import (
+        BranchNotFoundError,  # Local import to avoid circular dependency issues at module load
+    )
 
     try:
         repo_discovered_path = pygit2.discover_repository(repo_path_str)
@@ -953,15 +965,21 @@ def _process_hunk_lines_for_structured_diff(hunk_lines: List[Tuple[str, str]]) -
                     new_chunk = " ".join(new_segment_list)
 
                     if tag_op == 'replace':
-                        if old_chunk: temp_deleted_words_structured.append({"type": "removed", "content": old_chunk})
-                        if new_chunk: temp_added_words_structured.append({"type": "added", "content": new_chunk})
+                        if old_chunk:
+                            temp_deleted_words_structured.append({"type": "removed", "content": old_chunk})
+                        if new_chunk:
+                            temp_added_words_structured.append({"type": "added", "content": new_chunk})
                     elif tag_op == 'delete':
-                        if old_chunk: temp_deleted_words_structured.append({"type": "removed", "content": old_chunk})
+                        if old_chunk:
+                            temp_deleted_words_structured.append({"type": "removed", "content": old_chunk})
                     elif tag_op == 'insert':
-                        if new_chunk: temp_added_words_structured.append({"type": "added", "content": new_chunk})
+                        if new_chunk:
+                            temp_added_words_structured.append({"type": "added", "content": new_chunk})
                     elif tag_op == 'equal':
-                        if old_chunk: temp_deleted_words_structured.append({"type": "context", "content": old_chunk})
-                        if new_chunk: temp_added_words_structured.append({"type": "context", "content": new_chunk})
+                        if old_chunk:
+                            temp_deleted_words_structured.append({"type": "context", "content": old_chunk})
+                        if new_chunk:
+                            temp_added_words_structured.append({"type": "context", "content": new_chunk})
 
                 final_deleted_words = _condense_word_segments(temp_deleted_words_structured, old_words_list)
                 final_added_words = _condense_word_segments(temp_added_words_structured, new_words_list)

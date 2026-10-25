@@ -1,5 +1,12 @@
 import pygit2
-from gitwrite_core.exceptions import RepositoryNotFoundError, CommitNotFoundError, TagAlreadyExistsError, GitWriteError
+
+from gitwrite_core.exceptions import (
+    CommitNotFoundError,
+    GitWriteError,
+    RepositoryNotFoundError,
+    TagAlreadyExistsError,
+)
+
 
 def create_tag(repo_path_str: str, tag_name: str, target_commit_ish: str = 'HEAD', message: str = None, force: bool = False, tagger: pygit2.Signature = None):
     """

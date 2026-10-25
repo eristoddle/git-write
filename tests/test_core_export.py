@@ -1,21 +1,21 @@
-import pytest
-import pygit2
-from tests.helpers import init_repo
-import pypandoc
-import os
-import shutil
 import pathlib
-import time
+import shutil
 from unittest import mock
 
-from gitwrite_core.export import export_to_epub, export_to_pdf, export_to_docx
+import pygit2
+import pypandoc
+import pytest
+
 from gitwrite_core.exceptions import (
-    PandocError,
-    RepositoryNotFoundError,
     CommitNotFoundError,
     FileNotFoundInCommitError,
     GitWriteError,
+    PandocError,
+    RepositoryNotFoundError,
 )
+from gitwrite_core.export import export_to_docx, export_to_epub, export_to_pdf
+from tests.helpers import init_repo
+
 
 def init_test_repo_corrected(tmp_path: pathlib.Path, add_files: dict = None, commit_message: str = "Initial commit"):
     try:
@@ -151,7 +151,7 @@ def test_export_to_epub_pandoc_conversion_error(temp_git_repo_path, mock_pypando
         export_to_epub(str(temp_git_repo_path), "HEAD", ["file1.md"], str(output_epub))
 
 def test_export_to_epub_output_dir_creation_OSError(temp_git_repo_path, mock_pypandoc_path_found, monkeypatch):
-    repo = init_test_repo_corrected(temp_git_repo_path, {"file1.md": "content"}, "Initial")
+    init_test_repo_corrected(temp_git_repo_path, {"file1.md": "content"}, "Initial")
     output_epub_path_str = str(temp_git_repo_path / "uncreatable_dir" / "output.epub")
     target_dir_to_fail = pathlib.Path(output_epub_path_str).parent
     def mock_mkdir_side_effect(path_instance, parents=False, exist_ok=False, mode=0o777):

@@ -1,25 +1,38 @@
-import unittest
-import pygit2
-from tests.helpers import init_repo
-import pytest
+import os
 import shutil
 import tempfile
+import unittest
+from datetime import datetime, timedelta, timezone  # Corrected import
 from pathlib import Path
-import os
-from datetime import datetime, timezone, timedelta # Corrected import
-from typing import Tuple, Optional
-import pytest
 
-from gitwrite_core.repository import sync_repository, get_conflicting_files # Assuming get_conflicting_files is in repository.py
+import pygit2
+import pytest
+import yaml
+
 from gitwrite_core.exceptions import (
-    RepositoryNotFoundError, RepositoryEmptyError, DetachedHeadError,
-    RemoteNotFoundError, BranchNotFoundError, FetchError,
-    MergeConflictError, PushError, GitWriteError
+    BranchNotFoundError,
+    CommitNotFoundError,
+    DetachedHeadError,
+    FetchError,
+    FileNotFoundInCommitError,
+    GitWriteError,
+    MergeConflictError,
+    PushError,
+    RemoteNotFoundError,
+    RepositoryEmptyError,
+    RepositoryNotFoundError,
 )
+from gitwrite_core.repository import (
+    get_file_content_at_commit,
+    get_repository_metadata,
+    initialize_repository,
+    save_and_commit_file,
+    sync_repository,
+)
+from tests.helpers import init_repo
 
 # Constants TEST_USER_NAME and TEST_USER_EMAIL are now in conftest.py
-from .conftest import TEST_USER_NAME, TEST_USER_EMAIL
-from gitwrite_core.repository import initialize_repository, save_and_commit_file
+from .conftest import TEST_USER_EMAIL, TEST_USER_NAME
 
 
 class TestSyncRepositoryCore(unittest.TestCase):
@@ -60,12 +73,14 @@ class TestSyncRepositoryCore(unittest.TestCase):
                 try:
                     os.chmod(filepath, 0o777)
                     os.remove(filepath)
-                except OSError: pass # Ignore if not possible
+                except OSError:
+                    pass # Ignore if not possible
             for name in dirs:
                 dirpath = os.path.join(root, name)
                 try:
                     os.rmdir(dirpath)
-                except OSError: pass # Ignore if not possible
+                except OSError:
+                    pass # Ignore if not possible
         try:
             shutil.rmtree(self.base_temp_dir)
         except OSError:
@@ -255,7 +270,7 @@ class TestSyncRepositoryCore(unittest.TestCase):
         self.assertTrue(result["fetch_status"]["received_objects"] > 0 or result["fetch_status"]["total_objects"] > 0)
 
         # Verify the remote tracking branch for 'feature_on_remote' now exists locally
-        self.assertIn(f"refs/remotes/origin/feature_on_remote", self.local_repo.listall_references())
+        self.assertIn("refs/remotes/origin/feature_on_remote", self.local_repo.listall_references())
 
 
     def test_sync_fetch_failure(self):
@@ -291,7 +306,7 @@ class TestSyncRepositoryCore(unittest.TestCase):
         # Then local_repo makes C2. Local is now ahead.
 
         # 1. Make C1 on local_repo
-        c1_local_oid = self._make_commit(self.local_repo, "file1.txt", "content1", "C1")
+        self._make_commit(self.local_repo, "file1.txt", "content1", "C1")
         c1_commit_obj = self.local_repo.lookup_reference("HEAD").peel(pygit2.Commit)
         self._create_branch(self.local_repo, "main", c1_commit_obj)
         self._checkout_branch(self.local_repo, "main")
@@ -303,7 +318,7 @@ class TestSyncRepositoryCore(unittest.TestCase):
 
         # 3. Make C2 on local_repo (on 'main' branch, which is already checked out)
         # Local 'main' is now at C2, which is one commit ahead of remote 'main' (at C1).
-        c2_local_oid = self._make_commit(self.local_repo, "file2.txt", "content2", "C2 local only")
+        self._make_commit(self.local_repo, "file2.txt", "content2", "C2 local only")
 
         result = sync_repository(str(self.local_repo_path), branch_name_opt="main", push=False, allow_no_push=True)
 
@@ -316,7 +331,7 @@ class TestSyncRepositoryCore(unittest.TestCase):
     def test_sync_fast_forward(self):
         # Setup: Remote is ahead of local, FF is possible
         # 1. Initial commit on local 'main', push to remote 'main'
-        c1_oid = self._make_commit(self.local_repo, "common_file.txt", "Initial", "C1")
+        self._make_commit(self.local_repo, "common_file.txt", "Initial", "C1")
         c1_commit_obj = self.local_repo.lookup_reference("HEAD").peel(pygit2.Commit)
         self._create_branch(self.local_repo, "main", c1_commit_obj)
         self._checkout_branch(self.local_repo, "main")
@@ -436,7 +451,7 @@ class TestSyncRepositoryCore(unittest.TestCase):
         self._push_to_remote(self.local_repo, "origin", "main")
 
         # 2. Local C2: modifies common_line (on 'main')
-        c2_local_oid = self._make_commit(self.local_repo, "conflict_file.txt", "line1\nlocal_change_on_common\nline3", "C2 Local")
+        self._make_commit(self.local_repo, "conflict_file.txt", "line1\nlocal_change_on_common\nline3", "C2 Local")
 
         # 3. Remote C2: modifies common_line differently
         temp_clone_path = self.base_temp_dir / "temp_clone_for_conflict"
@@ -461,7 +476,7 @@ class TestSyncRepositoryCore(unittest.TestCase):
         temp_clone_repo.index.add("conflict_file.txt")
         temp_clone_repo.index.write()
         tree_clone = temp_clone_repo.index.write_tree()
-        c2_remote_oid = temp_clone_repo.create_commit("HEAD", sig_clone, sig_clone, "C2 Remote conflict", tree_clone, [c1_oid])
+        temp_clone_repo.create_commit("HEAD", sig_clone, sig_clone, "C2 Remote conflict", tree_clone, [c1_oid])
         temp_clone_repo.remotes["origin"].push(["refs/heads/main:refs/heads/main"])
         shutil.rmtree(temp_clone_path)
 
@@ -566,7 +581,7 @@ class TestSyncRepositoryCore(unittest.TestCase):
 
     def test_sync_push_skipped_by_flag(self):
         # Local is ahead, but push=False
-        c1_local_oid = self._make_commit(self.local_repo, "file1.txt", "content1", "C1")
+        self._make_commit(self.local_repo, "file1.txt", "content1", "C1")
         main_commit_obj = self.local_repo.lookup_reference("HEAD").peel(pygit2.Commit)
         self._create_branch(self.local_repo, "main", main_commit_obj)
         self._checkout_branch(self.local_repo, "main")
@@ -922,12 +937,10 @@ def repo_with_commits_for_file_content(tmp_path: Path) -> Path:
     repo.index.add(subdir_file_rel)
     repo.index.write() # Write after all adds for the commit
     tree2_oid = repo.index.write_tree()
-    commit2_oid = repo.create_commit("HEAD", sig, sig, "Second commit, modified text_file, added subdir_file", tree2_oid, [commit1_oid])
+    repo.create_commit("HEAD", sig, sig, "Second commit, modified text_file, added subdir_file", tree2_oid, [commit1_oid])
 
     return repo_dir
 
-from gitwrite_core.repository import get_file_content_at_commit
-from gitwrite_core.exceptions import RepositoryNotFoundError, CommitNotFoundError, FileNotFoundInCommitError, GitWriteError
 
 
 def test_get_file_content_success_text(repo_with_commits_for_file_content: Path):
@@ -1041,8 +1054,7 @@ def test_get_file_content_non_utf8_text_file(repo_with_commits_for_file_content:
 
 # --- Tests for get_repository_metadata ---
 
-from gitwrite_core.repository import get_repository_metadata
-import yaml
+
 
 @pytest.fixture
 def metadata_repo(tmp_path: Path) -> Path:
@@ -1059,7 +1071,7 @@ def metadata_repo(tmp_path: Path) -> Path:
     repo.index.add("initial_file.txt")
     repo.index.write()
     tree1_oid = repo.index.write_tree()
-    commit1_oid = repo.create_commit("HEAD", sig, sig, "Initial commit", tree1_oid, [])
+    repo.create_commit("HEAD", sig, sig, "Initial commit", tree1_oid, [])
 
     # Create metadata.yml
     metadata_content = {"description": "This is a test repository for metadata."}
@@ -1087,7 +1099,7 @@ def test_get_repository_metadata_success_with_metadata_file(metadata_repo: Path)
     if not parents and not repo.is_empty: # Should have a parent from fixture's initial commit
         pytest.fail("Repository HEAD is unborn or has no target after initial commit in fixture.")
 
-    commit_meta_oid = repo.create_commit("HEAD", sig, sig, "Commit metadata.yml", tree_oid, parents)
+    repo.create_commit("HEAD", sig, sig, "Commit metadata.yml", tree_oid, parents)
 
     metadata = get_repository_metadata(metadata_repo)
     assert metadata is not None
@@ -1113,7 +1125,7 @@ def test_get_repository_metadata_success_no_metadata_file(tmp_path: Path):
     repo.index.add("file.txt")
     repo.index.write()
     tree_oid = repo.index.write_tree()
-    commit_oid = repo.create_commit("HEAD", sig, sig, "Initial commit", tree_oid, [])
+    repo.create_commit("HEAD", sig, sig, "Initial commit", tree_oid, [])
 
     metadata = get_repository_metadata(repo_dir)
     assert metadata is not None

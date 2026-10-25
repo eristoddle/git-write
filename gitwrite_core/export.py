@@ -1,18 +1,17 @@
 # This module will contain functions for exporting repository content to various formats.
 
 import pathlib
-import tempfile
 from typing import Dict, List, Union
 
 import pygit2
 import pypandoc
 
 from gitwrite_core.exceptions import (
-    GitWriteError,
-    RepositoryNotFoundError,
     CommitNotFoundError,
     FileNotFoundInCommitError,
+    GitWriteError,
     PandocError,
+    RepositoryNotFoundError,
 )
 
 

@@ -1,18 +1,18 @@
-import pytest
 import subprocess
-import os
-import shutil
 from pathlib import Path
+
+import pytest
 import yaml
 
-from gitwrite_core.models import Annotation, AnnotationStatus
 from gitwrite_core.annotations import (
+    _run_git_command,  # For direct setup if needed, or use higher level funcs
     create_annotation_commit,
     list_annotations,
     update_annotation_status,
-    _run_git_command # For direct setup if needed, or use higher level funcs
 )
-from gitwrite_core.exceptions import RepositoryOperationError, AnnotationError
+from gitwrite_core.exceptions import AnnotationError, RepositoryOperationError
+from gitwrite_core.models import Annotation, AnnotationStatus
+
 
 # Pytest fixture for a temporary Git repository
 @pytest.fixture

@@ -1,16 +1,16 @@
-import pytest
-import sys
-# Ensure pygit2 can be found, attempting to fix ModuleNotFoundError in sandbox
-site_packages_path = "/home/jules/.pyenv/versions/3.12.11/lib/python3.12/site-packages"
-if site_packages_path not in sys.path:
-    sys.path.insert(0, site_packages_path)
-import pygit2
-from tests.helpers import init_repo
 import os
 import shutil
+from datetime import datetime, timezone
 from pathlib import Path
+from typing import Callable, Optional
+
+import pygit2
+import pytest
 from click.testing import CliRunner
-from gitwrite_cli.main import cli
+
+from gitwrite_core.repository import COMMON_GITIGNORE_PATTERNS
+from tests.helpers import init_repo
+
 # Note: Rich and gitwrite_core.exceptions might be needed if other fixtures use them.
 
 # Helper to create a commit (enhanced version from test_cli_sync_merge.py)
@@ -145,8 +145,7 @@ def local_repo(local_repo_path: Path): # Adapted from test_main.py
     config["user.email"] = "test@example.com"
     return repo
 
-# Imports for new helpers
-from gitwrite_core.repository import COMMON_GITIGNORE_PATTERNS
+
 
 # Helper functions for init tests (moved from test_cli_init_ignore.py)
 def _assert_gitwrite_structure(base_path: Path, check_git_dir: bool = True):
@@ -255,7 +254,8 @@ def repo_with_merge_conflict(local_repo: pygit2.Repository, bare_remote_repo_obj
 
     # 2. Remote change (via a clone of the bare_remote_repo_obj)
     remote_clone_path = tmp_path / "remote_clone_for_merge_conflict_fixture_conftest"
-    if remote_clone_path.exists(): shutil.rmtree(remote_clone_path)
+    if remote_clone_path.exists():
+        shutil.rmtree(remote_clone_path)
     remote_clone_repo = pygit2.clone_repository(bare_remote_repo_obj.path, str(remote_clone_path))
 
     config = remote_clone_repo.config
@@ -444,8 +444,7 @@ def synctest_repos(tmp_path: Path, local_repo: pygit2.Repository, bare_remote_re
 
 # --- From tests/test_core_branching.py ---
 
-# Typing imports for fixtures from test_core_branching
-from typing import List, Dict, Any, Optional, Callable
+
 
 # Helper function (renamed from make_commit_helper to avoid clash, takes path)
 def make_commit_on_path(repo_path_str: str, filename: str = "default_file.txt", content: str = "Default content", msg: str = "Default commit message", branch_name: Optional[str] = None) -> pygit2.Oid:
@@ -466,7 +465,7 @@ def make_commit_on_path(repo_path_str: str, filename: str = "default_file.txt", 
     repo.index.write()
     try:
         author = repo.default_signature
-    except:
+    except Exception:
         author = pygit2.Signature("Test Author", "test@example.com")
     committer = author
     tree = repo.index.write_tree()
@@ -483,7 +482,8 @@ def make_commit_on_path(repo_path_str: str, filename: str = "default_file.txt", 
             # If pygit2 created 'master' but 'main' was intended:
             if current_actual_branch == "master" and branch_name == "main" and not repo.branches.local.get("main"):
                  master_b = repo.branches.local.get("master")
-                 if master_b: master_b.rename(branch_name) # Force in case main somehow exists but is not HEAD
+                 if master_b:
+                     master_b.rename(branch_name) # Force in case main somehow exists but is not HEAD
 
             # Ensure we are on the correctly named branch
             final_branch_ref = repo.branches.local.get(branch_name)
@@ -631,8 +631,7 @@ def repo_for_merge(tmp_path: Path, configure_git_user: Callable[[pygit2.Reposito
 TEST_USER_NAME = "Test Sync User" # Used by test_core_repository, also usable by core_versioning if needed
 TEST_USER_EMAIL = "test_sync@example.com" # Same as above
 
-# For create_test_signature from test_core_versioning
-from datetime import datetime, timezone
+
 
 def create_test_signature(repo: pygit2.Repository) -> pygit2.Signature:
     """Creates a test signature, trying to use repo default or falling back."""

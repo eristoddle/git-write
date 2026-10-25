@@ -1,16 +1,17 @@
-import pytest
-import pygit2
-from tests.helpers import init_repo
 import os
-import shutil # shutil was for fixtures, now in conftest
-import re # Used by TestMergeCommandCLI
-from pathlib import Path # Used by test methods directly
-from click.testing import CliRunner # For type hinting runner fixture from conftest
-from .conftest import make_commit
+import re  # Used by TestMergeCommandCLI
+import shutil  # shutil was for fixtures, now in conftest
+from pathlib import Path  # Used by test methods directly
+
+import pygit2
+from click.testing import CliRunner  # For type hinting runner fixture from conftest
 
 from gitwrite_cli.main import cli
+from tests.helpers import init_repo
+
+from .conftest import make_commit
+
 # It's good practice to import specific exceptions if they are explicitly caught or expected.
-from gitwrite_core.exceptions import FetchError, PushError # Used by test methods directly
 
 # Helper function make_commit is in conftest.py (enhanced version)
 # Fixtures runner, local_repo (generic one from conftest), cli_test_repo,
@@ -282,7 +283,8 @@ class TestSyncCommandCLI:
         local_commit_after_local_change = local_repo.head.target # Save this OID
 
         # Ensure clone starts from C1 before making its own C2
-        if Path(str(remote_clone_repo_path)).exists(): shutil.rmtree(str(remote_clone_repo_path))
+        if Path(str(remote_clone_repo_path)).exists():
+            shutil.rmtree(str(remote_clone_repo_path))
         pygit2.clone_repository(remote_bare_repo_path_str, str(remote_clone_repo_path))
         clone_repo = pygit2.Repository(str(remote_clone_repo_path))
         config_clone = clone_repo.config
@@ -294,7 +296,7 @@ class TestSyncCommandCLI:
         clone_repo.checkout("refs/heads/main")
         clone_repo.reset(c1_oid, pygit2.GIT_RESET_HARD)
         make_commit(clone_repo, conflict_filename, "Remote version of line", "Remote C2 on main", branch_name="main")
-        clone_repo.remotes["origin"].push([f"+refs/heads/main:refs/heads/main"]) # Force push if main already exists
+        clone_repo.remotes["origin"].push(["+refs/heads/main:refs/heads/main"]) # Force push if main already exists
         shutil.rmtree(str(remote_clone_repo_path))
 
         result = runner.invoke(cli, ["sync"])

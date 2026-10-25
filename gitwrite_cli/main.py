@@ -1,48 +1,61 @@
 # Test comment to check write access.
-import click
-import pygit2 # pygit2 is still used by other commands
-import os # os seems to be no longer used by CLI commands directly
+import os  # os seems to be no longer used by CLI commands directly
 from pathlib import Path
+
+import click
+import pygit2  # pygit2 is still used by other commands
+
 # from pygit2 import Signature # Signature might not be needed if init was the only user. Let's check.
 # Signature is used in 'save' and 'tag_add', so it should remain.
-from pygit2 import Signature
 from rich.console import Console
 from rich.panel import Panel
-from gitwrite_core.repository import initialize_repository, add_pattern_to_gitignore, list_gitignore_patterns # Added import
-from gitwrite_core.tagging import create_tag
-from gitwrite_core.repository import sync_repository # Added for sync
-from gitwrite_core.versioning import get_commit_history, get_diff, revert_commit, save_changes # Added save_changes
-from gitwrite_core.branching import ( # Updated for merge
+from rich.table import Table  # Ensure Table is imported for switch
+
+from gitwrite_core.branching import (  # Updated for merge
     create_and_switch_branch,
     list_branches,
+    merge_branch_into_current,
     switch_to_branch,
-    merge_branch_into_current
 )
 from gitwrite_core.exceptions import (
-    RepositoryNotFoundError,
-    CommitNotFoundError,
-    TagAlreadyExistsError,
-    GitWriteError,
-    NotEnoughHistoryError,
-    RepositoryEmptyError,
     BranchAlreadyExistsError,
     BranchNotFoundError,
-    MergeConflictError, # Added for merge
-    NoChangesToSaveError, # Added for save_changes
-    RevertConflictError, # Added for save_changes
-    DetachedHeadError, # Added for sync
-    FetchError, # Added for sync
-    PushError, # Added for sync
-    RemoteNotFoundError, # Added for sync
-    BranchNotFoundError as CoreBranchNotFoundError, # Added for review command
-    CommitNotFoundError, # Added for cherry-pick
-    PandocError, # Added for EPUB export
-    FileNotFoundInCommitError # Added for EPUB export
+    CommitNotFoundError,  # Added for cherry-pick
+    DetachedHeadError,  # Added for sync
+    FetchError,  # Added for sync
+    FileNotFoundInCommitError,  # Added for EPUB export
+    GitWriteError,
+    MergeConflictError,  # Added for merge
+    NoChangesToSaveError,  # Added for save_changes
+    NotEnoughHistoryError,
+    PandocError,  # Added for EPUB export
+    PushError,  # Added for sync
+    RemoteNotFoundError,  # Added for sync
+    RepositoryEmptyError,
+    RepositoryNotFoundError,
+    RevertConflictError,  # Added for save_changes
+    TagAlreadyExistsError,
 )
-from gitwrite_core.versioning import get_commit_history, get_diff, revert_commit, save_changes, get_branch_review_commits, cherry_pick_commit # Added get_branch_review_commits and cherry_pick_commit
+from gitwrite_core.exceptions import (
+    BranchNotFoundError as CoreBranchNotFoundError,  # Added for review command
+)
 from gitwrite_core.export import export_to_epub
-from gitwrite_core.export import export_to_pdf, export_to_docx # Added for EPUB export
-from rich.table import Table # Ensure Table is imported for switch
+from gitwrite_core.repository import (  # Added import
+    add_pattern_to_gitignore,
+    initialize_repository,
+    list_gitignore_patterns,
+    sync_repository,  # Added for sync
+)
+from gitwrite_core.tagging import create_tag
+from gitwrite_core.versioning import (  # Added save_changes  # Added get_branch_review_commits and cherry_pick_commit
+    cherry_pick_commit,
+    get_branch_review_commits,
+    get_commit_history,
+    get_diff,
+    revert_commit,
+    save_changes,
+)
+
 
 @click.group()
 @click.pass_context
@@ -198,9 +211,9 @@ def history(count):
             click.echo("No history yet.") # Covers bare, empty, unborn HEAD, or no commits found by core function
             return
 
+        from rich.console import Console
         from rich.table import Table
         from rich.text import Text
-        from rich.console import Console
         # datetime, timezone, timedelta are no longer needed here as date is pre-formatted
 
         table = Table(title="Commit History")
@@ -247,10 +260,10 @@ def status():
     Think of this as your writing dashboard.
     """
     try:
+        import pygit2
         from rich.console import Console
         from rich.panel import Panel
         from rich.text import Text
-        import pygit2
         
         console = Console()
         
@@ -311,7 +324,7 @@ def status():
                 last_commit = repo.head.peel()
                 last_save_msg = last_commit.message.strip().split('\n')[0]
                 status_text.append(f"\n\n📚 Last save: {last_save_msg}", style="dim")
-        except:
+        except Exception:
             pass
             
         console.print(Panel(status_text, title="📊 Writing Project Status", expand=False))
@@ -332,10 +345,10 @@ def help_command(topic):
       gitwrite help collaboration      # Working with others
       gitwrite help concepts           # Understanding key concepts
     """
+    from rich.columns import Columns
     from rich.console import Console
     from rich.panel import Panel
     from rich.text import Text
-    from rich.columns import Columns
     
     console = Console()
     
@@ -629,10 +642,9 @@ def compare(ref1_str, ref2_str):
       - File-by-file differences
       - Clear before/after view
     """
+    import re  # For parsing patch text
+
     from rich.console import Console
-    from rich.text import Text
-    import difflib # difflib is still needed for word-level diff
-    import re # For parsing patch text
 
     try:
         repo_path_str = pygit2.discover_repository(str(Path.cwd()))
@@ -762,6 +774,7 @@ def compare(ref1_str, ref2_str):
 # Helper function for word-level diff processing, adapted from original logic
 def process_hunk_lines_for_word_diff(hunk_lines: list, console: Console):
     import difflib
+
     from rich.text import Text
 
     i = 0
@@ -900,28 +913,36 @@ def sync(ctx, remote_name, branch_name_opt, no_push_flag):
 
     except pygit2.GitError as e: # Should be caught by more specific exceptions from core
         click.echo(f"GitError during sync: {e}", err=True)
-        if ctx: ctx.exit(1)
+        if ctx:
+            ctx.exit(1)
     except KeyError as e: # Should be caught by specific exceptions like RemoteNotFoundError now
         click.echo(f"Error during sync setup (KeyError): {e}", err=True)
-        if ctx: ctx.exit(1)
+        if ctx:
+            ctx.exit(1)
     except RepositoryNotFoundError:
         click.echo("Error: Not a Git repository (or any of the parent directories).", err=True)
-        if ctx: ctx.exit(1)
+        if ctx:
+            ctx.exit(1)
     except RepositoryEmptyError as e:
         click.echo(f"Error: {e}", err=True) # Core message is usually good
-        if ctx: ctx.exit(1)
+        if ctx:
+            ctx.exit(1)
     except DetachedHeadError as e:
         click.echo(f"Error: {e}. Please switch to a branch to sync or specify a branch name.", err=True)
-        if ctx: ctx.exit(1)
+        if ctx:
+            ctx.exit(1)
     except RemoteNotFoundError as e:
         click.echo(f"Error: {e}", err=True)
-        if ctx: ctx.exit(1)
+        if ctx:
+            ctx.exit(1)
     except BranchNotFoundError as e:
         click.echo(f"Error: {e}", err=True)
-        if ctx: ctx.exit(1)
+        if ctx:
+            ctx.exit(1)
     except FetchError as e:
         click.echo(f"Error during fetch: {e}", err=True)
-        if ctx: ctx.exit(1)
+        if ctx:
+            ctx.exit(1)
     except MergeConflictError as e: # This exception is raised by sync_repository if conflicts occur and are not resolved by it.
         click.echo(f"Error: {e}", err=True)
         if hasattr(e, 'conflicting_files') and e.conflicting_files:
@@ -929,16 +950,20 @@ def sync(ctx, remote_name, branch_name_opt, no_push_flag):
             for f_path in sorted(e.conflicting_files):
                 click.echo(f"  {f_path}", err=True)
         click.echo("Please resolve conflicts and then use 'gitwrite save <message>' to commit the merge.", err=True)
-        if ctx: ctx.exit(1)
+        if ctx:
+            ctx.exit(1)
     except PushError as e:
         click.echo(f"Error during push: {e}", err=True)
-        if ctx: ctx.exit(1)
+        if ctx:
+            ctx.exit(1)
     except GitWriteError as e: # Catch-all for other gitwrite core errors
         click.echo(f"Error during sync: {e}", err=True)
-        if ctx: ctx.exit(1)
+        if ctx:
+            ctx.exit(1)
     except Exception as e: # General unexpected errors
         click.echo(f"An unexpected error occurred during sync: {e}", err=True)
-        if ctx: ctx.exit(1)
+        if ctx:
+            ctx.exit(1)
 
 
 @cli.command()
@@ -1112,10 +1137,12 @@ def add(ctx, name, message, force, commit_ish): # Function signature updated
 
     except (RepositoryNotFoundError, CommitNotFoundError, TagAlreadyExistsError, GitWriteError) as e:
         click.echo(f"Error: {e}", err=True)
-        if ctx: ctx.exit(1) # Ensure non-zero exit for these handled errors
+        if ctx:
+            ctx.exit(1) # Ensure non-zero exit for these handled errors
     except Exception as e:
         click.echo(f"An unexpected error occurred: {e}", err=True)
-        if ctx: ctx.exit(1)
+        if ctx:
+            ctx.exit(1)
 
 
 @tag.command("list") # original name was tag_list, but Click uses function name, so it becomes 'list'
@@ -1139,7 +1166,9 @@ def list_cmd(ctx): # Renamed to avoid conflict if we had a variable named list
     """
     # The list_tags function from core is intended to be used by the CLI's list command.
     # It needs to be imported.
-    from gitwrite_core.tagging import list_tags as core_list_tags # This line is correct as per instructions
+    from gitwrite_core.tagging import (
+        list_tags as core_list_tags,  # This line is correct as per instructions
+    )
 
     repo_path = None
     if ctx.obj and 'REPO_PATH' in ctx.obj:
@@ -1152,7 +1181,8 @@ def list_cmd(ctx): # Renamed to avoid conflict if we had a variable named list
             ctx.exit(1)
         repo_path = discovered_path
 
-    if ctx.obj is None: ctx.obj = {} # Ensure ctx.obj exists
+    if ctx.obj is None:
+        ctx.obj = {} # Ensure ctx.obj exists
     ctx.obj['REPO_PATH'] = repo_path
 
     try:
@@ -1162,8 +1192,8 @@ def list_cmd(ctx): # Renamed to avoid conflict if we had a variable named list
             click.echo("No tags found in the repository.")
             return
 
+        from rich.console import Console  # Ensure Console is imported if not already at top level
         from rich.table import Table
-        from rich.console import Console # Ensure Console is imported if not already at top level
 
         table = Table(title="Repository Tags")
         table.add_column("Tag Name", style="cyan", no_wrap=True)
@@ -1195,10 +1225,12 @@ def list_cmd(ctx): # Renamed to avoid conflict if we had a variable named list
         # if ctx: ctx.exit(1) # Removed as per request
     except ImportError: # For Rich
         click.echo(click.style("Error: Rich library is not installed. Please ensure it is in pyproject.toml and installed.", fg='red'), err=True)
-        if ctx: ctx.exit(1)
+        if ctx:
+            ctx.exit(1)
     except Exception as e: # Catch-all for unexpected errors
         click.echo(click.style(f"An unexpected error occurred: {e}", fg='red'), err=True)
-        if ctx: ctx.exit(1)
+        if ctx:
+            ctx.exit(1)
 
 
 @cli.group()

@@ -1,17 +1,19 @@
-import pytest # Still needed for test collection and tmp_path
-import pygit2
-from tests.helpers import init_repo # Used directly in tests
-import os # Used directly in tests
+import os  # Used directly in tests
+
 # shutil was only for fixtures, now moved to conftest.py
-from pathlib import Path # Used directly in tests
-from click.testing import CliRunner # Used by runner fixture in conftest.py, but tests type hint it.
+from pathlib import Path  # Used directly in tests
+
+import pygit2
+import pytest  # Still needed for test collection and tmp_path
+from click.testing import (
+    CliRunner,  # Used by runner fixture in conftest.py, but tests type hint it.
+)
 
 from gitwrite_cli.main import cli
+from tests.helpers import init_repo  # Used directly in tests
+
 # Fixtures (runner, cli_test_repo, cli_repo_with_remote) and make_commit helper are now in conftest.py
-from .conftest import make_commit # Import the helper function
-from gitwrite_core.branching import create_and_switch_branch, list_branches, switch_to_branch
-from gitwrite_core.exceptions import BranchAlreadyExistsError, BranchNotFoundError, RepositoryEmptyError, RepositoryNotFoundError
-from rich.table import Table # Used by switch command output formatting
+from .conftest import make_commit  # Import the helper function
 
 
 #######################################
@@ -111,7 +113,7 @@ class TestSwitchCommandCLI:
         repo.branches.local.create("develop", repo.head.peel(pygit2.Commit))
         result = runner.invoke(cli, ["switch", "develop"])
         assert result.exit_code == 0, f"CLI Error: {result.output}"
-        assert f"Switched to exploration: develop" in result.output
+        assert "Switched to exploration: develop" in result.output
         repo.head.resolve()
         assert repo.head.shorthand == "develop"
         assert not repo.head_is_detached
@@ -128,7 +130,7 @@ class TestSwitchCommandCLI:
         os.chdir(cli_repo_with_remote)
         result = runner.invoke(cli, ["switch", "feature-y"])
         assert result.exit_code == 0, f"CLI Error: {result.output}"
-        assert f"Switched to exploration: origin/feature-y" in result.output
+        assert "Switched to exploration: origin/feature-y" in result.output
         assert "Note: HEAD is now in a detached state." in result.output
         repo = pygit2.Repository(str(cli_repo_with_remote))
         assert repo.head_is_detached
