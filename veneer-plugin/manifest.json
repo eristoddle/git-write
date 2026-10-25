@@ -6,10 +6,30 @@
   "main": "main.js",
   "contributes": {
     "commands": [
-      { "id": "gitwrite:save-version", "title": "Save a Version" },
-      { "id": "gitwrite:show-history", "title": "Show Version History" },
-      { "id": "gitwrite:compare-versions", "title": "Compare Two Versions" },
-      { "id": "gitwrite:compare-with-page", "title": "Compare a Version with This Page" }
+      {
+        "id": "gitwrite:save-version",
+        "title": "Save a Version"
+      },
+      {
+        "id": "gitwrite:show-history",
+        "title": "Show Version History"
+      },
+      {
+        "id": "gitwrite:compare-versions",
+        "title": "Compare Two Versions"
+      },
+      {
+        "id": "gitwrite:compare-with-page",
+        "title": "Compare a Version with This Page"
+      },
+      {
+        "id": "gitwrite:show-explorations",
+        "title": "Show Explorations"
+      },
+      {
+        "id": "gitwrite:start-exploration",
+        "title": "Start an Exploration"
+      }
     ],
     "surfaces": [
       {
@@ -22,14 +42,61 @@
             "id": "gitwrite:restore-version",
             "title": "Restore as New Version",
             "input": "confirm",
-            "appliesTo": ["file"],
+            "appliesTo": [
+              "file"
+            ],
             "prompt": "Put “{name}” on this page as a new version?",
             "verb": "restore"
           }
         ]
       },
-      { "id": "gitwrite:compare", "title": "Compare", "icon": "git-compare", "side": "right", "width": "wide" },
-      { "id": "gitwrite:save", "title": "Save a Version", "icon": "save", "side": "modal" }
+      {
+        "id": "gitwrite:compare",
+        "title": "Compare",
+        "icon": "git-compare",
+        "side": "right",
+        "width": "wide"
+      },
+      {
+        "id": "gitwrite:save",
+        "title": "Save a Version",
+        "icon": "save",
+        "side": "modal"
+      },
+      {
+        "id": "gitwrite:explorations",
+        "title": "Explorations",
+        "icon": "git-branch",
+        "side": "right",
+        "rowActions": [
+          {
+            "id": "gitwrite:switch-exploration",
+            "title": "Switch to This Exploration",
+            "input": "confirm",
+            "appliesTo": [
+              "file"
+            ],
+            "prompt": "Switch to “{name}”? Your page is saved first, then the project’s files change to match it.",
+            "verb": "switch"
+          }
+        ]
+      },
+      {
+        "id": "gitwrite:start",
+        "title": "Start an Exploration",
+        "icon": "git-fork",
+        "side": "modal"
+      }
+    ],
+    "settings": [
+      {
+        "id": "gitwrite:feedback-branch",
+        "type": "string",
+        "default": "feedback",
+        "label": "Feedback branch",
+        "description": "The branch that holds readers’ comments on your pages. GitWrite uses “feedback”.",
+        "scope": "both"
+      }
     ]
   }
 }

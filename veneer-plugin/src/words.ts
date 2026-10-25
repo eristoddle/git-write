@@ -62,6 +62,10 @@ export function explainError(err: unknown, doing: string): string {
         return LOOSE_FILE_SENTENCE
       case 'history/not-a-repository':
         return 'This project has no version history yet. Save a version to start one.'
+      case 'history/uncommitted':
+        return 'Your project has changes that are not in a version yet. Use “Save a Version”, then try again.'
+      case 'history/exists':
+        return 'That name is already in use. Choose another.'
       default:
         return shorten(err.message, 200)
     }

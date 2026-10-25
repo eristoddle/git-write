@@ -28,7 +28,9 @@ describe('manifest', () => {
       'Save a Version',
       'Show Version History',
       'Compare Two Versions',
-      'Compare a Version with This Page'
+      'Compare a Version with This Page',
+      'Show Explorations',
+      'Start an Exploration'
     ])
     // Git's own words stay out of what the writer reads.
     const titles = [...commands.map((c) => c.title), ...surfaces.map((s) => s.title)].join(' ')
@@ -38,7 +40,7 @@ describe('manifest', () => {
   it('loads on the fake host, changes nothing, and lets go of everything when unloaded', async () => {
     const fake = createFakeHost(manifest, plugin)
     await fake.load()
-    expect([...fake.views.keys()]).toEqual(['gitwrite:history'])
+    expect([...fake.views.keys()].sort()).toEqual(['gitwrite:explorations', 'gitwrite:history'])
     expect(fake.edits).toEqual([])
     expect(fake.notices).toEqual([])
     expect(fake.history.commits).toEqual([])
