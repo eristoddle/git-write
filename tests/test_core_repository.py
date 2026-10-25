@@ -428,7 +428,7 @@ class TestSyncRepositoryCore(unittest.TestCase):
         self.assertTrue((self.local_repo_path / "local_change.txt").exists())
         self.assertTrue((self.local_repo_path / "remote_change.txt").exists())
         print(f"DEBUG: local_repo.state in test_sync_merge_clean is {self.local_repo.state()}") # Diagnostic print
-        self.assertEqual(self.local_repo.state(), pygit2.GIT_REPOSITORY_STATE_NONE) # Called state()
+        self.assertEqual(self.local_repo.state(), pygit2.enums.RepositoryState.NONE) # Called state()
         self.assertEqual(result["status"], "success")
 
     def test_sync_merge_conflicts(self):
@@ -482,7 +482,7 @@ class TestSyncRepositoryCore(unittest.TestCase):
         # Check repo state: index should have conflicts, MERGE_HEAD should be gone (due to state_cleanup in core)
         # self.assertTrue(self.local_repo.index.has_conflicts()) # Removed this problematic line
         print(f"DEBUG: local_repo.state in test_sync_merge_conflicts is {self.local_repo.state()}") # Diagnostic print
-        self.assertEqual(self.local_repo.state(), pygit2.GIT_REPOSITORY_STATE_NONE) # Called state(); state_cleanup likely resets state to NONE
+        self.assertEqual(self.local_repo.state(), pygit2.enums.RepositoryState.NONE) # Called state(); state_cleanup likely resets state to NONE
         # The `save_changes` function calls state_cleanup which removes MERGE_HEAD.
         # `sync_repository` also calls `state_cleanup` if conflicts are detected AFTER `repo.merge()`.
         # Let's verify MERGE_HEAD is gone.
