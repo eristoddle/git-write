@@ -24,8 +24,17 @@ jobs:
           git config --global user.name "Test User"
           git config --global user.email "test@example.com"
 
+      - name: Set up Node.js (interop tests)
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: interop/package-lock.json
+
       - name: Install dependencies
-        run: uv sync
+        run: |
+          uv sync
+          npm ci --prefix interop
 
       - name: Install Pandoc
         run: sudo apt-get update && sudo apt-get install -y pandoc
@@ -34,4 +43,7 @@ jobs:
         run: uv run ruff check .
 
       - name: Test with pytest
+        env:
+          # A missing node or interop/node_modules is a failure here, not a skip.
+          GITWRITE_REQUIRE_INTEROP: "1"
         run: uv run pytest --cov=gitwrite_core --cov=gitwrite_cli tests/

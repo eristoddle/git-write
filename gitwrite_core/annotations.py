@@ -1,520 +1,324 @@
-# Core Annotation Handling Logic
-# This module will contain functions for creating, listing, and managing annotations.
+"""Reader annotations, stored as commits on a feedback branch.
 
-import os
+An annotation is an empty-change commit (same tree as its parent) whose message is a subject line,
+a blank line, and a YAML body. A status change is a new commit that points back at the original
+through ``original_annotation_id``. Commits are written straight onto ``refs/heads/<branch>`` with
+pygit2: HEAD, the index and the working tree are never touched. The format is specified in
+``docs/ANNOTATION_FORMAT.md`` (D8, D11).
+"""
+
 import re
-import subprocess
-from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 import pygit2
-import yaml  # For storing annotation data in commit bodies
+import yaml
 
+from .anchors import apply_anchor
 from .exceptions import AnnotationError, RepositoryOperationError
-
-# Assuming git library like 'gitpython' might be used, or direct CLI calls.
-# For now, we'll conceptualize with direct CLI calls or a helper.
-# from git import Repo, GitCommandError # Example if GitPython is available
 from .models import Annotation, AnnotationStatus
 
 _COMMIT_ID_RE = re.compile(r'[0-9a-f]{4,40}')
 
+_REQUIRED_FIELDS = ["file_path", "highlighted_text", "start_line", "end_line", "comment", "author"]
+
 
 def _validate_commit_id(commit_id: str) -> str:
-    """Only a hex object ID may reach the git CLI as a revision (a value like
-    "--output=/tmp/x" would otherwise be read as a git option and write a file)."""
+    """Only a hex object ID may name a commit (see the argument-safety tests)."""
     if not isinstance(commit_id, str) or not _COMMIT_ID_RE.fullmatch(commit_id):
         raise AnnotationError(f"Invalid commit ID {commit_id!r}: expected 4 to 40 lowercase hex characters.")
     return commit_id
 
 
 def _validate_branch_name(branch: str) -> str:
-    """Reject anything git would parse as an option or that is not a legal branch name."""
+    """Reject empty names, names that start with '-', and names git would not accept as a branch."""
     if (not isinstance(branch, str) or not branch or branch.startswith('-')
             or not pygit2.reference_is_valid_name(f'refs/heads/{branch}')):
         raise AnnotationError(f"Invalid feedback branch name {branch!r}.")
     return branch
 
 
-# Helper function to run git commands
-def _run_git_command(repo_path: str, command: List[str], expect_stdout: bool = True) -> str:
-    """
-    Runs a git command in the specified repository path.
-    Raises RepositoryOperationError for command failures.
-    """
+def _open_repo(repo_path: str) -> pygit2.Repository:
     try:
-        process = subprocess.run(
-            ['git', '-C', repo_path] + command,  # Use -C to specify repository path
-            capture_output=True,
-            text=True,
-            check=True
+        return pygit2.Repository(repo_path)
+    except pygit2.GitError as e:
+        raise RepositoryOperationError(f"'{repo_path}' is not a valid Git repository.") from e
+
+
+def _signature(repo: pygit2.Repository) -> pygit2.Signature:
+    """The repo's configured identity, or a neutral one so annotating never fails on a fresh machine."""
+    try:
+        return repo.default_signature
+    except (KeyError, pygit2.GitError):
+        return pygit2.Signature("GitWrite", "gitwrite@example.com")
+
+
+def _feedback_tip(repo: pygit2.Repository, branch: str) -> Optional[pygit2.Commit]:
+    ref = repo.references.get(f'refs/heads/{branch}')
+    return ref.peel(pygit2.Commit) if ref is not None else None
+
+
+def _commit_on_feedback(repo: pygit2.Repository, branch: str, message: str) -> str:
+    """Add an empty-change commit to the feedback branch, creating the branch from HEAD if needed."""
+    ref_name = f'refs/heads/{branch}'
+    tip = _feedback_tip(repo, branch)
+    signature = _signature(repo)
+    if tip is not None:
+        oid = repo.create_commit(ref_name, signature, signature, message, tip.tree_id, [tip.id])
+        return str(oid)
+
+    if repo.head_is_unborn:
+        raise RepositoryOperationError(
+            f"Failed to create feedback branch '{branch}'. "
+            "Ensure the repository is initialized and has at least one commit. HEAD has no commits yet."
         )
-        return process.stdout.strip() if expect_stdout else ""
-    except subprocess.CalledProcessError as e:
-        error_message = f"Git command failed: {' '.join(command)}\nError: {e.stderr.strip()}"
-        # Try to get current branch to add to error context
-        try:
-            current_branch_process = subprocess.run(
-                ['git', '-C', repo_path, 'rev-parse', '--abbrev-ref', 'HEAD'],
-                capture_output=True, text=True, check=False
-            )
-            current_branch = current_branch_process.stdout.strip() if current_branch_process.returncode == 0 else "unknown"
-            error_message += f"\nCurrent branch: {current_branch}"
-        except Exception:
-            pass # Ignore if getting branch fails
-        raise RepositoryOperationError(error_message) from e
-    except FileNotFoundError:
-        raise AnnotationError("Git command not found. Is Git installed and in PATH?")
+    base = repo.head.peel(pygit2.Commit)
+    # libgit2 refuses to create a new ref through create_commit when the commit has a parent,
+    # so write the commit unreferenced and then create the ref (which fails if it appeared meanwhile).
+    oid = repo.create_commit(None, signature, signature, message, base.tree_id, [base.id])
+    repo.references.create(ref_name, oid)
+    return str(oid)
+
+
+def _split_message(message: str) -> Optional[str]:
+    """Return the YAML body of an annotation-shaped message (subject, blank line, body), else None."""
+    parts = message.split('\n', 2)
+    if len(parts) < 3 or parts[1].strip() != "":
+        return None
+    return parts[2]
+
+
+def _annotation_data(annotation: Annotation) -> Dict[str, Any]:
+    """The fields that are stored in the commit's YAML body (not the ids).
+
+    The D15 anchor fields are written only when set, so annotations without them stay byte-identical
+    to the original format.
+    """
+    data: Dict[str, Any] = {
+        "file_path": annotation.file_path,
+        "highlighted_text": annotation.highlighted_text,
+        "start_line": annotation.start_line,
+        "end_line": annotation.end_line,
+        "comment": annotation.comment,
+        "author": annotation.author,
+        "status": annotation.status.value,
+    }
+    if annotation.prefix is not None:
+        data["prefix"] = annotation.prefix
+    if annotation.suffix is not None:
+        data["suffix"] = annotation.suffix
+    if annotation.offset is not None:
+        data["offset"] = annotation.offset
+    return data
+
+
+def _optional_str(value: Any) -> Optional[str]:
+    return value if isinstance(value, str) else None
+
+
+def _optional_int(value: Any) -> Optional[int]:
+    return value if isinstance(value, int) and not isinstance(value, bool) and value >= 0 else None
+
+
+def _file_text_at_head(repo: pygit2.Repository, file_path: str) -> Optional[str]:
+    """The text of ``file_path`` in the HEAD commit, or None if it is missing or not UTF-8 text."""
+    if repo.head_is_unborn:
+        return None
+    try:
+        entry = repo.head.peel(pygit2.Commit).tree[file_path]
+        blob = repo.get(entry.id)
+        return blob.data.decode("utf-8") if isinstance(blob, pygit2.Blob) else None
+    except (KeyError, UnicodeDecodeError, pygit2.GitError):
+        return None
+
+
+def _dump_yaml(data: Dict[str, Any], what: str) -> str:
+    try:
+        return yaml.dump(data, sort_keys=False, allow_unicode=True)
+    except Exception as e:
+        raise AnnotationError(f"Failed to serialize {what} to YAML: {e}") from e
+
+
+def _read_annotation_yaml(message: str) -> Optional[Dict[str, Any]]:
+    """Parse and sanity-check an annotation commit message; None if it is not an annotation."""
+    body = _split_message(message)
+    if body is None:
+        return None
+    try:
+        data = yaml.safe_load(body)
+    except yaml.YAMLError:
+        return None
+    if not isinstance(data, dict) or not all(field in data for field in _REQUIRED_FIELDS):
+        return None
+    return data
+
+
+def _build_annotation(data: Dict[str, Any], annotation_id: str, commit_id: str,
+                      original_id: Optional[str], status: AnnotationStatus) -> Annotation:
+    return Annotation(
+        id=annotation_id,
+        commit_id=commit_id,
+        file_path=data["file_path"],
+        highlighted_text=data["highlighted_text"],
+        start_line=data["start_line"],
+        end_line=data["end_line"],
+        comment=data["comment"],
+        author=data["author"],
+        status=status,
+        original_annotation_id=original_id,
+        # Anchors are optional; a malformed value is ignored rather than dropping the annotation.
+        prefix=_optional_str(data.get("prefix")),
+        suffix=_optional_str(data.get("suffix")),
+        offset=_optional_int(data.get("offset")),
+    )
 
 
 def create_annotation_commit(repo_path: str, feedback_branch: str, annotation_data: Annotation) -> str:
     """
-    Creates a new commit on the feedback_branch with the annotation data.
+    Creates a new commit on the feedback branch with the annotation data.
+
+    The branch is created from HEAD if it does not exist. HEAD, the index and the working tree
+    are not changed.
 
     Args:
         repo_path: The path to the Git repository.
         feedback_branch: The name of the branch to commit the annotation to.
-        annotation_data: An Annotation Pydantic model instance.
+        annotation_data: The annotation to record. Its ``id`` and ``commit_id`` are set on return.
+            If it has no anchor (D15), one is computed from the file's text in HEAD when the
+            highlighted text is found there.
 
     Returns:
         The SHA of the newly created annotation commit.
 
     Raises:
-        RepositoryOperationError: If any Git command fails.
+        RepositoryOperationError: If the repository is invalid or has no commit to branch from.
         AnnotationError: For issues specific to annotation processing.
     """
-    if not os.path.isdir(os.path.join(repo_path, '.git')):
-        raise RepositoryOperationError(f"'{repo_path}' is not a valid Git repository.")
+    repo = _open_repo(repo_path)
     _validate_branch_name(feedback_branch)
 
-    # Ensure the feedback branch exists and switch to it
-    try:
-        # Check if branch exists locally
-        _run_git_command(repo_path, ['rev-parse', '--verify', feedback_branch], expect_stdout=False)
-        _run_git_command(repo_path, ['checkout', feedback_branch, '--'], expect_stdout=False)
-    except RepositoryOperationError:
-        # Branch does not exist, create it from HEAD
-        # Check if there are any commits in the repo. If not, git checkout -b will fail.
-        try:
-            # Check if HEAD exists. If not, repo is empty or on an unborn branch.
-            _run_git_command(repo_path, ['rev-parse', '--verify', 'HEAD'], expect_stdout=False)
-            # If HEAD exists, create the branch from it.
-            _run_git_command(repo_path, ['checkout', '-b', feedback_branch], expect_stdout=False)
-        except RepositoryOperationError as e_head_check: # True if HEAD doesn't exist or other issue verifying it.
-            # This path is taken if repo is empty or current branch is unborn.
-            # The test `test_create_annotation_on_empty_repo_branch_creation` expects this error.
-            # We do not attempt to create an orphan branch automatically here.
-            # The user should ensure the repo has at least one commit.
-            raise RepositoryOperationError(
-                f"Failed to create feedback branch '{feedback_branch}'. "
-                f"Ensure the repository is initialized and has at least one commit. Error checking HEAD: {e_head_check}"
-            ) from e_head_check
+    # Anchor the highlight to the text it was made on (the HEAD version of the file), unless the
+    # caller already supplied an anchor (for example from an unsaved editor buffer).
+    if annotation_data.prefix is None and annotation_data.suffix is None and annotation_data.offset is None:
+        file_text = _file_text_at_head(repo, annotation_data.file_path)
+        if file_text is not None:
+            apply_anchor(annotation_data, file_text)
 
+    yaml_content = _dump_yaml(_annotation_data(annotation_data), "annotation data")
+    subject = f"Annotation: {annotation_data.file_path} (Lines {annotation_data.start_line}-{annotation_data.end_line})"
+    new_commit_sha = _commit_on_feedback(repo, feedback_branch, f"{subject}\n\n{yaml_content}")
 
-    # Prepare annotation content for commit body
-    # We only want to store the core data, not internal fields like 'id' or 'commit_id' yet
-    commit_data = {
-        "file_path": annotation_data.file_path,
-        "highlighted_text": annotation_data.highlighted_text,
-        "start_line": annotation_data.start_line,
-        "end_line": annotation_data.end_line,
-        "comment": annotation_data.comment,
-        "author": annotation_data.author,
-        "status": annotation_data.status.value, # Store the enum value
-        # original_annotation_id is not set for new annotations
-    }
-    try:
-        yaml_content = yaml.dump(commit_data, sort_keys=False, allow_unicode=True)
-    except Exception as e:
-        raise AnnotationError(f"Failed to serialize annotation data to YAML: {e}") from e
-
-    commit_subject = f"Annotation: {annotation_data.file_path} (Lines {annotation_data.start_line}-{annotation_data.end_line})"
-    commit_message = f"{commit_subject}\n\n{yaml_content}"
-
-    # Create the commit
-    # Git commit via plumbing is safer to handle messages with special characters
-    # Using commit-tree is more robust but complex. For now, use high-level command with temp file for message.
-
-    # To avoid issues with command line length or special characters in messages,
-    # it's best to pass the commit message via a temporary file or stdin.
-    # `git commit -F -` reads message from stdin.
-    # `git commit --allow-empty -m "{subject}" -m "{body}"` could also work if body is not too large.
-
-    # Using a temporary file for the commit message
-    tmp_commit_msg_file = Path(repo_path) / ".git" / "ANNOTATION_COMMIT_MSG.tmp"
-    try:
-        with open(tmp_commit_msg_file, 'w', encoding='utf-8') as f:
-            f.write(commit_message)
-
-        # We need to stage something for a commit to be made, unless --allow-empty is used.
-        # Annotations are metadata, so they don't necessarily change files in the working tree.
-        # Using --allow-empty is appropriate here.
-        _run_git_command(repo_path, ['commit', '--allow-empty', '-F', str(tmp_commit_msg_file)], expect_stdout=False)
-    finally:
-        if tmp_commit_msg_file.exists():
-            tmp_commit_msg_file.unlink()
-
-    # Get the SHA of the new commit
-    new_commit_sha = _run_git_command(repo_path, ['rev-parse', 'HEAD'])
-
-    # Update the annotation_data object with the commit ID (useful for the caller)
-    # The Pydantic model passed is mutable by default.
     annotation_data.id = new_commit_sha
     annotation_data.commit_id = new_commit_sha
-
     return new_commit_sha
 
 
 def list_annotations(repo_path: str, feedback_branch: str) -> List[Annotation]:
     """
-    Lists all annotations from the history of the feedback_branch.
+    Lists the annotations on the feedback branch, each at its latest status.
 
-    Args:
-        repo_path: The path to the Git repository.
-        feedback_branch: The name of the branch to list annotations from.
-
-    Returns:
-        A list of Annotation objects.
+    Commits that are not annotation-shaped are skipped. A missing branch means no annotations.
+    Annotations come back oldest first; ``id`` is the creation commit and ``commit_id`` the commit
+    that recorded the current status.
 
     Raises:
-        RepositoryOperationError: If any Git command fails or the branch doesn't exist.
-        AnnotationError: For issues specific to annotation processing like parsing.
+        RepositoryOperationError: If the repository is invalid.
+        AnnotationError: If the branch name is invalid.
     """
-    if not os.path.isdir(os.path.join(repo_path, '.git')):
-        raise RepositoryOperationError(f"'{repo_path}' is not a valid Git repository.")
+    repo = _open_repo(repo_path)
     _validate_branch_name(feedback_branch)
 
-    annotations: List[Annotation] = []
-
-    # Verify the branch exists before trying to log from it
-    try:
-        _run_git_command(repo_path, ['rev-parse', '--verify', feedback_branch], expect_stdout=False)
-    except RepositoryOperationError as e:
-        # If branch doesn't exist, it means no annotations, return empty list.
-        # Or, we could raise an error. Plan implies listing, so empty list is fine.
-        # However, the error from _run_git_command is generic. Let's make it more specific.
-        # A common case is branch not found.
-        # Git error messages can vary. Common ones for non-existent branches/refs:
-        # "unknown revision or path not in the working tree"
-        # "fatal: ambiguous argument '" + feedback_branch + "': unknown revision or path not in the working tree."
-        # "fatal: Needed a single revision" (e.g. if branch name is valid but points to nothing or is ambiguous somehow)
-        error_str = str(e).lower() # Normalize for easier checking
-        if "unknown revision or path not in the working tree" in error_str or \
-            "fatal: ambiguous argument" in error_str or \
-            "fatal: needed a single revision" in error_str:
-            # This indicates the branch likely doesn't exist or is invalid for log.
-            # Depending on desired behavior: could return [] or raise a specific BranchNotFoundError.
-            # For listing, returning [] if branch is empty or non-existent seems reasonable.
-            return []
-        raise RepositoryOperationError(f"Failed to verify feedback branch '{feedback_branch}': {e}") from e
-
-
-    # Using a custom format for git log: %H for commit hash, %B for raw body (full message)
-    # We'll use a unique delimiter that's unlikely to appear in commit messages.
-    log_format = "%H%x00%B%x01" # Null byte to separate hash and body, SOH to separate entries
-    try:
-        log_output = _run_git_command(repo_path, ['log', f'--pretty=format:{log_format}', feedback_branch, '--'])
-    except RepositoryOperationError as e:
-        # This can happen if the branch exists but has no commits.
-        if "does not have any commits yet" in str(e) or "unknown revision" in str(e): # check for messages indicating no commits
-            return [] # No commits, so no annotations
-        raise RepositoryOperationError(f"Failed to get log for branch '{feedback_branch}': {e}") from e
-
-    if not log_output:
+    tip = _feedback_tip(repo, feedback_branch)
+    if tip is None:
         return []
 
-    commit_entries = log_output.split('\x01') # Split by SOH
-
-    for entry in commit_entries:
-        entry = entry.strip() # Remove leading/trailing whitespace, including newlines from SOH
-        if not entry:
+    threads: Dict[str, Annotation] = {}  # keyed by the creation commit of each annotation
+    for commit in repo.walk(tip.id, pygit2.GIT_SORT_TOPOLOGICAL | pygit2.GIT_SORT_REVERSE):
+        data = _read_annotation_yaml(commit.message)
+        if data is None:
             continue
-
-        parts = entry.split('\x00', 1) # Split by null byte into hash and full message
-        if len(parts) != 2:
-            # Log a warning or skip malformed entry
-            # print(f"Warning: Skipping malformed log entry: {entry[:100]}") # For debugging
-            continue
-
-        commit_sha, full_message = parts
-
-        # The YAML content is expected after the first line (subject) and a blank line.
-        message_lines = full_message.split('\n', 2)
-        if len(message_lines) < 3 or message_lines[1].strip() != "":
-            # Not a standard annotation commit format (missing blank line or body)
-            # print(f"Skipping commit {commit_sha[:7]} - not an annotation (format error).")
-            continue
-
-        yaml_body = message_lines[2]
-
+        commit_sha = str(commit.id)
         try:
-            data = yaml.safe_load(yaml_body)
-            if not isinstance(data, dict):
-                # print(f"Skipping commit {commit_sha[:7]} - YAML body is not a dictionary.")
-                continue
-
-            # Basic check for expected fields (can be more comprehensive)
-            required_fields = ["file_path", "highlighted_text", "start_line", "end_line", "comment", "author", "status"]
-            if not all(field in data for field in required_fields):
-                # print(f"Skipping commit {commit_sha[:7]} - missing required fields in YAML.")
-                continue
-
-            # Validate status enum if possible
-            try:
-                status_enum = AnnotationStatus(data["status"])
-            except ValueError:
-                # print(f"Skipping commit {commit_sha[:7]} - invalid status value '{data['status']}'.")
-                continue
-
-            annotation = Annotation(
-                id=commit_sha, # The commit SHA is the ID of this version of the annotation
-                commit_id=commit_sha,
-                file_path=data["file_path"],
-                highlighted_text=data["highlighted_text"],
-                start_line=data["start_line"],
-                end_line=data["end_line"],
-                comment=data["comment"],
-                author=data["author"],
-                status=status_enum,
-                # original_annotation_id will be handled by update_annotation_status logic later
-            )
-            annotations.append(annotation)
-        except yaml.YAMLError:
-            # Not a valid YAML body, or not an annotation commit we recognize. Skip it.
-            # print(f"Skipping commit {commit_sha[:7]} - YAML parsing error: {e}")
-            continue
-        except Exception: # Catch other potential errors during Annotation creation
-            # print(f"Skipping commit {commit_sha[:7]} - Error creating annotation object: {e}")
-            continue
-
-    # At this stage, annotations are in reverse chronological order (newest first).
-    # Depending on requirements, might need to reverse it if chronological order is desired.
-    # The plan doesn't specify order, so newest first (Git log default) is fine.
-    # This old version is now superseded by the refined one below.
-    # return annotations
-
-    # Refined list_annotations to handle status updates
-    processed_annotations: Dict[str, Annotation] = {} # Key: original_annotation_id, Value: Annotation object at latest status
-    # Stores the commit SHA of the latest update processed for an original_annotation_id, to ensure we only take the newest.
-    # Not strictly needed if git log is guaranteed newest first and we process updates first for an ID.
-    # Simpler: just use a set of original_ids that have been finalized.
-
-
-
-    for entry in reversed(commit_entries): # Process oldest first to build up state
-        entry = entry.strip()
-        if not entry:
-            continue
-
-        parts = entry.split('\x00', 1)
-        if len(parts) != 2:
-            continue
-
-        commit_sha, full_message = parts
-        message_lines = full_message.split('\n', 2)
-        if len(message_lines) < 3 or message_lines[1].strip() != "":
-            continue
-        yaml_body = message_lines[2]
-
-        try:
-            data = yaml.safe_load(yaml_body)
-            if not isinstance(data, dict):
-                continue
-
-            required_fields = ["file_path", "highlighted_text", "start_line", "end_line", "comment", "author", "status"]
-            if not all(field in data for field in required_fields):
-                continue
-
-            status_enum = AnnotationStatus(data["status"])
-
-            original_id_from_yaml = data.get("original_annotation_id")
-
-            if original_id_from_yaml:
-                # This is a status update commit
-                # It updates the annotation identified by original_id_from_yaml
-                # Its own commit_id is commit_sha
-                # Its id (as an Annotation object) should be original_id_from_yaml
-                if original_id_from_yaml in processed_annotations:
-                    # Update existing annotation's status and its commit_id to this newer one
-                    ann = processed_annotations[original_id_from_yaml]
-                    ann.status = status_enum
-                    ann.commit_id = commit_sha # This commit defines the current state
-                    # Carry over other fields from the update commit's YAML if they can change.
-                    # For now, assuming only status changes. If other fields (e.g. comment) can be
-                    # updated by a status update commit, they should be updated here too.
-                    # The current `update_annotation_status` copies all fields.
-                    ann.file_path = data["file_path"]
-                    ann.highlighted_text = data["highlighted_text"]
-                    ann.start_line = data["start_line"]
-                    ann.end_line = data["end_line"]
-                    ann.comment = data["comment"]
-                    ann.author = data["author"]
-                    ann.original_annotation_id = original_id_from_yaml # Ensure this is set
-                else:
-                    # This case should ideally not happen if original annotations are always created first.
-                    # However, if it can, we might need to create a new entry.
-                    # Or, it implies an update to a non-existent/deleted annotation.
-                    # For now, let's assume valid update refers to an existing original_id.
-                    # If the original annotation commit hasn't been processed yet (because we are going oldest to newest)
-                    # this update might be processed before its base. This is fine.
-                     processed_annotations[original_id_from_yaml] = Annotation(
-                        id=original_id_from_yaml, # ID of the annotation thread
-                        commit_id=commit_sha,     # SHA of this specific update commit
-                        file_path=data["file_path"],
-                        highlighted_text=data["highlighted_text"],
-                        start_line=data["start_line"],
-                        end_line=data["end_line"],
-                        comment=data["comment"],
-                        author=data["author"],
-                        status=status_enum,
-                        original_annotation_id=original_id_from_yaml
-                    )
+            status = AnnotationStatus(data.get("status"))
+            original_id = data.get("original_annotation_id")
+            if original_id:
+                # A status change: it carries the full annotation again and replaces the earlier state.
+                threads[original_id] = _build_annotation(data, original_id, commit_sha, original_id, status)
             else:
-                # This is an original annotation commit
-                # Its id is commit_sha
-                if commit_sha not in processed_annotations: # If no updates have been processed for it yet
-                    processed_annotations[commit_sha] = Annotation(
-                        id=commit_sha,
-                        commit_id=commit_sha,
-                        file_path=data["file_path"],
-                        highlighted_text=data["highlighted_text"],
-                        start_line=data["start_line"],
-                        end_line=data["end_line"],
-                        comment=data["comment"],
-                        author=data["author"],
-                        status=status_enum,
-                        original_annotation_id=None # Original annotations don't point to others
-                    )
-                # If commit_sha IS in processed_annotations, it means an update was processed earlier (which is good)
-                # and has already established the entry for this annotation thread. We don't overwrite
-                # the Annotation object, as it already reflects a newer status from an update.
-                # We just ensure its base data (like original comment, author, etc.) is from this original commit
-                # if the update didn't explicitly override it.
-                # Current update_annotation_status *does* copy all data, so this may not be strictly necessary
-                # if updates are comprehensive.
-                # Let's re-verify: if an update for 'A' was processed, processed_annotations['A'] exists.
-                # Now we process 'A' (original). We should NOT overwrite processed_annotations['A'] with older status.
-                # The logic of `if commit_sha not in processed_annotations:` handles this correctly.
+                threads[commit_sha] = _build_annotation(data, commit_sha, commit_sha, None, status)
+        except (ValueError, TypeError):
+            continue  # unknown status or a field of the wrong type: not an annotation we understand
 
-        except (yaml.YAMLError, ValueError, KeyError): # Catches Pydantic validation errors too if strict
-            # print(f"Skipping commit {commit_sha[:7]} - data processing error: {e}") # For debugging
-            continue
-
-    return list(processed_annotations.values())
+    return list(threads.values())
 
 
-def update_annotation_status(repo_path: str, feedback_branch: str, annotation_commit_id: str, new_status: AnnotationStatus) -> str:
+def update_annotation_status(repo_path: str, feedback_branch: str, annotation_commit_id: str,
+                             new_status: AnnotationStatus) -> str:
     """
-    Updates the status of an existing annotation by creating a new commit.
+    Records a new status for an annotation as a new commit that points back at the original.
 
     Args:
         repo_path: The path to the Git repository.
         feedback_branch: The name of the feedback branch.
-        annotation_commit_id: The commit SHA of the original annotation to update.
+        annotation_commit_id: The (possibly abbreviated, lowercase hex) SHA of the annotation's
+            creation commit. A status commit's SHA is also accepted and resolved to its annotation.
         new_status: The new status for the annotation.
 
     Returns:
         The SHA of the new commit that records the status update.
 
     Raises:
-        RepositoryOperationError: If Git commands fail or the original annotation is not found.
-        AnnotationError: For issues specific to annotation processing.
+        RepositoryOperationError: If the repository is invalid or the branch or commit is not found.
+        AnnotationError: If the commit is not an annotation or an argument is invalid.
     """
-    if not os.path.isdir(os.path.join(repo_path, '.git')):
-        raise RepositoryOperationError(f"'{repo_path}' is not a valid Git repository.")
+    repo = _open_repo(repo_path)
     _validate_branch_name(feedback_branch)
     _validate_commit_id(annotation_commit_id)
 
-    # 0. Ensure feedback branch exists and check it out
+    tip = _feedback_tip(repo, feedback_branch)
+    if tip is None:
+        raise RepositoryOperationError(f"Feedback branch '{feedback_branch}' not found.")
+
     try:
-        _run_git_command(repo_path, ['rev-parse', '--verify', feedback_branch], expect_stdout=False)
-        _run_git_command(repo_path, ['checkout', feedback_branch, '--'], expect_stdout=False)
-    except RepositoryOperationError as e:
-        # If branch doesn't exist, cannot update an annotation on it.
-        raise RepositoryOperationError(f"Feedback branch '{feedback_branch}' not found or could not be checked out: {e}") from e
-
-    # 1. Retrieve the original annotation data.
-    # We need this to carry over details like file_path, author, etc., into the new status commit.
-    # This reuses part of the logic from list_annotations to get a specific commit's annotation data.
-    original_annotation_data: Optional[Annotation] = None
-    try:
-        # %B gives the raw body, including subject, blank line, and message body
-        commit_full_message = _run_git_command(repo_path, ['show', '-s', '--format=%B', annotation_commit_id, '--'])
-
-        message_lines = commit_full_message.split('\n', 2)
-        if len(message_lines) < 3 or message_lines[1].strip() != "":
-            raise AnnotationError(f"Commit {annotation_commit_id} is not in the expected annotation format (subject/body structure).")
-
-        yaml_body = message_lines[2]
-        data = yaml.safe_load(yaml_body)
-        if not isinstance(data, dict):
-            raise AnnotationError(f"YAML body of commit {annotation_commit_id} is not a dictionary.")
-
-        # Basic validation
-        required_fields = ["file_path", "highlighted_text", "start_line", "end_line", "comment", "author"]
-        if not all(field in data for field in required_fields):
-            raise AnnotationError(f"Commit {annotation_commit_id} is missing required fields in its YAML body.")
-
-        original_annotation_data = Annotation(
-            id=annotation_commit_id, # Original commit ID
-            commit_id=annotation_commit_id,
-            file_path=data["file_path"],
-            highlighted_text=data["highlighted_text"],
-            start_line=data["start_line"],
-            end_line=data["end_line"],
-            comment=data["comment"],
-            author=data["author"],
-            status=AnnotationStatus(data.get("status", AnnotationStatus.NEW.value)), # Use original status if present
-             # original_annotation_id is None for the first commit of an annotation
+        original = repo.revparse_single(annotation_commit_id).peel(pygit2.Commit)
+    except (KeyError, ValueError, pygit2.GitError) as e:
+        raise RepositoryOperationError(
+            f"Original annotation commit '{annotation_commit_id}' not found on branch '{feedback_branch}': {e}"
+        ) from e
+    if original.id != tip.id and not repo.descendant_of(tip.id, original.id):
+        raise RepositoryOperationError(
+            f"Original annotation commit '{annotation_commit_id}' not found on branch '{feedback_branch}'."
         )
 
-    except RepositoryOperationError as e:
-        raise RepositoryOperationError(f"Original annotation commit '{annotation_commit_id}' not found on branch '{feedback_branch}': {e}") from e
+    body = _split_message(original.message)
+    if body is None:
+        raise AnnotationError(
+            f"Commit {annotation_commit_id} is not in the expected annotation format (subject/body structure)."
+        )
+    try:
+        data = yaml.safe_load(body)
     except yaml.YAMLError as e:
         raise AnnotationError(f"Failed to parse YAML for original annotation '{annotation_commit_id}': {e}") from e
-    except (ValueError, KeyError) as e: # For AnnotationStatus conversion or missing keys
+    if not isinstance(data, dict):
+        raise AnnotationError(f"YAML body of commit {annotation_commit_id} is not a dictionary.")
+    if not all(field in data for field in _REQUIRED_FIELDS):
+        raise AnnotationError(f"Commit {annotation_commit_id} is missing required fields in its YAML body.")
+
+    try:
+        original_annotation = _build_annotation(
+            data, str(original.id), str(original.id), None,
+            AnnotationStatus(data.get("status", AnnotationStatus.NEW.value)),
+        )
+    except (ValueError, TypeError) as e:
         raise AnnotationError(f"Data format error for original annotation '{annotation_commit_id}': {e}") from e
 
-    if not original_annotation_data:
-        # Should have been caught by exceptions above, but as a safeguard.
-        raise AnnotationError(f"Could not retrieve data for original annotation commit '{annotation_commit_id}'.")
+    # Everything is carried over; only the status changes. The pointer is always the thread's
+    # creation commit, even when a status commit was named.
+    thread_id = data.get("original_annotation_id") or str(original.id)
+    update_data = _annotation_data(original_annotation)
+    update_data["status"] = new_status.value
+    update_data["original_annotation_id"] = thread_id
 
-    # 2. Prepare data for the new status update commit.
-    # This commit will carry over all data from the original, but with the new status,
-    # and a pointer to the original annotation.
-    update_commit_data = {
-        "file_path": original_annotation_data.file_path,
-        "highlighted_text": original_annotation_data.highlighted_text,
-        "start_line": original_annotation_data.start_line,
-        "end_line": original_annotation_data.end_line,
-        "comment": original_annotation_data.comment, # Keep original comment
-        "author": original_annotation_data.author,   # Keep original author
-        "status": new_status.value,
-        "original_annotation_id": annotation_commit_id # Link back to the original annotation
-    }
-    try:
-        yaml_content = yaml.dump(update_commit_data, sort_keys=False, allow_unicode=True)
-    except Exception as e:
-        raise AnnotationError(f"Failed to serialize status update data to YAML: {e}") from e
-
-    commit_subject = f"Update status: {original_annotation_data.file_path} (Annotation {annotation_commit_id[:7]}) to {new_status.value}"
-    commit_message = f"{commit_subject}\n\n{yaml_content}"
-
-    # 3. Create the new commit for the status update.
-    tmp_commit_msg_file = Path(repo_path) / ".git" / "ANNOTATION_STATUS_UPDATE_COMMIT_MSG.tmp"
-    try:
-        with open(tmp_commit_msg_file, 'w', encoding='utf-8') as f:
-            f.write(commit_message)
-
-        _run_git_command(repo_path, ['commit', '--allow-empty', '-F', str(tmp_commit_msg_file)], expect_stdout=False)
-    finally:
-        if tmp_commit_msg_file.exists():
-            tmp_commit_msg_file.unlink()
-
-    # 4. Get the SHA of the new status update commit.
-    status_update_commit_sha = _run_git_command(repo_path, ['rev-parse', 'HEAD'])
-
-    return status_update_commit_sha
-
-# End of placeholder content
-# Actual implementations will follow in subsequent steps.
+    yaml_content = _dump_yaml(update_data, "status update data")
+    subject = (f"Update status: {original_annotation.file_path} "
+               f"(Annotation {thread_id[:7]}) to {new_status.value}")
+    return _commit_on_feedback(repo, feedback_branch, f"{subject}\n\n{yaml_content}")

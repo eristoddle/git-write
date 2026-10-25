@@ -1,0 +1,14 @@
+{
+  "name": "gitwrite-interop",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Reads and writes GitWrite repositories with isomorphic-git, the library Veneer uses, to prove it interoperates with pygit2.",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "isomorphic-git": "1.44.4",
+    "yaml": "2.9.1"
+  }
+}

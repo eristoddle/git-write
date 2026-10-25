@@ -5,13 +5,18 @@ import pytest
 import yaml
 
 from gitwrite_core.annotations import (
-    _run_git_command,  # For direct setup if needed, or use higher level funcs
     create_annotation_commit,
     list_annotations,
     update_annotation_status,
 )
 from gitwrite_core.exceptions import AnnotationError, RepositoryOperationError
 from gitwrite_core.models import Annotation, AnnotationStatus
+
+
+def _run_git_command(repo_path: str, command: list, expect_stdout: bool = True) -> str:
+    """Test setup helper: run the real git CLI in a repo."""
+    done = subprocess.run(["git", "-C", repo_path, *command], capture_output=True, text=True, check=True)
+    return done.stdout.strip() if expect_stdout else ""
 
 
 # Pytest fixture for a temporary Git repository
