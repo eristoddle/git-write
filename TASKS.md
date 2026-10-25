@@ -15,76 +15,65 @@
 
 ---
 
-# ⏭ NEXT ACTIVE TASK — Queue 3: plugin steps 1–3
+# ⏭ NEXT ACTIVE TASK — Queue 4: plugin steps 4–6
 
-Branch `queue/3-plugin-core` per the standing rules (this session uses `ccr-fab01977-3fk6x6`). Decisions D7, D9, D12. Spec: Veneer's `docs/handoff/gitwrite-plugin-brief.md` steps 1–3 and `docs/handoff/README.md` (both in the `veneer` / `veneer-api` repos).
+Branch `queue/4-plugin-collab` per the standing rules (this session uses `ccr-fab01977-3fk6x6`). Decisions D8, D9, D12, D15. Spec: Veneer's `docs/handoff/gitwrite-plugin-brief.md` steps 4–6; format spec `docs/ANNOTATION_FORMAT.md`.
 
 ## Goal
 
-A `veneer-plugin/` that lets a writer save a version, browse and restore versions, and compare them with Accept/Reject, on `api.history`, tested on the fake host.
+Add to `veneer-plugin/`: explorations (list, start, switch), tags, merge, annotations drawn as marks with Accept/Reject, and sync over HTTPS with the token in `api.secrets`. All tested on the fake host.
 
 ## Why (pointer)
 
-PLAN.md D7, D8, D9, D12. Plugin layout per the Veneer handoff README and its example plugins (`book_forge`'s copy is on Stephan's machine, not in the cloud session).
+PLAN.md D8, D9, D12, D15. Stephan approved building on the fake host only for sync (no real remote can be reached from the cloud session): a manual checklist for the real-world checks goes in the PR.
 
 ### ▶ Run state (the agent keeps this current on every stop)
-**Queue 3 complete (2026-10-25).** All 4 pieces done, none blocked; one commit per piece (`queue 3.1` … `queue 3.4`). Worked on the designated branch `ccr-fab01977-3fk6x6` (restarted from `main` after the queue 2 PR merged).
-Checks at finish: in `veneer-plugin/`, `npm run typecheck`, `npm test` (74 tests on the fake host, also run under three time zones) and `npm run build` pass, and pass from a clean checkout with `npm ci` on Node 22 / npm 10.9 (what CI uses). Python: 379 passed, 1 skipped; `ruff` clean.
-**Not verified in the running Veneer app** (only on the API's fake host): how the modal save form, the wide Compare panel, the icons (`history`, `git-compare`, `save`) and the confirm-on-row Restore actually look and behave. The API's own docs describe them; nobody has loaded this plugin into Veneer yet.
-PR not opened yet: waiting for the user's go-ahead.
+_Started 2026-10-25 on the designated branch `ccr-fab01977-3fk6x6` (restarted from `main` after the queue 3 PR merged)._
 
-## Contribution IDs (decided at promotion, 2026-10-25; Stephan approved these names)
-
-Plugin id `gitwrite`; contributions are `gitwrite:<lowercase-hyphen>`; titles use writer words.
+## Contribution IDs (decided at promotion, 2026-10-25; follow the queue 3 pattern)
 
 | Kind | ID | Title / notes |
 |---|---|---|
-| command | `gitwrite:save-version` | Save a Version |
-| command | `gitwrite:show-history` | Show Version History |
-| command | `gitwrite:compare-versions` | Compare Two Versions |
-| command | `gitwrite:compare-with-page` | Compare a Version with This Page |
-| surface | `gitwrite:history` | Versions; icon `history`; side right; row action `gitwrite:restore-version` ("Restore as New Version", confirm) |
-| surface | `gitwrite:compare` | Compare; icon `git-compare`; side right, wide; shows a version read-only and diffs |
-| surface | `gitwrite:save` | Save a Version; icon `save`; side modal; a form asking what changed (added by the planner: the API has no other way to ask for a message) |
+| command | `gitwrite:show-explorations` | Show Explorations |
+| command | `gitwrite:start-exploration` | Start an Exploration |
+| command | `gitwrite:name-version` | Name a Version |
+| command | `gitwrite:show-feedback` | Show Feedback |
+| command | `gitwrite:sync` | Sync with Remote |
+| command | `gitwrite:connect-remote` | Connect to a Remote |
+| command | `gitwrite:forget-token` | Forget Saved Sync Token |
+| surface | `gitwrite:explorations` | Explorations; icon `git-branch`; right; row actions `gitwrite:switch-exploration` (confirm: says switching saves the page and changes the files) and `gitwrite:merge-exploration` (confirm) |
+| surface | `gitwrite:start` | Start an Exploration; icon `git-fork`; modal form (name) |
+| surface | `gitwrite:name` | Name a Version; icon `tag`; modal form (name, version, note) |
+| surface | `gitwrite:feedback` | Feedback; icon `message-square`; right; row actions `gitwrite:accept-feedback` and `gitwrite:reject-feedback` (confirm) |
+| surface | `gitwrite:connect` | Connect to a Remote; icon `cloud`; modal form (address, token) |
+| setting | `gitwrite:feedback-branch` | string, default `feedback` |
+| setting | `gitwrite:remote-username` | string, default empty (empty means the host's default) |
 
 ## Design — numbered pieces (status: `[ ]` not started · `[x]` done · `[!]` blocked)
 
-- [x] **1.** Scaffold `veneer-plugin/` from the Veneer handoff README and its example plugins: `manifest.json` (id `gitwrite`, `apiVersion` `^0.40.0`, `main` `main.js`, the contributions above), `package.json` (scripts `build` / `typecheck` / `test`; `@veneer/api` from `github:eristoddle/veneer-api#v0.40.0`), `.npmrc` with `allow-git=all`, `tsconfig.json`, `.gitignore` with `main.js`, `README.md`. Add a CI job for typecheck, test and build.
-- [x] **2.** Save a Version: command opens the `gitwrite:save` form; submitting calls `api.history.save` (starting history first when the project has none), tells the writer in plain words what happened (including "nothing changed" and "no history for a loose file"), and refreshes the history list.
-- [x] **3.** History surface (newest first: message, author, time), read-only view of a version of the open page, and Restore (puts the old text on the open page with `api.editor.edit`, then saves it as a new version; history is never rewritten).
-- [x] **4.** Compare: two versions, or a version and the open page, into a `diff` view; for version-vs-page, Accept/Reject per change via `onDiffAction` and `api.editor.edit` (one undo step each).
+- [ ] **1.** Explorations: list (the feedback branch is hidden: switching to it would swap in a stale snapshot), start (create then switch) and switch, telling the writer that switching saves the page first and changes the project's files.
+- [ ] **2.** Tags: "Name a Version" (any of the recent versions, optional note); tag names show on the version list.
+- [ ] **3.** Merge: bring an exploration into the current one; on a conflict stop, name the files in plain words, and say nothing changed.
+- [ ] **4.** Annotations as marks, per `docs/ANNOTATION_FORMAT.md`: branch name from the setting, the D15 locate chain in TypeScript (exact matching, code-point offsets converted for marks; shared test vectors generated by the Python tests), marks re-set after saves, Accept/Reject as new commits on the feedback branch.
+- [ ] **5.** Sync over HTTPS: connect form (address + token), token only in `api.secrets`, never in settings, logs, views or notices; `api.notify` after a sync.
 
 Each command and surface gets a test on `createFakeHost`; every `src/*.ts` has a matching `*.test.ts`.
 
-Inputs from queue 2: Veneer's `history.init()` is the only thing that adds `.veneer/cache/` to `.gitignore`, and it skips existing repos, so the plugin should make sure that line is present before the first save in a repo GitWrite made. Never assume the default branch is `main` (a GitWrite-made repo may be on `master`). Hide the `feedback` branch from the exploration list (switching to it would swap in a stale snapshot of the files).
+Inputs from queue 2: the format spec is `docs/ANNOTATION_FORMAT.md`; `interop/lib.mjs` is a working JS reader of it and `interop/write-repo.mjs` shows `api.history`-style writing (same-tree commit with a YAML body). Offsets and context lengths count Unicode code points (use `Array.from`), line numbers are 0-indexed, and locate ties go to the match nearest the stored offset, then the stored line. Veneer's `createBranch` and tag creation accept only ASCII letters, digits, `.`, `_`, `-` and `/`, while GitWrite accepts any valid git name. A conflicting merge in the GitWrite CLI leaves `MERGE_HEAD` behind, which Veneer does not detect: check for it before saving.
 
 ## Out of scope (do NOT do)
 
-- Explorations, tags, merge, annotations, sync (queue 4); release (queue 5).
-- Working around a missing API with a hack: write down what was missing (the Veneer handoff asks for this) in the PR.
-- Any change to the Python code.
+- Creating annotations from inside Veneer (the brief only reads, shows, and changes their status).
+- Release (queue 5); any change to `PLAN.md` decisions.
+- Working around a missing API with a hack: write it down for the PR.
 
 ## Report back
 
-What was built and tested per brief item, anything the API lacked, decisions made, and the PR URL.
+What was built and tested per brief item, anything the API lacked, decisions made, a manual checklist for what only a real Veneer and a real remote can verify, and the PR URL.
 
 ---
 
 ## ⏩ Queued (drafts: promote to active when the previous queue's PR merges, and fill in anything marked TBD)
-
-### Queue 4: plugin steps 4–6
-
-Branch `queue/4-plugin-collab`. Pieces:
-
-1. Explorations: list, create and switch (tell the writer that switching saves and reloads).
-2. Tags.
-3. Merge. On conflict, stop and name the files in plain words.
-4. Annotations as marks, per `docs/ANNOTATION_FORMAT.md`: branch-name setting defaulting to `feedback`, the D15 locate chain re-implemented in TypeScript using `findInText`, marks re-set after each save, accept/reject as new commits.
-5. Sync over HTTPS with the token in `api.secrets`, never in settings or logs, and `api.notify` afterward.
-
-Each gets a test on the fake host.
-
-Inputs from queue 2: the format spec is `docs/ANNOTATION_FORMAT.md`; `interop/lib.mjs` is a working JS reader of it and `interop/write-repo.mjs` shows `api.history`-style writing (same-tree commit with a YAML body). Offsets and context lengths count Unicode code points (use `Array.from`), line numbers are 0-indexed, and locate ties go to the match nearest the stored offset, then the stored line. Veneer's `createBranch` and tag creation accept only ASCII letters, digits, `.`, `_`, `-` and `/`, while GitWrite accepts any valid git name. A conflicting merge in the GitWrite CLI leaves `MERGE_HEAD` behind, which Veneer does not detect: check for it before saving.
 
 ### Queue 5: release
 
@@ -100,3 +89,4 @@ Branch `queue/5-release`. Decision D14. Pieces:
 ## ✅ Done (collapsed — full detail in PLAN.md's session log)
 - **Queue 1: cleanup and core fixes** (PR #1, merged 2026-10-25). Deleted API/SDK/web/wiki/deploy; moved to uv + Python 3.12 + ruff; fixed tag creation, branch review, `.git/` and outside-repo writes, git argument injection; rewrote mocked tests against real repos; added `tests/test_cli_e2e.py`; docs match reality. 320 passed, 1 skipped.
 - **Queue 2: interop and annotation anchors** (PR #2, 2026-10-25). Annotations rewritten on pygit2 (no git CLI, HEAD/index/worktree untouched, bare repos work); D15 anchors and `locate()` in `gitwrite_core/anchors.py`; `docs/ANNOTATION_FORMAT.md` with test-generated examples; `interop/` harness (isomorphic-git 1.44.4) with both directions passing `git fsck --strict`, required in CI. 379 passed, 1 skipped. Piece 5 (investigate only) found these GitWrite/Veneer conflicts, none fixed, for Stephan to decide: (1) `.veneer/cache/` is not ignored in GitWrite-made repos and Veneer's `init` leaves existing repos alone, so both tools commit the cache; (2) a CLI merge conflict leaves `MERGE_HEAD`, and a Veneer save on top makes a single-parent commit with the merge state still on disk; (3) Veneer rejects branch/tag names with non-ASCII characters that GitWrite creates; (4) `gitwrite init` uses the machine's default branch while Veneer always uses `main`; (5) cosmetic: first commit authored "GitWrite System", saves without identity as "GitWrite User", Veneer's automatic "Veneer settings" commits; (6) `drafts/`, `notes/` and `metadata.yml` are invisible in Veneer's explorer (harmless; the two tools keep project metadata in different places).
+- **Queue 3: Veneer plugin steps 1-3** (PR #3, merged 2026-10-25). `veneer-plugin/` scaffold with CI job; Save a Version (modal form, `api.history.save`, starts the history first); version list with read-only view and Restore as New Version (one undo step, history never rewritten); Compare (two versions read only, or version vs page with Accept/Reject per change). 74 plugin tests on the fake host; Python 379 passed, 1 skipped. Not yet loaded into a running Veneer: how the modal form, wide Compare panel, icons and confirm-on-row Restore look and behave is unverified. API gaps reported: no way to add `.veneer/cache/` to an existing repo's `.gitignore`; the fake host does not reject loose files with `history/no-project`; no text prompt or multi-select.
