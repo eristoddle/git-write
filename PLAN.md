@@ -106,6 +106,11 @@ _None open._
 - Grill, 3 rounds: D1–D15 decided. The Veneer brief turned out to be local-first, which superseded D3 (server bare repos) and D5 (feature set) and shrank the Python side to core fixes plus interop. P1 promoted to D10; P2 (server) parked.
 - Scaffolded PLAN.md, TASKS.md (queue 1 active, queues 2–5 drafted), and the implementer agent.
 
+### Session 2 — 2026-10-26
+
+- Queues 2–4 were built in cloud sessions over the weekend and merged (PRs #2–#4). Queue 4 finished the plugin to brief steps 1–6 on the fake host only. TASKS.md collapsed queue 4 to Done and promoted queue 5 (release).
+- Open for Stephan: load the plugin into a real Veneer and work through the PR #4 manual checklist; decide the five GitWrite/Veneer conflicts from queue 2.
+
 ## Relocated (progressive disclosure)
 
 - Decisions archive → [docs/decisions/](docs/decisions/)
