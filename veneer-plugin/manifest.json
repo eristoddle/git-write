@@ -2,7 +2,7 @@
   "id": "gitwrite",
   "name": "GitWrite",
   "version": "0.1.0",
-  "apiVersion": "^0.40.0",
+  "apiVersion": "^0.46.0",
   "main": "main.js",
   "contributes": {
     "commands": [

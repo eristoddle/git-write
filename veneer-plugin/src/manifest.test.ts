@@ -10,7 +10,7 @@ const manifest = JSON.parse(readFileSync(join(__dirname, '..', 'manifest.json'),
 describe('manifest', () => {
   it('names the plugin and the API range it was built for', () => {
     expect(manifest.id).toBe('gitwrite')
-    expect(manifest.apiVersion).toBe('^0.40.0')
+    expect(manifest.apiVersion).toBe('^0.46.0')
     expect(manifest.main).toBe('main.js')
   })
 
