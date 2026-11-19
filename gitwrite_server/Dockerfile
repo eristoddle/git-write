@@ -10,12 +10,17 @@ COPY gitwrite_cli ./gitwrite_cli
 COPY gitwrite_core ./gitwrite_core
 COPY gitwrite_server ./gitwrite_server
 
-RUN pip install --no-cache-dir .
+RUN pip install --no-cache-dir '.[server]'
+
+# The daemon should not run as root; /data is the only path it writes.
+RUN useradd --create-home --uid 1000 gitwrite \
+ && mkdir -p /data/repos \
+ && chown -R gitwrite:gitwrite /data
+USER gitwrite
 
 ENV GITWRITE_REPOS_ROOT=/data/repos \
     GITWRITE_TOKEN_FILE=/data/tokens
 
-RUN mkdir -p /data/repos
 VOLUME /data
 
 EXPOSE 8080

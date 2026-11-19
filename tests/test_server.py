@@ -9,26 +9,18 @@ Plain http is correct in tests: the plugin alone enforces https at its edge.
 import base64
 import os
 import subprocess
-import threading
 import urllib.error
 import urllib.request
-from http.server import HTTPServer
 from pathlib import Path
-from wsgiref.simple_server import WSGIRequestHandler, make_server
 
 import pytest
 from click.testing import CliRunner
 
-from gitwrite_server.app import create_app, is_push
+from gitwrite_server.app import _NoThinPackUploadPackHandler, is_push
 from gitwrite_server.auth import authenticate, create_token, list_tokens, revoke_token
 from gitwrite_server.cli import cli
 from gitwrite_server.resolver import parse_repo_segments, resolve_repo
 from tests.helpers import init_repo, save
-
-
-class _QuietHandler(WSGIRequestHandler):
-    def log_message(self, format: str, *args) -> None:  # noqa: A002 - stdlib signature
-        pass
 
 
 class Server:
@@ -40,21 +32,8 @@ class Server:
         self.base_url = f"http://127.0.0.1:{port}"
 
 
-@pytest.fixture
-def server(tmp_path: Path) -> Server:
-    repos_root = tmp_path / "repos"
-    tokens_file = tmp_path / "tokens"
-    token = create_token("veneer", tokens_file=tokens_file)
-    app = create_app(repos_root=repos_root, tokens_file=tokens_file)
-    httpd: HTTPServer = make_server("127.0.0.1", 0, app, handler_class=_QuietHandler)
-    thread = threading.Thread(target=httpd.serve_forever, daemon=True)
-    thread.start()
-    try:
-        yield Server(repos_root, tokens_file, httpd.server_address[1], token)
-    finally:
-        httpd.shutdown()
-        httpd.server_close()
-        thread.join(timeout=5)
+# The live-server fixture that builds this lives in conftest.py so both test
+# modules can reach it; Server stays here with its domain.
 
 
 def run_git(*args: str, cwd: Path | None = None) -> subprocess.CompletedProcess:
@@ -318,6 +297,17 @@ def test_is_push_detects_receive_pack() -> None:
     assert not is_push({"PATH_INFO": "/novel.git/git-upload-pack"})
     assert not is_push({"PATH_INFO": "/novel.git/info/refs", "QUERY_STRING": "service=git-upload-pack"})
     assert not is_push({})
+
+
+def test_upload_pack_handler_does_not_require_thin_pack() -> None:
+    # isomorphic-git (the Veneer plugin's client) never requests thin-pack;
+    # dulwich's default UploadPackHandler rejects any client that omits it.
+    required = _NoThinPackUploadPackHandler.required_capabilities()
+    assert b"thin-pack" not in required
+    # The other defaults stay required: side-band and ofs-delta are requested
+    # by every real client, including isomorphic-git.
+    for capability in (b"side-band-64k", b"ofs-delta"):
+        assert capability in required
 
 
 def test_authenticate_accepts_any_username(server: Server) -> None:
