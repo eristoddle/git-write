@@ -337,6 +337,40 @@ def repo_with_revert_conflict(local_repo: pygit2.Repository):
         pytest.fail("Revert did not result in conflicts in the index as expected.")
     return local_repo
 
+@pytest.fixture
+def server(tmp_path: Path):
+    """Live gitwrite_server on an ephemeral port, shared by the server test modules.
+
+    Defined here (not in test_server.py) so tests/test_server_isomorphic_git.py
+    uses the same fixture; the imports are deferred to avoid a conftest cycle.
+    """
+    import threading
+    from http.server import HTTPServer
+    from wsgiref.simple_server import WSGIRequestHandler, make_server
+
+    from gitwrite_server.app import create_app
+    from gitwrite_server.auth import create_token
+    from tests.test_server import Server
+
+    class _QuietHandler(WSGIRequestHandler):
+        def log_message(self, format: str, *args) -> None:  # noqa: A002 - stdlib signature
+            pass
+
+    repos_root = tmp_path / "repos"
+    tokens_file = tmp_path / "tokens"
+    token = create_token("veneer", tokens_file=tokens_file)
+    app = create_app(repos_root=repos_root, tokens_file=tokens_file)
+    httpd: HTTPServer = make_server("127.0.0.1", 0, app, handler_class=_QuietHandler)
+    thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+    thread.start()
+    try:
+        yield Server(repos_root, tokens_file, httpd.server_address[1], token)
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+        thread.join(timeout=5)
+
+
 # Fixtures for sync/merge tests (from test_cli_sync_merge.py)
 @pytest.fixture
 def configure_git_user_for_cli(tmp_path: Path): # tmp_path is a built-in pytest fixture

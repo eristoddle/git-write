@@ -282,37 +282,46 @@ version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "click" },
-    { name = "dulwich" },
     { name = "pygit2" },
     { name = "pypandoc" },
     { name = "pyyaml" },
     { name = "rich" },
+]
+
+[package.optional-dependencies]
+server = [
+    { name = "dulwich" },
     { name = "waitress" },
 ]
 
 [package.dev-dependencies]
 dev = [
+    { name = "dulwich" },
     { name = "pytest" },
     { name = "pytest-cov" },
     { name = "ruff" },
+    { name = "waitress" },
 ]
 
 [package.metadata]
 requires-dist = [
     { name = "click" },
-    { name = "dulwich" },
+    { name = "dulwich", marker = "extra == 'server'" },
     { name = "pygit2" },
     { name = "pypandoc" },
     { name = "pyyaml" },
     { name = "rich" },
-    { name = "waitress" },
+    { name = "waitress", marker = "extra == 'server'" },
 ]
+provides-extras = ["server"]
 
 [package.metadata.requires-dev]
 dev = [
+    { name = "dulwich" },
     { name = "pytest" },
     { name = "pytest-cov" },
     { name = "ruff" },
+    { name = "waitress" },
 ]
 
 [[package]]

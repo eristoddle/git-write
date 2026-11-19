@@ -7,11 +7,17 @@ requires-python = ">=3.12"
 license = { file = "LICENSE" }
 dependencies = [
     "click",
-    "dulwich",
     "pygit2",
     "pypandoc",
     "pyyaml",
     "rich",
+]
+
+[project.optional-dependencies]
+# Server-only packages: installing the gitwrite CLI does not pull them in;
+# the sync server image installs .[server].
+server = [
+    "dulwich",
     "waitress",
 ]
 
@@ -24,6 +30,10 @@ dev = [
     "pytest",
     "pytest-cov",
     "ruff",
+    # Server tests drive gitwrite_server over real HTTP, so the dev
+    # environment carries the server extra; plain installs do not.
+    "dulwich",
+    "waitress",
 ]
 
 [build-system]

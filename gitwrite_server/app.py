@@ -10,8 +10,9 @@ from pathlib import Path
 from typing import Iterator
 
 from dulwich.errors import NotGitRepository
+from dulwich.protocol import CAPABILITY_THIN_PACK
 from dulwich.repo import Repo
-from dulwich.server import Backend
+from dulwich.server import Backend, UploadPackHandler
 from dulwich.web import make_wsgi_chain
 
 from gitwrite_server.auth import authenticate
@@ -59,13 +60,39 @@ class RepoRootBackend(Backend):
         return Repo(str(repo_path))
 
 
+class _NoThinPackUploadPackHandler(UploadPackHandler):
+    """Upload-pack that tolerates clients which never request thin-pack.
+
+    isomorphic-git — the client the Veneer plugin syncs with — does not send
+    the thin-pack capability, and dulwich rejects any client missing a
+    capability in required_capabilities(), which turned every clone/pull
+    from that client into a 500. Thin packs are only a wire-size
+    optimization for delta objects, so nothing here needs them.
+    """
+
+    @classmethod
+    def required_capabilities(cls) -> tuple[bytes, ...]:
+        return tuple(
+            capability
+            for capability in super().required_capabilities()
+            if capability != CAPABILITY_THIN_PACK
+        )
+
+
+def _dulwich_handlers() -> dict:
+    """dulwich's default service handlers with the tolerant upload-pack swapped in."""
+    return {b"git-upload-pack": _NoThinPackUploadPackHandler}
+
+
 class GitWriteApp:
     """Auth, resolution and auto-create, then dulwich's smart-HTTP application."""
 
     def __init__(self, repos_root: Path, tokens_file: Path) -> None:
         self.repos_root = repos_root
         self.tokens_file = tokens_file
-        self._dulwich_app = make_wsgi_chain(RepoRootBackend(repos_root))
+        self._dulwich_app = make_wsgi_chain(
+            RepoRootBackend(repos_root), handlers=_dulwich_handlers()
+        )
 
     def __call__(self, environ: dict, start_response) -> Iterator[bytes]:
         if not authenticate(environ, tokens_file=self.tokens_file):
