@@ -24,7 +24,7 @@ Any server part is single-owner and self-hosted in v1, designed so multi-user ca
 
 ### D3 — ~~Server-side bare repos, stateless operations~~
 
-Superseded by [D8](#d8--local-first-veneer-drives-git-directly-) on 2026-10-24. The Veneer brief turned out to be local-first.
+Superseded by [D8](#d8--local-first-veneer-drives-git-directly) on 2026-10-24. The Veneer brief turned out to be local-first.
 
 ### D4 — Delete what Veneer replaces 🔨
 
@@ -42,9 +42,9 @@ Move to Python 3.12+, PEP 621 `pyproject.toml`, and uv (drop Poetry). Update dep
 
 The plugin lives in `veneer-plugin/` at the repo root, laid out like `book_forge/veneer-plugin`: `manifest.json`, `src/*.ts` with a matching `*.test.ts` each, TypeScript, esbuild (`--bundle --format=esm --platform=neutral --outfile=main.js`), Vitest on `@veneer/api/testing`'s `createFakeHost`, and `main.js` gitignored.
 
-### D8 — Local first: Veneer drives git directly 🔒
+### D8 — ~~Local first: Veneer drives git directly~~
 
-A writer's project is a plain git repo in the project folder. The plugin is an adapter that maps GitWrite's words onto Veneer's `api.history` (isomorphic-git in Veneer's main process) and Veneer surfaces. Repos made by GitWrite's pygit2 and by Veneer's isomorphic-git must open in each other. The GitWrite server is optional and is not part of v1 (P2).
+Superseded by [D16](#d16--the-server-is-the-product-) on 2026-11-18. "Local first" meant the local version is built first, not that the server is optional; it was copied as architecture from the Veneer brief. What still holds: a writer's project is a plain git repo in the project folder, the plugin maps GitWrite's words onto Veneer's `api.history` (isomorphic-git in Veneer's main process) and Veneer surfaces, and repos made by pygit2 and by isomorphic-git must open in each other.
 
 ### D9 — Plugin v1 is the brief's steps 1–6 🔨
 
@@ -85,14 +85,18 @@ A `release.py` bumps `veneer-plugin/manifest.json`, `veneer-plugin/package.json`
 
 New optional YAML fields on annotations: `prefix` and `suffix` (about 32 characters of surrounding text each) and `offset` (character offset of the highlighted text). Old annotations without them still parse. Locating order: prefix + text + suffix, then the text alone, then the stored line number.
 
+### D16 — The server is the product 🔒
+
+Local git in the plugin is the first iteration; the GitWrite server is the target. The plugin keeps its local repo (saves, history, compare and explorations work offline) and syncs with the GitWrite server. The server handles everything involving another person or that git can't make simple: sharing a draft by link, beta readers reading and commenting in a browser with no git and no Veneer, their comments flowing back as annotations on the `feedback` branch for the writer to accept or reject in Veneer, export or publish, and sync and backup without a GitHub account. The plugin is why writers try GitWrite; the server is why they keep it, and it's the part Veneer can't simply build in. Supersedes D8. The server's design is [Q1](#open-questions).
+
 ## Open questions
 
-_None open._
+- **Q1 — The GitWrite server** (v1 jobs and order, how beta readers get in, where it runs, who builds it; October's recommendations on tokens, repo mapping, concurrent saves and deployment are the starting spec) → [docs/questions/Q1.md](docs/questions/Q1.md)
 
 ## Parking lot
 
 - **P1 — Keep the CLI?** → promoted to [D10](#d10--keep-the-cli-) on 2026-10-24.
-- **P2 — The GitWrite server** (auth tokens, repo mapping, concurrent saves, deployment, beta-reader feedback, export download) → [docs/parking-lot/P2.md](docs/parking-lot/P2.md)
+- **P2 — The GitWrite server** → promoted to [Q1](#open-questions) on 2026-11-18.
 
 ## Session log
 
@@ -110,6 +114,13 @@ _None open._
 
 - Queues 2–4 were built in cloud sessions over the weekend and merged (PRs #2–#4). Queue 4 finished the plugin to brief steps 1–6 on the fake host only. TASKS.md collapsed queue 4 to Done and promoted queue 5 (release).
 - Open for Stephan: load the plugin into a real Veneer and work through the PR #4 manual checklist; decide the five GitWrite/Veneer conflicts from queue 2.
+
+### Session 3 — 2026-11-18
+
+- Found that "local first" (D8) was meant as sequencing (build the local version first), not architecture. It came in from line 11 of the Veneer plugin brief and was locked as foundational in session 1 without being asked directly. With the server optional, beta readers, feedback from people without git, and export to readers had nowhere to happen.
+- D16 decided: the server is the product. The plugin keeps local git and syncs with it. D8 superseded; P2 promoted to Q1.
+- Open for Stephan: fix line 11 of `~/Dropbox/node/veneer/docs/handoff/gitwrite-plugin-brief.md` on the Veneer side so it stops saying the server is optional.
+- Considering the server and its reader web app as the test project for an Obvious review post.
 
 ## Relocated (progressive disclosure)
 
